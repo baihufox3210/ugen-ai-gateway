@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from ugen-ai-gateway!")
+from ugen_ai_gateway.main import main
+
+__all__ = ["main"]
