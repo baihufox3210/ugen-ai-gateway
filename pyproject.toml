@@ -3,6 +3,7 @@ name = "ugen-ai-gateway"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "baihu", email = "baihu3210@gmail.com" }
 ]
