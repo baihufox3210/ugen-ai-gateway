@@ -40,7 +40,7 @@ def test_analyzer_marks_regex_detected_pii_even_when_model_misses_it() -> None:
     assert result.personal_data_types == ["name", "email", "taiwan_mobile"]
     assert provider.calls[0]["model"] == "local-model"
     assert provider.calls[0]["messages"][1]["content"] == (
-        "Contact alex@example.com or 0912-345-678"
+        "Contact [EMAIL] or [TAIWAN_MOBILE]"
     )
 
 

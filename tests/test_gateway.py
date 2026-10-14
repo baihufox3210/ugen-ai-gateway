@@ -108,15 +108,30 @@ def test_chat_uses_cloud_for_complex_request() -> None:
     assert local.calls == []
 
 
-def test_chat_routes_personal_data_to_local_even_when_complex() -> None:
+def test_chat_redacts_personal_data_and_routes_complex_request_to_cloud() -> None:
     analyzer = FakeAnalyzer(analysis(contains_personal_data=True, complexity="complex"))
     service, local, cloud, _ = make_service(analyzer=analyzer)
-    request = ChatRequest(messages=[{"role": "user", "content": "My name is Jo"}])
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "Email alex@example.com"}]
+    )
 
     response = asyncio.run(service.chat(request))
 
-    assert response.provider == "local"
-    assert local.calls[0]["model"] == "local-default"
+    assert response.provider == "cloud"
+    assert cloud.calls[0]["messages"] == [{"role": "user", "content": "Email [EMAIL]"}]
+    assert local.calls == []
+    assert request.messages[0].get("content") == "Email alex@example.com"
+
+
+def test_chat_redacts_personal_data_before_sending_to_local_provider() -> None:
+    service, local, cloud, _ = make_service()
+    request = ChatRequest(messages=[{"role": "user", "content": "Call 0912-345-678"}])
+
+    asyncio.run(service.chat(request))
+
+    assert local.calls[0]["messages"] == [
+        {"role": "user", "content": "Call [TAIWAN_MOBILE]"}
+    ]
     assert cloud.calls == []
 
 
@@ -203,6 +218,29 @@ def test_chat_analyzes_only_string_user_messages() -> None:
     asyncio.run(service.chat(request))
 
     assert analyzer.inputs == ["first\nsecond"]
+
+
+def test_chat_redacts_text_parts_in_multimodal_messages() -> None:
+    service, local, _, _ = make_service()
+    request = ChatRequest(
+        messages=[
+            {"role": "user", "content": "Review this image"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Email alex@example.com"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/x.png"},
+                    },
+                ],
+            },
+        ]
+    )
+
+    asyncio.run(service.chat(request))
+
+    assert local.calls[0]["messages"][1]["content"][0]["text"] == "Email [EMAIL]"
 
 
 def test_chat_rejects_unavailable_cloud_provider() -> None:

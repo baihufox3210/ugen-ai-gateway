@@ -2,7 +2,10 @@ import json
 
 from pydantic import ValidationError
 
-from ugen_ai_gateway.analysis.pii import detect_personal_data
+from ugen_ai_gateway.analysis.pii import (
+    detect_personal_data,
+    redact_personal_data,
+)
 from ugen_ai_gateway.analysis.prompts import REQUEST_ANALYSIS_SYSTEM_PROMPT
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis
 from ugen_ai_gateway.providers.base import ModelProvider
@@ -30,7 +33,7 @@ class RequestAnalyzer:
                 },
                 {
                     "role": "user",
-                    "content": user_input,
+                    "content": redact_personal_data(user_input),
                 },
             ],
             temperature=0.0,

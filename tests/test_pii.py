@@ -1,6 +1,6 @@
 import pytest
 
-from ugen_ai_gateway.analysis.pii import detect_personal_data
+from ugen_ai_gateway.analysis.pii import detect_personal_data, redact_personal_data
 
 
 @pytest.mark.parametrize(
@@ -69,3 +69,19 @@ def test_returns_empty_for_text_without_supported_personal_data(text: str) -> No
 )
 def test_does_not_match_identifiers_embedded_in_word_like_text(text: str) -> None:
     assert detect_personal_data(text) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Email alex@example.com", "Email [EMAIL]"),
+        ("Call 0912-345-678", "Call [TAIWAN_MOBILE]"),
+        (
+            "alex@example.com / +886 912 345 678",
+            "[EMAIL] / [TAIWAN_MOBILE]",
+        ),
+        ("No personal data here", "No personal data here"),
+    ],
+)
+def test_redacts_detected_personal_data(text: str, expected: str) -> None:
+    assert redact_personal_data(text) == expected

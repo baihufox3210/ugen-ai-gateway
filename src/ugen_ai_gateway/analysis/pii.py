@@ -22,3 +22,9 @@ def detect_personal_data(text: str) -> list[str]:
         detected.append("taiwan_mobile")
 
     return detected
+
+
+def redact_personal_data(text: str) -> str:
+    """Replace supported personal-data patterns with descriptive markers."""
+    redacted = EMAIL_PATTERN.sub("[EMAIL]", text)
+    return TAIWAN_MOBILE_PATTERN.sub("[TAIWAN_MOBILE]", redacted)

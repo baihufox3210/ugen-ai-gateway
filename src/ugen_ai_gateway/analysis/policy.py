@@ -22,12 +22,6 @@ class RoutingPolicy:
         self._cloud_enabled = cloud_enabled
 
     def decide(self, analysis: RequestAnalysis) -> RoutingDecision:
-        if analysis.contains_personal_data:
-            return RoutingDecision(
-                provider="local",
-                reason="Personal data detected; prefer local processing.",
-            )
-
         if analysis.complexity == "complex" and self._cloud_enabled:
             return RoutingDecision(
                 provider="cloud",
