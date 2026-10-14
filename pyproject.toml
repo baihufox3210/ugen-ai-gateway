@@ -7,7 +7,12 @@ authors = [
     { name = "baihu", email = "baihu3210@gmail.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.143.0",
+    "openai>=3.31.0",
+    "pydantic-settings>=2.15.0",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [project.scripts]
 ugen-ai-gateway = "ugen_ai_gateway:main"
@@ -15,3 +20,8 @@ ugen-ai-gateway = "ugen_ai_gateway:main"
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.0",
+]
