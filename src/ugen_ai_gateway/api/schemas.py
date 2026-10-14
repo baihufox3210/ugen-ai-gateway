@@ -3,6 +3,17 @@ from typing import Literal
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
+from ugen_ai_gateway.analysis.schemas import TaskType
+
+
+class RoutingInfo(BaseModel):
+    complexity: Literal["simple", "moderate", "complex"]
+    task_type: TaskType
+    contains_personal_data: bool
+    personal_data_types: list[str] = Field(default_factory=list)
+    provider: Literal["local", "cloud"]
+    reason: str
+
 
 class ChatRequest(BaseModel):
     provider: Literal["local", "cloud"] = "local"
@@ -15,3 +26,4 @@ class ChatResponse(BaseModel):
     model: str
     content: str
     provider: str
+    routing: RoutingInfo

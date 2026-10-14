@@ -91,6 +91,13 @@ def test_chat_uses_local_provider_and_default_model() -> None:
     assert response.model == "resolved-model"
     assert response.content == "hello"
     assert response.provider == "local"
+    assert response.routing.complexity == "simple"
+    assert response.routing.task_type == "general"
+    assert response.routing.contains_personal_data is False
+    assert response.routing.provider == "local"
+    assert (
+        response.routing.reason == "Local model selected by the default routing policy."
+    )
     assert analyzer.inputs == ["hi"]
     assert local.calls[0]["model"] == "local-default"
     assert cloud.calls == []
@@ -104,6 +111,8 @@ def test_chat_uses_cloud_for_complex_request() -> None:
     response = asyncio.run(service.chat(request))
 
     assert response.provider == "cloud"
+    assert response.routing.complexity == "complex"
+    assert response.routing.provider == "cloud"
     assert cloud.calls[0]["model"] == "cloud-default"
     assert local.calls == []
 

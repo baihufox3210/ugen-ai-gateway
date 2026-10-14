@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from ugen_ai_gateway.api.routes import create_chat_completion, health
-from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
+from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse, RoutingInfo
 from ugen_ai_gateway.services.gateway import GatewayService
 
 
@@ -23,7 +23,19 @@ def test_health_returns_ok() -> None:
 
 
 def test_chat_handler_returns_gateway_response() -> None:
-    expected = ChatResponse(model="m", content="hello", provider="local")
+    expected = ChatResponse(
+        model="m",
+        content="hello",
+        provider="local",
+        routing=RoutingInfo(
+            complexity="simple",
+            task_type="general",
+            contains_personal_data=False,
+            personal_data_types=[],
+            provider="local",
+            reason="Default local routing.",
+        ),
+    )
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     response = asyncio.run(create_chat_completion(request, FakeGateway(expected)))

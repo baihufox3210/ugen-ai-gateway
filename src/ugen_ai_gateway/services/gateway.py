@@ -5,7 +5,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.pii import redact_personal_data
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
-from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
+from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse, RoutingInfo
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.providers.cloud import CloudProvider
 from ugen_ai_gateway.providers.local import LocalProvider
@@ -104,8 +104,18 @@ class GatewayService:
         if not isinstance(content, str):
             raise TypeError("Model provider returned no text content")
 
+        routing = RoutingInfo(
+            complexity=analysis.complexity,
+            task_type=analysis.task_type,
+            contains_personal_data=analysis.contains_personal_data,
+            personal_data_types=analysis.personal_data_types,
+            provider=decision.provider,
+            reason=decision.reason,
+        )
+
         return ChatResponse(
             model=completion.model,
             content=content,
             provider=decision.provider,
+            routing=routing,
         )
