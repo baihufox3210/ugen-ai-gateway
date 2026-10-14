@@ -105,7 +105,8 @@ def test_chat_rejects_missing_model_configuration() -> None:
         (SimpleNamespace(model="m", choices=[]), RuntimeError, "no choices"),
         (
             SimpleNamespace(
-                model="m", choices=[SimpleNamespace(message=SimpleNamespace(content=None))]
+                model="m",
+                choices=[SimpleNamespace(message=SimpleNamespace(content=None))],
             ),
             TypeError,
             "no text content",
@@ -123,7 +124,9 @@ def test_chat_rejects_invalid_provider_response(
 
 
 def test_chat_propagates_provider_failure() -> None:
-    service, _, _ = make_service(local_provider=FakeProvider(error=RuntimeError("offline")))
+    service, _, _ = make_service(
+        local_provider=FakeProvider(error=RuntimeError("offline"))
+    )
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     with pytest.raises(RuntimeError, match="offline"):
