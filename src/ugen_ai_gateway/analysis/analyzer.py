@@ -2,6 +2,7 @@ import json
 
 from pydantic import ValidationError
 
+from ugen_ai_gateway.analysis.pii import detect_personal_data
 from ugen_ai_gateway.analysis.prompts import REQUEST_ANALYSIS_SYSTEM_PROMPT
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis
 from ugen_ai_gateway.providers.base import ModelProvider
@@ -45,8 +46,22 @@ class RequestAnalyzer:
 
         try:
             payload = json.loads(content)
-            return RequestAnalysis.model_validate(payload)
+            analysis = RequestAnalysis.model_validate(payload)
         except (json.JSONDecodeError, ValidationError) as exc:
             raise ValueError(
                 "Analysis model returned an invalid analysis result"
             ) from exc
+
+        detected_types = detect_personal_data(user_input)
+        if not detected_types:
+            return analysis
+
+        personal_data_types = list(
+            dict.fromkeys([*analysis.personal_data_types, *detected_types])
+        )
+        return analysis.model_copy(
+            update={
+                "contains_personal_data": True,
+                "personal_data_types": personal_data_types,
+            }
+        )
