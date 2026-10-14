@@ -1,5 +1,7 @@
 from functools import lru_cache
 
+from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
+from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.config import Settings, get_settings
 from ugen_ai_gateway.providers.cloud import CloudProvider
 from ugen_ai_gateway.providers.local import LocalProvider
@@ -40,10 +42,17 @@ def get_cloud_provider() -> CloudProvider:
 
 @lru_cache
 def get_gateway_service() -> GatewayService:
+    settings = get_settings()
+    local_provider = get_local_provider()
+
     return GatewayService(
-        settings=get_settings(),
-        local_provider=get_local_provider(),
-        cloud_provider=get_cloud_provider(),
+        settings=settings,
+        local_provider=local_provider,
+        cloud_provider=(get_cloud_provider() if settings.cloud_api_key else None),
+        analyzer=RequestAnalyzer(provider=local_provider, model=settings.local_model),
+        policy=RoutingPolicy(
+            cloud_enabled=bool(settings.cloud_api_key and settings.cloud_model)
+        ),
     )
 
 

@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from ugen_ai_gateway.analysis.policy import RoutingPolicy
+from ugen_ai_gateway.analysis.schemas import RequestAnalysis
 from ugen_ai_gateway.api.schemas import ChatRequest
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.services.gateway import GatewayService
@@ -25,6 +27,22 @@ class FakeProvider:
         return self.completion
 
 
+class FakeAnalyzer:
+    def __init__(self, analysis: RequestAnalysis | None = None) -> None:
+        self.analysis = analysis or RequestAnalysis(
+            contains_personal_data=False,
+            personal_data_types=[],
+            complexity="simple",
+            task_type="general",
+            reason="Simple general request.",
+        )
+        self.inputs: list[str] = []
+
+    async def analyze(self, user_input: str) -> RequestAnalysis:
+        self.inputs.append(user_input)
+        return self.analysis
+
+
 def make_service(
     *,
     local_model: str = "local-default",
@@ -32,9 +50,12 @@ def make_service(
     cloud_api_key: str = "cloud-key",
     local_provider: FakeProvider | None = None,
     cloud_provider: FakeProvider | None = None,
-) -> tuple[GatewayService, FakeProvider, FakeProvider]:
+    analyzer: FakeAnalyzer | None = None,
+    cloud_enabled: bool = True,
+) -> tuple[GatewayService, FakeProvider, FakeProvider, FakeAnalyzer]:
     local = local_provider or FakeProvider()
     cloud = cloud_provider or FakeProvider()
+    request_analyzer = analyzer or FakeAnalyzer()
     service = GatewayService(
         settings=Settings(
             local_model=local_model,
@@ -42,13 +63,27 @@ def make_service(
             cloud_api_key=cloud_api_key,
         ),
         local_provider=local,  # type: ignore[arg-type]
-        cloud_provider=cloud,  # type: ignore[arg-type]
+        cloud_provider=cloud if cloud_api_key else None,  # type: ignore[arg-type]
+        analyzer=request_analyzer,  # type: ignore[arg-type]
+        policy=RoutingPolicy(cloud_enabled=cloud_enabled),
     )
-    return service, local, cloud
+    return service, local, cloud, request_analyzer
+
+
+def analysis(
+    *, contains_personal_data: bool = False, complexity: str = "simple"
+) -> RequestAnalysis:
+    return RequestAnalysis(
+        contains_personal_data=contains_personal_data,
+        personal_data_types=["name"] if contains_personal_data else [],
+        complexity=complexity,  # type: ignore[arg-type]
+        task_type="general",
+        reason="Test analysis.",
+    )
 
 
 def test_chat_uses_local_provider_and_default_model() -> None:
-    service, local, cloud = make_service()
+    service, local, cloud, analyzer = make_service()
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     response = asyncio.run(service.chat(request))
@@ -56,16 +91,53 @@ def test_chat_uses_local_provider_and_default_model() -> None:
     assert response.model == "resolved-model"
     assert response.content == "hello"
     assert response.provider == "local"
+    assert analyzer.inputs == ["hi"]
     assert local.calls[0]["model"] == "local-default"
     assert cloud.calls == []
 
 
-def test_chat_uses_cloud_provider_and_request_model_override() -> None:
-    service, local, cloud = make_service()
+def test_chat_uses_cloud_for_complex_request() -> None:
+    analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    service, local, cloud, _ = make_service(analyzer=analyzer)
+    request = ChatRequest(messages=[{"role": "user", "content": "solve this"}])
+
+    response = asyncio.run(service.chat(request))
+
+    assert response.provider == "cloud"
+    assert cloud.calls[0]["model"] == "cloud-default"
+    assert local.calls == []
+
+
+def test_chat_routes_personal_data_to_local_even_when_complex() -> None:
+    analyzer = FakeAnalyzer(analysis(contains_personal_data=True, complexity="complex"))
+    service, local, cloud, _ = make_service(analyzer=analyzer)
+    request = ChatRequest(messages=[{"role": "user", "content": "My name is Jo"}])
+
+    response = asyncio.run(service.chat(request))
+
+    assert response.provider == "local"
+    assert local.calls[0]["model"] == "local-default"
+    assert cloud.calls == []
+
+
+def test_chat_keeps_complex_request_local_when_cloud_is_disabled() -> None:
+    analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    service, local, cloud, _ = make_service(analyzer=analyzer, cloud_enabled=False)
+    request = ChatRequest(messages=[{"role": "user", "content": "solve this"}])
+
+    response = asyncio.run(service.chat(request))
+
+    assert response.provider == "local"
+    assert local.calls[0]["model"] == "local-default"
+    assert cloud.calls == []
+
+
+def test_chat_uses_request_model_override_for_selected_provider() -> None:
+    analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    service, local, cloud, _ = make_service(analyzer=analyzer)
     request = ChatRequest(
-        provider="cloud",
         model="requested-model",
-        messages=[{"role": "user", "content": "hi"}],
+        messages=[{"role": "user", "content": "solve this"}],
         temperature=0.7,
     )
 
@@ -77,26 +149,84 @@ def test_chat_uses_cloud_provider_and_request_model_override() -> None:
     assert local.calls == []
 
 
-def test_chat_rejects_cloud_when_api_key_is_missing() -> None:
-    service, _, cloud = make_service(cloud_api_key="")
+def test_chat_ignores_requested_provider_and_uses_policy() -> None:
+    service, local, cloud, _ = make_service()
     request = ChatRequest(
         provider="cloud", messages=[{"role": "user", "content": "hi"}]
     )
 
-    with pytest.raises(ValueError, match="Cloud provider is not configured"):
-        asyncio.run(service.chat(request))
+    response = asyncio.run(service.chat(request))
 
+    assert response.provider == "local"
+    assert local.calls
     assert cloud.calls == []
 
 
-def test_chat_rejects_missing_model_configuration() -> None:
-    service, local, _ = make_service(local_model="")
+def test_chat_rejects_missing_local_model() -> None:
+    service, local, cloud, analyzer = make_service(local_model="")
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
-    with pytest.raises(ValueError, match="No model configured"):
+    with pytest.raises(ValueError, match="LOCAL_MODEL is not configured"):
+        asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == []
+    assert local.calls == []
+    assert cloud.calls == []
+
+
+def test_chat_requires_text_user_message() -> None:
+    service, local, cloud, analyzer = make_service()
+    request = ChatRequest(
+        messages=[{"role": "user", "content": [{"type": "text", "text": "image"}]}]
+    )
+
+    with pytest.raises(ValueError, match="A text user message is required"):
+        asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == []
+    assert local.calls == []
+    assert cloud.calls == []
+
+
+def test_chat_analyzes_only_string_user_messages() -> None:
+    service, _, _, analyzer = make_service()
+    request = ChatRequest(
+        messages=[
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": [{"type": "text", "text": "ignored"}]},
+            {"role": "user", "content": "second"},
+        ]
+    )
+
+    asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == ["first\nsecond"]
+
+
+def test_chat_rejects_unavailable_cloud_provider() -> None:
+    analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    service, local, cloud, _ = make_service(analyzer=analyzer, cloud_api_key="")
+    request = ChatRequest(messages=[{"role": "user", "content": "solve this"}])
+
+    with pytest.raises(RuntimeError, match="Cloud provider is unavailable"):
         asyncio.run(service.chat(request))
 
     assert local.calls == []
+    assert cloud.calls == []
+
+
+def test_chat_rejects_missing_cloud_model() -> None:
+    analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    service, local, cloud, _ = make_service(analyzer=analyzer, cloud_model="")
+    request = ChatRequest(messages=[{"role": "user", "content": "solve this"}])
+
+    with pytest.raises(ValueError, match="No model configured for the cloud provider"):
+        asyncio.run(service.chat(request))
+
+    assert local.calls == []
+    assert cloud.calls == []
 
 
 @pytest.mark.parametrize(
@@ -105,7 +235,8 @@ def test_chat_rejects_missing_model_configuration() -> None:
         (SimpleNamespace(model="m", choices=[]), RuntimeError, "no choices"),
         (
             SimpleNamespace(
-                model="m", choices=[SimpleNamespace(message=SimpleNamespace(content=None))]
+                model="m",
+                choices=[SimpleNamespace(message=SimpleNamespace(content=None))],
             ),
             TypeError,
             "no text content",
@@ -115,7 +246,7 @@ def test_chat_rejects_missing_model_configuration() -> None:
 def test_chat_rejects_invalid_provider_response(
     completion: Any, exception: type[Exception], message: str
 ) -> None:
-    service, _, _ = make_service(local_provider=FakeProvider(completion=completion))
+    service, _, _, _ = make_service(local_provider=FakeProvider(completion=completion))
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     with pytest.raises(exception, match=message):
@@ -123,7 +254,9 @@ def test_chat_rejects_invalid_provider_response(
 
 
 def test_chat_propagates_provider_failure() -> None:
-    service, _, _ = make_service(local_provider=FakeProvider(error=RuntimeError("offline")))
+    service, _, _, _ = make_service(
+        local_provider=FakeProvider(error=RuntimeError("offline"))
+    )
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     with pytest.raises(RuntimeError, match="offline"):
