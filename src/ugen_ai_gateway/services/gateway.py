@@ -1,3 +1,4 @@
+from time import perf_counter
 from typing import Any, cast
 
 from openai.types.chat import ChatCompletionMessageParam
@@ -5,10 +6,34 @@ from openai.types.chat import ChatCompletionMessageParam
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.pii import redact_personal_data
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
-from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse, RoutingInfo
+from ugen_ai_gateway.analysis.schemas import TokenUsage
+from ugen_ai_gateway.api.schemas import (
+    ChatRequest,
+    ChatResponse,
+    PerformanceStats,
+    RoutingInfo,
+    UsageStats,
+)
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.providers.cloud import CloudProvider
 from ugen_ai_gateway.providers.local import LocalProvider
+from ugen_ai_gateway.services.errors import (
+    GatewayConfigurationError,
+    InvalidChatRequest,
+    PrivacyRedactionError,
+    ProviderRequestError,
+    ProviderTimeout,
+    ProviderUnavailable,
+    RequestTooLarge,
+)
+
+MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
+SUPPORTED_PERSONAL_DATA_TYPES = {
+    "email",
+    "taiwan_mobile",
+    "taiwan_id",
+    "credit_card",
+}
 
 
 class GatewayService:
@@ -30,8 +55,9 @@ class GatewayService:
         self._policy = policy
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
+        total_started_at = perf_counter()
         if not self._settings.local_model:
-            raise ValueError("LOCAL_MODEL is not configured")
+            raise GatewayConfigurationError("LOCAL_MODEL is not configured")
 
         user_messages: list[str] = []
         for message in request.messages:
@@ -45,14 +71,47 @@ class GatewayService:
         user_input = "\n".join(user_messages)
 
         if not user_input:
-            raise ValueError("A text user message is required")
+            raise InvalidChatRequest("A text user message is required")
 
-        analysis = await self._analyzer.analyze(user_input)
+        if len(user_input) > MAX_ANALYSIS_INPUT_CHARACTERS:
+            raise RequestTooLarge(
+                f"User text exceeds the {MAX_ANALYSIS_INPUT_CHARACTERS}-character limit"
+            )
+
+        analysis_started_at = perf_counter()
+        try:
+            analysis = await self._analyzer.analyze(user_input)
+        except TimeoutError as exc:
+            raise ProviderTimeout("Analysis provider timed out") from exc
+        except Exception as exc:
+            raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
+        analysis_ms = (perf_counter() - analysis_started_at) * 1000
+
+        unredactable_types = {
+            data_type.casefold()
+            for data_type in analysis.personal_data_types
+            if data_type.casefold() not in SUPPORTED_PERSONAL_DATA_TYPES
+        }
+        if (
+            analysis.contains_personal_data
+            and unredactable_types
+            and not (analysis.personal_data_values)
+        ):
+            raise PrivacyRedactionError(
+                "Detected personal data could not be safely redacted"
+            )
+        if analysis.contains_personal_data and not (
+            analysis.personal_data_types or analysis.personal_data_values
+        ):
+            raise PrivacyRedactionError(
+                "Detected personal data could not be safely redacted"
+            )
+
         decision = self._policy.decide(analysis)
 
         if decision.provider == "cloud":
             if self._cloud_provider is None:
-                raise RuntimeError("Cloud provider is unavailable")
+                raise ProviderUnavailable("Cloud provider is unavailable")
 
             provider = self._cloud_provider
             model = request.model or self._settings.cloud_model
@@ -61,7 +120,7 @@ class GatewayService:
             model = request.model or self._settings.local_model
 
         if not model:
-            raise ValueError(
+            raise GatewayConfigurationError(
                 f"No model configured for the {decision.provider} provider"
             )
 
@@ -71,7 +130,10 @@ class GatewayService:
             redacted_message = message_data.copy()
             content = redacted_message.get("content")
             if isinstance(content, str):
-                redacted_message["content"] = redact_personal_data(content)
+                redacted_message["content"] = redact_personal_data(
+                    content,
+                    additional_values=analysis.personal_data_values,
+                )
             elif content is not None and not isinstance(content, dict):
                 redacted_parts = []
                 for part in content:
@@ -82,7 +144,8 @@ class GatewayService:
                     redacted_part = part.copy()
                     if isinstance(redacted_part.get("text"), str):
                         redacted_part["text"] = redact_personal_data(
-                            redacted_part["text"]
+                            redacted_part["text"],
+                            additional_values=analysis.personal_data_values,
                         )
                     redacted_parts.append(redacted_part)
 
@@ -90,11 +153,18 @@ class GatewayService:
 
             messages.append(cast(ChatCompletionMessageParam, redacted_message))
 
-        completion = await provider.complete(
-            model=model,
-            messages=messages,
-            temperature=request.temperature,
-        )
+        generation_started_at = perf_counter()
+        try:
+            completion = await provider.complete(
+                model=model,
+                messages=messages,
+                temperature=request.temperature,
+            )
+        except TimeoutError as exc:
+            raise ProviderTimeout("Model provider timed out") from exc
+        except Exception as exc:
+            raise ProviderRequestError(f"Model provider request failed: {exc}") from exc
+        generation_ms = (perf_counter() - generation_started_at) * 1000
 
         if not completion.choices:
             raise RuntimeError("Model provider returned no choices")
@@ -103,6 +173,17 @@ class GatewayService:
 
         if not isinstance(content, str):
             raise TypeError("Model provider returned no text content")
+
+        raw_usage = getattr(completion, "usage", None)
+        generation_usage = (
+            TokenUsage(
+                prompt_tokens=getattr(raw_usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(raw_usage, "completion_tokens", 0) or 0,
+                total_tokens=getattr(raw_usage, "total_tokens", 0) or 0,
+            )
+            if raw_usage is not None
+            else None
+        )
 
         routing = RoutingInfo(
             complexity=analysis.complexity,
@@ -118,4 +199,13 @@ class GatewayService:
             content=content,
             provider=decision.provider,
             routing=routing,
+            usage=UsageStats(
+                analysis=analysis.usage,
+                generation=generation_usage,
+            ),
+            performance=PerformanceStats(
+                analysis_ms=analysis_ms,
+                generation_ms=generation_ms,
+                total_ms=(perf_counter() - total_started_at) * 1000,
+            ),
         )

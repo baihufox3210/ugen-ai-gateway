@@ -75,7 +75,7 @@ def analysis(
 ) -> RequestAnalysis:
     return RequestAnalysis(
         contains_personal_data=contains_personal_data,
-        personal_data_types=["name"] if contains_personal_data else [],
+        personal_data_types=["email"] if contains_personal_data else [],
         complexity=complexity,  # type: ignore[arg-type]
         task_type="general",
         reason="Test analysis.",

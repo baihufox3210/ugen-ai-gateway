@@ -7,7 +7,7 @@ from ugen_ai_gateway.analysis.pii import (
     redact_personal_data,
 )
 from ugen_ai_gateway.analysis.prompts import REQUEST_ANALYSIS_SYSTEM_PROMPT
-from ugen_ai_gateway.analysis.schemas import RequestAnalysis
+from ugen_ai_gateway.analysis.schemas import RequestAnalysis, TokenUsage
 from ugen_ai_gateway.providers.base import ModelProvider
 
 
@@ -56,15 +56,34 @@ class RequestAnalyzer:
             ) from exc
 
         detected_types = detect_personal_data(user_input)
-        if not detected_types:
-            return analysis
-
+        reported_values = list(
+            dict.fromkeys(
+                value.strip()
+                for value in analysis.personal_data_values
+                if value.strip() and value in user_input
+            )
+        )
         personal_data_types = list(
             dict.fromkeys([*analysis.personal_data_types, *detected_types])
         )
+        usage = getattr(completion, "usage", None)
+        token_usage = (
+            TokenUsage(
+                prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                total_tokens=getattr(usage, "total_tokens", 0) or 0,
+            )
+            if usage is not None
+            else None
+        )
+
         return analysis.model_copy(
             update={
-                "contains_personal_data": True,
+                "contains_personal_data": bool(
+                    analysis.contains_personal_data or detected_types or reported_values
+                ),
                 "personal_data_types": personal_data_types,
+                "personal_data_values": reported_values,
+                "usage": token_usage,
             }
         )

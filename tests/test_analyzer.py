@@ -48,9 +48,11 @@ def test_analyzer_preserves_model_analysis_when_no_patterns_match() -> None:
     payload = {
         "contains_personal_data": False,
         "personal_data_types": [],
+        "personal_data_values": [],
         "complexity": "moderate",
         "task_type": "reasoning",
         "reason": "Requires several steps.",
+        "usage": None,
     }
     analyzer = RequestAnalyzer(
         provider=FakeProvider(payload),  # type: ignore[arg-type]

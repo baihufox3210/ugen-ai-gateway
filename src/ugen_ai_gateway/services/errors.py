@@ -1,0 +1,26 @@
+class GatewayConfigurationError(ValueError):
+    """Raised when a required provider or model setting is missing."""
+
+
+class InvalidChatRequest(ValueError):
+    """Raised when a chat request cannot be processed safely."""
+
+
+class RequestTooLarge(InvalidChatRequest):
+    """Raised when a chat request exceeds configured input limits."""
+
+
+class PrivacyRedactionError(InvalidChatRequest):
+    """Raised when detected personal data cannot be safely redacted."""
+
+
+class ProviderUnavailable(RuntimeError):
+    """Raised when the selected provider is not configured or unavailable."""
+
+
+class ProviderTimeout(TimeoutError):
+    """Raised when an upstream model request times out."""
+
+
+class ProviderRequestError(RuntimeError):
+    """Raised when an upstream model request fails or returns invalid data."""
