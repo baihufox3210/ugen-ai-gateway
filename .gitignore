@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 
 .env
+node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
