@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,8 +16,17 @@ class Settings(BaseSettings):
     cloud_base_url: str = ""
     cloud_model: str = ""
 
-    request_timeout: float = 60.0
-    max_retries: int = 2
+    gateway_api_key: str = ""
+    rate_limit_requests: int = Field(default=60, gt=0)
+    rate_limit_window_seconds: int = Field(default=60, gt=0)
+    request_timeout: float = Field(default=60.0, gt=0, le=600)
+    max_retries: int = Field(default=2, ge=0, le=10)
+
+    @model_validator(mode="after")
+    def validate_runtime_security(self) -> "Settings":
+        if self.app_env.casefold() == "production" and not self.gateway_api_key:
+            raise ValueError("GATEWAY_API_KEY is required in production")
+        return self
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

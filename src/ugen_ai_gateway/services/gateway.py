@@ -54,6 +54,17 @@ class GatewayService:
         self._analyzer = analyzer
         self._policy = policy
 
+    async def readiness(self) -> bool:
+        if not self._settings.local_model:
+            return False
+        try:
+            await self._local_provider.health_check()
+            if self._cloud_provider is not None:
+                await self._cloud_provider.health_check()
+        except Exception:  # noqa: BLE001 - readiness reports any provider failure
+            return False
+        return True
+
     async def chat(self, request: ChatRequest) -> ChatResponse:
         total_started_at = perf_counter()
         if not self._settings.local_model:
@@ -92,11 +103,7 @@ class GatewayService:
             for data_type in analysis.personal_data_types
             if data_type.casefold() not in SUPPORTED_PERSONAL_DATA_TYPES
         }
-        if (
-            analysis.contains_personal_data
-            and unredactable_types
-            and not (analysis.personal_data_values)
-        ):
+        if unredactable_types and not analysis.personal_data_values:
             raise PrivacyRedactionError(
                 "Detected personal data could not be safely redacted"
             )

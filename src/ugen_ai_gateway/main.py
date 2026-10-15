@@ -6,7 +6,8 @@ from ugen_ai_gateway.config import get_settings
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title=get_settings().app_name)
+    settings = get_settings()
+    app = FastAPI(title=settings.app_name)
     app.include_router(router)
     return app
 

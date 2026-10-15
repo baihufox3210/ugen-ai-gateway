@@ -11,6 +11,9 @@ class CloudProvider:
     def __init__(self, client: AsyncOpenAI) -> None:
         self._client = client
 
+    async def health_check(self) -> None:
+        await self._client.models.list()
+
     async def complete(
         self,
         *,

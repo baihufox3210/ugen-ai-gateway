@@ -31,6 +31,9 @@ cp .env.example .env
 | --- | --- | --- |
 | `APP_NAME` | FastAPI application title | `UGen AI Gateway` |
 | `APP_ENV` | Environment label | `development` |
+| `GATEWAY_API_KEY` | API key required in the `X-API-Key` header; required when `APP_ENV=production` | blank in development |
+| `RATE_LIMIT_REQUESTS` | Requests allowed per client IP in the configured window | `60` |
+| `RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window in seconds | `60` |
 | `LOCAL_API_KEY` | API key passed to the local provider | `local` |
 | `LOCAL_BASE_URL` | Local OpenAI-compatible API base URL | `http://localhost:11434/v1` |
 | `LOCAL_MODEL` | Local model used for analysis and local generation | `qwen2.5:7b` |
@@ -53,8 +56,9 @@ uv sync
 uv run ugen-ai-gateway
 ```
 
-The server listens on `0.0.0.0:7632` by default. The health endpoint is
-`http://localhost:7632/health`.
+The server listens on `0.0.0.0:7632` by default. `/health` reports process
+liveness. `/ready` checks that the local model endpoint (and configured cloud
+endpoint) can be reached.
 
 ## API
 
@@ -70,6 +74,7 @@ Example request:
 ```sh
 curl http://localhost:7632/v1/chat/completions \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: your-gateway-key' \
   -d '{
     "messages": [
       {"role": "user", "content": "Explain what an API gateway does."}
@@ -81,6 +86,13 @@ curl http://localhost:7632/v1/chat/completions \
 The request accepts 1–64 OpenAI-compatible chat messages, a temperature from
 `0.0` to `2.0`, and an optional model override. Text across all messages is
 limited to 32,000 characters. The model override is limited to 128 characters.
+
+When `GATEWAY_API_KEY` is set, every chat request must include it in
+`X-API-Key`; invalid or missing keys receive HTTP `401`. Requests are limited
+per client IP using `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_SECONDS`; an
+exceeded limit receives HTTP `429`. The built-in limiter is per process, so
+deployments with multiple workers or replicas should enforce a shared limit at
+the reverse proxy or API gateway as well.
 
 The response includes the generated `content`, selected `provider` and `model`,
 `routing` analysis, token `usage` when reported by the model provider, and
@@ -155,6 +167,8 @@ not a guarantee that every sensitive value will be recognized.
 - Invalid request data returns HTTP `422`; a request exceeding the gateway's
   input limit returns HTTP `413`.
 - Missing provider configuration or an unavailable provider returns HTTP `503`.
+- Invalid or missing gateway API keys return HTTP `401`; rate-limited requests
+  return HTTP `429`.
 - Provider timeouts return HTTP `504`.
 - Other upstream provider errors return HTTP `502`.
 

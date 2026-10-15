@@ -144,6 +144,29 @@ def test_chat_redacts_personal_data_before_sending_to_local_provider() -> None:
     assert cloud.calls == []
 
 
+@pytest.mark.parametrize("contains_personal_data", [True, False])
+def test_chat_rejects_unredactable_personal_data_without_provider_forwarding(
+    contains_personal_data: bool,
+) -> None:
+    analyzer = FakeAnalyzer(
+        RequestAnalysis(
+            contains_personal_data=contains_personal_data,
+            personal_data_types=["name"],
+            complexity="complex",
+            task_type="general",
+            reason="A name was detected.",
+        )
+    )
+    service, local, cloud, _ = make_service(analyzer=analyzer)
+    request = ChatRequest(messages=[{"role": "user", "content": "My name is Alex"}])
+
+    with pytest.raises(ValueError, match="could not be safely redacted"):
+        asyncio.run(service.chat(request))
+
+    assert local.calls == []
+    assert cloud.calls == []
+
+
 def test_chat_keeps_complex_request_local_when_cloud_is_disabled() -> None:
     analyzer = FakeAnalyzer(analysis(complexity="complex"))
     service, local, cloud, _ = make_service(analyzer=analyzer, cloud_enabled=False)
