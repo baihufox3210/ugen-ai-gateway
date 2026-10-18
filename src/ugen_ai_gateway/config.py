@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,8 +20,8 @@ class Settings(BaseSettings):
     gateway_api_key: str = ""
     rate_limit_requests: int = Field(default=60, gt=0)
     rate_limit_window_seconds: int = Field(default=60, gt=0)
-    request_timeout: float = Field(default=60.0, gt=0, le=600)
-    max_retries: int = Field(default=2, ge=0, le=10)
+    request_timeout: float = Field(default=300.0, gt=0, le=600)
+    max_retries: int = Field(default=0, ge=0, le=10)
 
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":
@@ -28,7 +29,10 @@ class Settings(BaseSettings):
             raise ValueError("GATEWAY_API_KEY is required in production")
         return self
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[2] / ".env",
+        env_file_encoding="utf-8",
+    )
 
 
 @lru_cache

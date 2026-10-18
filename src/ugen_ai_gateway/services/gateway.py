@@ -1,11 +1,11 @@
 from time import perf_counter
-from typing import Any, cast
+from typing import Any, Awaitable, Callable, cast
 
 from openai.types.chat import ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.pii import redact_personal_data
-from ugen_ai_gateway.analysis.policy import RoutingPolicy
+from ugen_ai_gateway.analysis.policy import RoutingDecision, RoutingPolicy
 from ugen_ai_gateway.analysis.schemas import TokenUsage
 from ugen_ai_gateway.api.schemas import (
     ChatRequest,
@@ -28,6 +28,7 @@ from ugen_ai_gateway.services.errors import (
 )
 
 MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
+ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 SUPPORTED_PERSONAL_DATA_TYPES = {
     "email",
     "taiwan_mobile",
@@ -65,7 +66,15 @@ class GatewayService:
             return False
         return True
 
-    async def chat(self, request: ChatRequest) -> ChatResponse:
+    async def chat(
+        self,
+        request: ChatRequest,
+        progress: ProgressCallback | None = None,
+    ) -> ChatResponse:
+        async def report(stage: str, **data: Any) -> None:
+            if progress is not None:
+                await progress(stage, data)
+
         total_started_at = perf_counter()
         if not self._settings.local_model:
             raise GatewayConfigurationError("LOCAL_MODEL is not configured")
@@ -90,6 +99,7 @@ class GatewayService:
             )
 
         analysis_started_at = perf_counter()
+        await report("analysis_started")
         try:
             analysis = await self._analyzer.analyze(user_input)
         except TimeoutError as exc:
@@ -97,6 +107,15 @@ class GatewayService:
         except Exception as exc:
             raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
         analysis_ms = (perf_counter() - analysis_started_at) * 1000
+
+        analysis = self._policy.classify_complexity(user_input, analysis)
+        await report(
+            "analysis_completed",
+            complexity=analysis.complexity,
+            task_type=analysis.task_type,
+            contains_personal_data=analysis.contains_personal_data,
+            personal_data_types=analysis.personal_data_types,
+        )
 
         unredactable_types = {
             data_type.casefold()
@@ -115,6 +134,22 @@ class GatewayService:
             )
 
         decision = self._policy.decide(analysis)
+        if request.provider_selection != "auto":
+            decision = RoutingDecision(
+                provider=request.provider_selection,
+                reason=(
+                    "Local model selected manually."
+                    if request.provider_selection == "local"
+                    else "Cloud model selected manually."
+                ),
+            )
+
+        await report(
+            "routed",
+            provider=decision.provider,
+            reason=decision.reason,
+            complexity=analysis.complexity,
+        )
 
         if decision.provider == "cloud":
             if self._cloud_provider is None:
@@ -161,6 +196,7 @@ class GatewayService:
             messages.append(cast(ChatCompletionMessageParam, redacted_message))
 
         generation_started_at = perf_counter()
+        await report("generation_started", provider=decision.provider, model=model)
         try:
             completion = await provider.complete(
                 model=model,

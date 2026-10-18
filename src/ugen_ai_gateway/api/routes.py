@@ -1,4 +1,6 @@
+import asyncio
 import hmac
+import json
 import logging
 import time
 from collections import defaultdict, deque
@@ -6,6 +8,7 @@ from threading import Lock
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.config import get_settings
@@ -43,6 +46,16 @@ async def readiness(gateway: GatewayDependency, response: Response) -> dict[str,
         response.status_code = 503
         return {"status": "not_ready"}
     return {"status": "ready"}
+
+
+@router.get("/v1/models")
+async def configured_models() -> dict[str, str]:
+    """Expose configured model names for the local dashboard."""
+    settings = get_settings()
+    return {
+        "local_model": settings.local_model.strip(),
+        "cloud_model": settings.cloud_model.strip(),
+    }
 
 
 def check_api_access(request: Request) -> None:
@@ -98,3 +111,51 @@ async def create_chat_completion(
             status_code=502,
             detail="Model provider request failed",
         ) from exc
+
+
+@router.post("/v1/chat/completions/stream")
+async def create_chat_completion_stream(
+    request: ChatRequest,
+    gateway: GatewayDependency,
+    http_request: Request,
+) -> StreamingResponse:
+    check_api_access(http_request)
+
+    async def events():
+        queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
+
+        async def report(stage: str, data: dict) -> None:
+            await queue.put((stage, data))
+
+        task = asyncio.create_task(gateway.chat(request, progress=report))
+        try:
+            while not task.done() or not queue.empty():
+                try:
+                    stage, data = await asyncio.wait_for(queue.get(), timeout=0.2)
+                    yield json.dumps(
+                        {"type": stage, **data}, ensure_ascii=False
+                    ) + "\n"
+                except TimeoutError:
+                    continue
+
+            try:
+                result = task.result()
+            except Exception as exc:
+                logger.exception("Streaming chat completion failed")
+                yield json.dumps(
+                    {"type": "error", "detail": str(exc)}, ensure_ascii=False
+                ) + "\n"
+            else:
+                yield json.dumps(
+                    {"type": "result", "data": result.model_dump(mode="json")},
+                    ensure_ascii=False,
+                ) + "\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        events(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

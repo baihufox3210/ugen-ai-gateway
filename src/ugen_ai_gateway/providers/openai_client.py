@@ -5,8 +5,8 @@ def create_openai_client(
     *,
     api_key: str,
     base_url: str | None = None,
-    timeout: float = 60.0,
-    max_retries: int = 2,
+    timeout: float = 300.0,
+    max_retries: int = 0,
 ) -> AsyncOpenAI:
     """
     Create an OpenAI client with the given API keys and optional base URL.

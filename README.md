@@ -40,8 +40,8 @@ cp .env.example .env
 | `CLOUD_API_KEY` | Optional cloud provider API key; blank disables cloud routing | blank |
 | `CLOUD_BASE_URL` | Optional cloud-compatible API base URL; blank uses the SDK default | blank |
 | `CLOUD_MODEL` | Cloud model used for complex requests | blank |
-| `REQUEST_TIMEOUT` | Provider request timeout in seconds | `60` |
-| `MAX_RETRIES` | Provider client retry count | `2` |
+| `REQUEST_TIMEOUT` | Provider request timeout in seconds | `300` |
+| `MAX_RETRIES` | Provider client retry count | `0` |
 
 Cloud routing is enabled only when both `CLOUD_API_KEY` and `CLOUD_MODEL` are
 configured. Use a cloud endpoint and model that support the OpenAI-compatible
@@ -138,11 +138,20 @@ provider request, and `total_ms` measures the complete gateway operation.
 
 ## Routing behavior
 
-The local model analyzes each request. Complex tasks use the cloud provider when
-cloud routing is enabled; all other tasks use the local provider. If cloud
-routing is disabled, requests stay local. The returned `routing` object reports
-the estimated complexity, task type, detected personal-data types, selected
-provider, and the reason for that decision.
+The local model analyzes each request. Moderate and complex tasks use the cloud
+provider when cloud routing is enabled. Strong complexity cues in the prompt,
+such as architecture design, comparisons, implementation, debugging, and
+multi-step planning, promote an underestimated simple classification to complex.
+Simple tasks stay local. If cloud routing is disabled, requests stay local. The
+returned `routing` object reports the estimated complexity, task type, detected
+personal-data types, selected provider, and the reason for that decision.
+
+`POST /v1/chat/completions` also accepts `provider_selection` with `auto`,
+`local`, or `cloud`. It defaults to `auto`; explicit local or cloud selection
+overrides the automatic generation provider while keeping request analysis and
+personal-data checks on the local model. The `/v1/chat/completions/stream`
+endpoint emits newline-delimited progress events for analysis, routing, and
+generation.
 
 ## Personal-data handling
 

@@ -32,6 +32,7 @@ class PerformanceStats(BaseModel):
 
 class ChatRequest(BaseModel):
     provider: Literal["local", "cloud"] = "local"
+    provider_selection: Literal["auto", "local", "cloud"] = "auto"
     model: str | None = Field(
         default=None,
         min_length=1,
