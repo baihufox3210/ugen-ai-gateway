@@ -168,7 +168,26 @@ usage is `null`. `analysis_ms` measures the local analysis request,
 
 ## Routing behavior
 
-The local model analyzes each request. Moderate and complex tasks use the cloud
+Each request is analyzed locally before routing. `ANALYSIS_MODE` controls how:
+
+| Mode | Behavior |
+| --- | --- |
+| `hybrid` (default) | Fast rule-based analysis when the request would stay on the local model anyway; the local model analyzes anything that could go to the cloud |
+| `llm` | Always ask the local model |
+| `rules` | Regular expressions only, never call the model |
+
+Rule-based analysis only detects the structured personal data listed under
+[Personal-data handling](#personal-data-handling); names and addresses need the
+model. That is why `hybrid` only skips the model for requests that stay on this
+machine, and why `rules` is not recommended when cloud routing is enabled.
+
+Model analysis results are cached in memory for identical request text
+(`ANALYSIS_CACHE_SIZE`, default `256` entries, `0` disables;
+`ANALYSIS_CACHE_TTL_SECONDS`, default `600`). Cache keys are SHA-256 hashes,
+and cached results never leave the process. `routing.analysis_source` and the
+`analysis_completed` stream event report `llm`, `rules`, or `cache`.
+
+The analysis model classifies each request. Moderate and complex tasks use the cloud
 provider when cloud routing is enabled. Strong complexity cues in the prompt,
 such as architecture design, comparisons, implementation, debugging, and
 multi-step planning, promote an underestimated simple classification to complex.

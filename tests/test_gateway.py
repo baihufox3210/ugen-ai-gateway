@@ -91,7 +91,7 @@ def make_service(
             local_model=local_model,
             cloud_model=cloud_model,
             cloud_api_key=cloud_api_key,
-            **settings,
+            **{"analysis_mode": "llm", "analysis_cache_size": 0, **settings},
         ),
         local_provider=local,  # type: ignore[arg-type]
         cloud_provider=cloud if cloud_api_key else None,  # type: ignore[arg-type]
@@ -508,3 +508,87 @@ def test_stream_restores_placeholders_split_across_chunks() -> None:
     assert "".join(deltas) == "Mail alex@example.com now"
     assert all("[" not in delta for delta in deltas)
     assert events[-1].response.content == "Mail alex@example.com now"
+
+
+def test_hybrid_analysis_skips_the_model_when_the_request_stays_local() -> None:
+    service, local, _, analyzer = make_service(analysis_mode="hybrid")
+    request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
+
+    response = asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == []
+    assert response.routing.analysis_source == "rules"
+    assert response.provider == "local"
+    assert local.calls
+
+
+@pytest.mark.parametrize(
+    ("content", "selection"),
+    [
+        ("Please design a system for billing", "auto"),
+        ("hi", "cloud"),
+    ],
+)
+def test_hybrid_analysis_uses_the_model_whenever_cloud_is_possible(
+    content: str, selection: str
+) -> None:
+    analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    service, _, cloud, _ = make_service(analyzer=analyzer, analysis_mode="hybrid")
+    request = ChatRequest(
+        provider_selection=selection, messages=[{"role": "user", "content": content}]
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == [content]
+    assert response.routing.analysis_source == "llm"
+    assert cloud.calls
+
+
+def test_hybrid_analysis_skips_the_model_when_local_is_forced() -> None:
+    service, _, _, analyzer = make_service(analysis_mode="hybrid")
+    request = ChatRequest(
+        provider_selection="local",
+        messages=[{"role": "user", "content": "Please design a system"}],
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == []
+    assert response.routing.complexity == "complex"
+
+
+def test_rules_mode_never_calls_the_analysis_model() -> None:
+    service, _, cloud, analyzer = make_service(analysis_mode="rules")
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "Compare these designs, mail a@b.com"}]
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == []
+    assert response.routing.personal_data_types == ["email"]
+    assert response.provider == "cloud"
+    assert cloud.calls[0]["messages"][-1]["content"].endswith("[EMAIL_1]")
+
+
+def test_analysis_results_are_cached_for_identical_input() -> None:
+    service, _, _, analyzer = make_service(analysis_cache_size=8)
+    request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
+
+    first = asyncio.run(service.chat(request))
+    second = asyncio.run(service.chat(request))
+
+    assert analyzer.inputs == ["hi"]
+    assert first.routing.analysis_source == "llm"
+    assert second.routing.analysis_source == "cache"
+
+
+def test_analysis_events_report_the_source() -> None:
+    service, _, _, _ = make_service(analysis_mode="hybrid")
+    request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
+
+    events = asyncio.run(collect(service, request))
+
+    completed = next(event for event in events if event.type == "analysis_completed")
+    assert completed.data["source"] == "rules"

@@ -1,4 +1,4 @@
-import type { Phase, PiiState, Provider, ProviderSelection } from '../types';
+import type { AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from '../types';
 
 type Props = {
   phase: Phase;
@@ -9,6 +9,7 @@ type Props = {
   cloudModel: string;
   modelsStatus: 'loading' | 'loaded' | 'error';
   pii: PiiState | null;
+  analysisSource: AnalysisSource | null;
 };
 
 function ProcessCard({ glyph, label, title, className = '' }: {
@@ -40,7 +41,9 @@ function piiSummary(pii: PiiState): string {
 
 const SELECTION_LABEL: Record<ProviderSelection, string> = { auto: '自動分流', local: '指定本機', cloud: '指定雲端' };
 
-function RequestFlow({ phase, provider, providerSelection, model, localModel, cloudModel, modelsStatus, pii }: Props) {
+const SOURCE_LABEL: Record<AnalysisSource, string> = { llm: 'LOCAL MODEL', rules: 'FAST RULES', cache: 'CACHED' };
+
+function RequestFlow({ phase, provider, providerSelection, model, localModel, cloudModel, modelsStatus, pii, analysisSource }: Props) {
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const analyzed = ['analyzed', 'routing', 'generating', 'complete'].includes(phase);
   const routing = phase === 'routing' || phase === 'generating';
@@ -59,7 +62,7 @@ function RequestFlow({ phase, provider, providerSelection, model, localModel, cl
     <div className="flow-v4-steps">
       <ProcessCard glyph="↗" label="STEP 01 · INPUT" title="使用者請求" className={busy || phase === 'complete' ? 'done' : ''} />
       <div className={`flow-v4-link ${phase === 'sending' || phase === 'analyzing' ? 'active' : analyzed ? 'done' : ''}`} aria-hidden="true"><i /></div>
-      <ProcessCard glyph="⌕" label="STEP 02 · LOCAL CHECK" title="本機分析與隱私檢查" className={`analysis ${phase === 'analyzing' ? 'working' : analyzed ? 'done' : ''}`} />
+      <ProcessCard glyph="⌕" label={`STEP 02 · ${analysisSource ? SOURCE_LABEL[analysisSource] : 'LOCAL CHECK'}`} title="本機分析與隱私檢查" className={`analysis ${phase === 'analyzing' ? 'working' : analyzed ? 'done' : ''}`} />
       <FlowBranch provider={provider} animated={routing} />
       <div className="flow-v4-targets">
         <ProcessCard glyph="⌂" label="STEP 03A · LOCAL" title={localName} className={`local ${provider === 'local' ? 'chosen' : ''} ${phase === 'generating' && provider === 'local' ? 'working' : ''} ${modelsStatus === 'error' && !localModel && !(provider === 'local' && model) ? 'config-error' : ''}`} />

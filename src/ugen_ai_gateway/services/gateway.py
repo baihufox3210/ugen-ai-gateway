@@ -1,11 +1,12 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from openai.types.chat import ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
+from ugen_ai_gateway.analysis.cache import AnalysisCache
 from ugen_ai_gateway.analysis.pii import SUPPORTED_TYPES
 from ugen_ai_gateway.analysis.policy import RoutingDecision, RoutingPolicy
 from ugen_ai_gateway.analysis.redaction import (
@@ -13,6 +14,7 @@ from ugen_ai_gateway.analysis.redaction import (
     RedactionVault,
     StreamRestorer,
 )
+from ugen_ai_gateway.analysis.rules import rule_analysis
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis, TokenUsage
 from ugen_ai_gateway.api.schemas import (
     ChatRequest,
@@ -35,6 +37,7 @@ from ugen_ai_gateway.services.errors import (
 
 MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
 ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
+AnalysisSource = Literal["llm", "rules", "cache"]
 
 
 @dataclass
@@ -89,6 +92,10 @@ class GatewayService:
         self._cloud_provider = cloud_provider
         self._analyzer = analyzer
         self._policy = policy
+        self._analysis_cache = AnalysisCache(
+            max_size=settings.analysis_cache_size,
+            ttl_seconds=settings.analysis_cache_ttl_seconds,
+        )
 
     async def readiness(self) -> bool:
         if not self._settings.local_model:
@@ -133,10 +140,13 @@ class GatewayService:
         user_input = self._validated_user_input(request)
 
         yield GatewayEvent("analysis_started")
-        analysis, analysis_ms = await self._analyze(user_input)
+        analysis, analysis_ms, analysis_source = await self._analyze(
+            request, user_input
+        )
         yield GatewayEvent(
             "analysis_completed",
             {
+                "source": analysis_source,
                 "complexity": analysis.complexity,
                 "task_type": analysis.task_type,
                 "contains_personal_data": analysis.contains_personal_data,
@@ -241,6 +251,7 @@ class GatewayService:
                 provider=prepared.decision.provider,
                 reason=prepared.decision.reason,
                 redacted_values=len(prepared.vault or ()),
+                analysis_source=analysis_source,
             ),
             usage=UsageStats(analysis=analysis.usage, generation=usage),
             performance=PerformanceStats(
@@ -272,16 +283,46 @@ class GatewayService:
             )
         return user_input
 
-    async def _analyze(self, user_input: str) -> tuple[RequestAnalysis, float]:
+    async def _analyze(
+        self, request: ChatRequest, user_input: str
+    ) -> tuple[RequestAnalysis, float, AnalysisSource]:
+        """Analyze the request, returning the result, its duration and its source."""
         started_at = perf_counter()
-        try:
-            analysis = await self._analyzer.analyze(user_input)
-        except TimeoutError as exc:
-            raise ProviderTimeout("Analysis provider timed out") from exc
-        except Exception as exc:
-            raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
-        analysis_ms = (perf_counter() - started_at) * 1000
-        return self._policy.classify_complexity(user_input, analysis), analysis_ms
+        mode = self._settings.analysis_mode
+        source: AnalysisSource
+
+        quick = (
+            self._policy.classify_complexity(user_input, rule_analysis(user_input))
+            if mode != "llm"
+            else None
+        )
+        if quick is not None and (mode == "rules" or self._stays_local(request, quick)):
+            analysis, source = quick, "rules"
+        elif cached := self._analysis_cache.get(user_input):
+            analysis, source = cached, "cache"
+        else:
+            try:
+                analysis = await self._analyzer.analyze(user_input)
+            except TimeoutError as exc:
+                raise ProviderTimeout("Analysis provider timed out") from exc
+            except Exception as exc:
+                raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
+            analysis = self._policy.classify_complexity(user_input, analysis)
+            self._analysis_cache.put(user_input, analysis)
+            source = "llm"
+
+        return analysis, (perf_counter() - started_at) * 1000, source
+
+    def _stays_local(self, request: ChatRequest, analysis: RequestAnalysis) -> bool:
+        """Whether the request would be generated locally given this analysis.
+
+        Hybrid mode only skips the analysis model in that case, so free-form
+        personal data (names, addresses) is still checked by the model before
+        anything can be sent to the cloud.
+        """
+        if request.provider_selection != "auto":
+            return request.provider_selection == "local"
+        return self._policy.decide(analysis).provider == "local"
 
     def _prepare(
         self, request: ChatRequest, analysis: RequestAnalysis, analysis_ms: float

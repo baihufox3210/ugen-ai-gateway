@@ -18,6 +18,7 @@ class RoutingInfo(BaseModel):
     provider: Literal["local", "cloud"]
     reason: str
     redacted_values: int = Field(default=0, ge=0)
+    analysis_source: Literal["llm", "rules", "cache"] = "llm"
 
 
 class UsageStats(BaseModel):

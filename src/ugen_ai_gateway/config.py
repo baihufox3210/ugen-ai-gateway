@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +22,12 @@ class Settings(BaseSettings):
     redact_local: bool = True
     # Put the original values back into the model's reply before returning it.
     restore_redacted: bool = True
+
+    # llm: always ask the local model. rules: regular expressions only.
+    # hybrid: rules when the request stays local anyway, the local model otherwise.
+    analysis_mode: Literal["llm", "rules", "hybrid"] = "hybrid"
+    analysis_cache_size: int = Field(default=256, ge=0)
+    analysis_cache_ttl_seconds: float = Field(default=600, gt=0)
 
     gateway_api_key: str = ""
     rate_limit_requests: int = Field(default=60, gt=0)
