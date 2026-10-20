@@ -4,11 +4,11 @@ import Markdown from './Markdown';
 
 // Built-in rules that keep a request local, with the reason in plain words.
 const POLICY_RULES: Record<string, string> = {
-  'privacy.never_cloud': '隱私政策：留在本機',
-  'privacy.unredactable': '無法安全遮蔽：留在本機',
-  'key.local_only': '金鑰限制：僅限本機',
-  'key.budget': '預算已用完：改用本機',
-  'guard.injection': '疑似注入：留在本機',
+  'privacy.never_cloud': 'Privacy policy: kept local',
+  'privacy.unredactable': 'Cannot redact safely: kept local',
+  'key.local_only': 'Key restriction: local only',
+  'key.budget': 'Budget used up: switched to local',
+  'guard.injection': 'Possible injection: kept local',
 };
 
 function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }: { turns: ConversationTurn[]; busy: boolean; streamingText: string; onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void }) {
@@ -20,8 +20,8 @@ function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }:
 
   return <article className="panel response-panel">
     <div className="panel-heading">
-      <div><span className="eyebrow">02 / CONVERSATION</span><h2><span className="channel-hash">#</span> 對話內容</h2><p>保留上下文，繼續追問也可以。</p></div>
-      <span className="conversation-live"><i/> 即時對話</span>
+      <div><span className="eyebrow">02 / CONVERSATION</span><h2><span className="channel-hash">#</span> Conversation</h2><p>Context is kept, so you can keep asking follow-ups.</p></div>
+      <span className="conversation-live"><i/> Live</span>
     </div>
     {hasTurns ? <div className="conversation-thread" ref={threadRef}>{turns.map((turn, index) => {
       const result = turn.result;
@@ -32,33 +32,33 @@ function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }:
         : null;
       return <section className="turn" key={turn.id}>
         <article className="chat-message user-message">
-          <span className="message-avatar user-avatar">你</span>
-          <div className="message-body"><div className="message-author"><b>你</b><button className="turn-delete" onClick={() => onDeleteTurn(turn.id)} disabled={busy} aria-label="刪除這則訊息" title="刪除此輪對話">刪除</button></div><p>{turn.user}</p></div>
+          <span className="message-avatar user-avatar">You</span>
+          <div className="message-body"><div className="message-author"><b>You</b><button className="turn-delete" onClick={() => onDeleteTurn(turn.id)} disabled={busy} aria-label="Delete this message" title="Delete this exchange">Delete</button></div><p>{turn.user}</p></div>
         </article>
         {result ? <article className="chat-message assistant-message">
           <span className="message-avatar assistant-avatar">✳</span>
           <div className="message-body">
-            <div className="message-author"><b>UGen</b>{result.id && <span className="feedback" role="group" aria-label="評價這則回答">
-              <button className={turn.feedback === 1 ? 'selected' : ''} aria-pressed={turn.feedback === 1} onClick={() => onFeedback(turn.id, 1)} title="有幫助">👍</button>
-              <button className={turn.feedback === -1 ? 'selected' : ''} aria-pressed={turn.feedback === -1} onClick={() => onFeedback(turn.id, -1)} title="沒幫助">👎</button>
+            <div className="message-author"><b>UGen</b>{result.id && <span className="feedback" role="group" aria-label="Rate this answer">
+              <button className={turn.feedback === 1 ? 'selected' : ''} aria-pressed={turn.feedback === 1} onClick={() => onFeedback(turn.id, 1)} title="Helpful">👍</button>
+              <button className={turn.feedback === -1 ? 'selected' : ''} aria-pressed={turn.feedback === -1} onClick={() => onFeedback(turn.id, -1)} title="Not helpful">👎</button>
             </span>}</div>
             <div className="markdown-wrap"><Markdown text={result.content}/></div>
             <div className="result-foot">
-              <span>任務：{result.routing.task_type}</span><span>複雜度：{result.routing.complexity}</span>
+              <span>Task: {result.routing.task_type}</span><span>Complexity: {result.routing.complexity}</span>
               {tokenRate !== null && <span className="token-stat">{tokenRate} tok/s · {generatedTokens} tokens</span>}
-              {(result.routing.output_findings?.length ?? 0) > 0 && <span className="fallback-note">已遮蔽回覆中 {result.routing.output_findings!.length} 項非你提供的個資</span>}
-              {result.routing.fallback_from && <span className="fallback-note">{result.routing.fallback_from === 'cloud' ? '雲端無回應，改由本機回答' : '本機無回應，改由雲端回答'}</span>}
-              {result.routing.rule && <span className={POLICY_RULES[result.routing.rule] ? 'policy-note' : ''}>{POLICY_RULES[result.routing.rule] ?? `規則：${result.routing.rule}`}</span>}
-              <span className={`provider-model ${result.provider === 'cloud' ? 'cloud' : ''}`}>{result.routing.provider_name || (result.provider === 'cloud' ? '雲端' : '本機')} · {result.model}</span>
+              {(result.routing.output_findings?.length ?? 0) > 0 && <span className="fallback-note">Redacted {result.routing.output_findings!.length} personal data item(s) you did not provide</span>}
+              {result.routing.fallback_from && <span className="fallback-note">{result.routing.fallback_from === 'cloud' ? 'Cloud did not respond; answered locally' : 'Local model did not respond; answered by cloud'}</span>}
+              {result.routing.rule && <span className={POLICY_RULES[result.routing.rule] ? 'policy-note' : ''}>{POLICY_RULES[result.routing.rule] ?? `Rule: ${result.routing.rule}`}</span>}
+              <span className={`provider-model ${result.provider === 'cloud' ? 'cloud' : ''}`}>{result.routing.provider_name || (result.provider === 'cloud' ? 'Cloud' : 'Local')} · {result.model}</span>
             </div>
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>
           <span className="message-avatar assistant-avatar">✳</span><div className="message-body"><div className="message-author"><b>UGen</b></div>{busy && index === turns.length - 1 && streamingText
             ? <div className="markdown-wrap streaming"><Markdown text={streamingText}/><i className="stream-caret" aria-hidden="true"/></div>
-            : <p>{busy && index === turns.length - 1 ? '正在分析並生成回應…' : '這則訊息尚未收到回應'}</p>}</div>
+            : <p>{busy && index === turns.length - 1 ? 'Analyzing and generating a response…' : 'No response received for this message'}</p>}</div>
         </article>}
       </section>;
-    })}</div> : <div className="response-empty"><span className="empty-glyph">✳</span><b>{busy ? '模型正在處理請求' : '開始一段新對話'}</b><p>{busy ? '請求分析完成後，Gateway 會顯示實際分流結果。' : '你可以接續提問，Gateway 會將對話脈絡一起送給模型。'}</p></div>}
+    })}</div> : <div className="response-empty"><span className="empty-glyph">✳</span><b>{busy ? 'The model is working on your request' : 'Start a new conversation'}</b><p>{busy ? 'Once the request is analyzed, the gateway shows where it was routed.' : 'Ask follow-up questions; the gateway sends the conversation context to the model.'}</p></div>}
   </article>;
 }
 export default ResponsePanel;

@@ -31,5 +31,5 @@ export async function errorMessage(response: Response): Promise<string> {
     if (typeof data.detail === 'string') return data.detail;
     if (typeof data.error?.message === 'string') return data.error.message;
   }
-  return `請求失敗（HTTP ${response.status}）`;
+  return `Request failed (HTTP ${response.status})`;
 }

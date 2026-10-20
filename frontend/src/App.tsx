@@ -172,7 +172,7 @@ function App() {
       ...(item.result ? [{ role: 'assistant' as const, content: item.result.content }] : []),
     ]).slice(-62);
     const totalChars = messages.reduce((count, message) => count + message.content.length, 0);
-    if (totalChars > 32000) { setError('這段對話累積內容已超過 32,000 字，請開始新對話後再試。'); return; }
+    if (totalChars > 32000) { setError('This conversation is over the 32,000-character limit. Start a new conversation and try again.'); return; }
 
     setConversations(current => [
       { ...conversation, updatedAt: Date.now(), turns: nextTurns },
@@ -184,8 +184,8 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2 }),
       });
-      if (!response.ok) throw new Error(response.status === 401 ? '需要 API 金鑰：請在「設定」中輸入金鑰。' : await errorMessage(response));
-      if (!response.body) throw new Error('伺服器沒有回傳即時進度資料');
+      if (!response.ok) throw new Error(response.status === 401 ? 'An API key is required. Enter one in Settings.' : await errorMessage(response));
+      if (!response.body) throw new Error('The server did not return a progress stream.');
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       const received: { result: ChatResult | null } = { result: null }; let streamError = '';
       const onEvent = (event: GatewayEvent) => {
@@ -197,7 +197,7 @@ function App() {
         if (event.type === 'generation_started') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setModel(String(event.model ?? '')); setPhase('generating'); }
         if (event.type === 'delta') setStreamingText(current => current + String(event.content ?? ''));
         if (event.type === 'result') received.result = event.data as ChatResult;
-        if (event.type === 'error') streamError = String(event.detail ?? '模型請求失敗');
+        if (event.type === 'error') streamError = String(event.detail ?? 'The model request failed.');
       };
       while (true) {
         const { value, done } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
@@ -208,34 +208,34 @@ function App() {
       if (buffer.trim()) onEvent(JSON.parse(buffer) as GatewayEvent);
       if (streamError) throw new Error(streamError);
       const finalResult = received.result;
-      if (!finalResult) throw new Error('Gateway 已結束連線，但沒有收到模型回應');
+      if (!finalResult) throw new Error('The gateway closed the connection without a model response.');
       updateTurn(conversationId, turnId, finalResult); setStreamingText(''); setStatsVersion(version => version + 1);
       setProvider(finalResult.provider === 'cloud' ? 'cloud' : 'local'); setModel(finalResult.model);
       setPii(piiFromResult(finalResult)); setAnalysisSource(finalResult.routing.analysis_source ?? null); setFallbackFrom(finalResult.routing.fallback_from ?? null); setPhase('complete');
     } catch (cause) {
       setConversations(current => current.map(item => item.id !== conversationId ? item : { ...item, turns: item.turns.filter(existingTurn => existingTurn.id !== turnId) }));
-      setError(cause instanceof Error ? cause.message : '無法連線至 Gateway'); setPrompt(userText); setStreamingText(''); setStatsVersion(version => version + 1); setPhase('failed');
+      setError(cause instanceof Error ? cause.message : 'Could not reach the gateway.'); setPrompt(userText); setStreamingText(''); setStatsVersion(version => version + 1); setPhase('failed');
     }
   }
 
   const flowStatus = busy ? 'active' : phase === 'failed' ? 'failed' : phase === 'complete' ? 'complete' : '';
   return <div className={`app-layout view-${view} ${drawerOpen ? 'drawer-open' : ''}`}>
     <header className="mobile-bar">
-      <button className="icon-button menu-button" onClick={() => setDrawerOpen(true)} aria-label="開啟對話紀錄" aria-expanded={drawerOpen}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+      <button className="icon-button menu-button" onClick={() => setDrawerOpen(true)} aria-label="Open conversation history" aria-expanded={drawerOpen}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
       <span className="mobile-title">ugen<span className="brand-dot">.</span><small>AI GATEWAY</small></span>
-      <button className="icon-button new-chat-mini" onClick={newConversation} disabled={busy} aria-label="開始新對話" title="開始新對話">＋</button>
+      <button className="icon-button new-chat-mini" onClick={newConversation} disabled={busy} aria-label="New conversation" title="New conversation">+</button>
     </header>
     <Sidebar conversations={conversations} activeId={activeId} busy={busy} onNew={newConversation} onSelect={selectConversation}
       onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)} onSettings={() => { setSettingsOpen(true); setDrawerOpen(false); }}/>
     <div className="drawer-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true"/>
-    <nav className="view-tabs" role="tablist" aria-label="切換檢視">
-      <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>對話{turns.length > 0 && <small>{turns.length}</small>}</button>
-      <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>流程監控<span className={`tab-status ${flowStatus}`}/></button>
+    <nav className="view-tabs" role="tablist" aria-label="Switch view">
+      <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>Chat{turns.length > 0 && <small>{turns.length}</small>}</button>
+      <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
-    <main className="workspace-area"><section className="workspace-title" aria-label="工作區標題"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>讓每個請求，<span>都走對路。</span></h1><p>本機分析後，再交給合適的模型處理。</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} apiKey={apiKey} refreshKey={statsVersion}/></section></main>
+    <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} apiKey={apiKey} refreshKey={statsVersion}/></section></main>
     <section className="chat-column"><ResponsePanel turns={turns} busy={busy} streamingText={streamingText} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onClear={() => setPrompt('')}/></section>
     {settingsOpen && <SettingsDialog apiKey={apiKey} onApiKeyChange={key => { saveApiKey(key); setApiKey(key); setStatsVersion(version => version + 1); }} onClose={() => setSettingsOpen(false)}/>}
-    {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? '清空所有對話紀錄？' : deleteAction.type === 'turn' ? '刪除這一輪對話？' : '刪除這段對話？'}</h2><p id="delete-description">{deleteAction.type === 'all' ? '所有保存在此裝置的對話都會永久刪除。' : '這項操作會從此裝置的對話紀錄中移除內容。'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>取消</button><button className="danger-button" onClick={performDelete}>刪除</button></div></section></div>}
+    {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all' ? 'Every conversation saved on this device will be permanently deleted.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}
   </div>;
 }
 export default App;
