@@ -24,3 +24,7 @@ class ProviderTimeout(TimeoutError):
 
 class ProviderRequestError(RuntimeError):
     """Raised when an upstream model request fails or returns invalid data."""
+
+
+class ProviderOutage(ProviderRequestError):
+    """Raised when a provider is unreachable, overloaded, or failing (5xx/429)."""

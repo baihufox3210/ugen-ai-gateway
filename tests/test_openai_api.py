@@ -23,6 +23,7 @@ class EchoProvider:
         self.name = name
         self.reply = reply
         self.calls: list[dict[str, Any]] = []
+        self.error: Exception | None = None
 
     async def complete(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
@@ -38,6 +39,8 @@ class EchoProvider:
 
     async def stream(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
+        if self.error:
+            raise self.error
         for index in range(0, len(self.reply), 4):
             yield SimpleNamespace(
                 model=f"{self.name}-resolved",
@@ -253,3 +256,27 @@ def test_dashboard_config_endpoint(gateway: Any) -> None:
     assert body["local_model"] == "local-model"
     assert body["cloud_enabled"] is True
     assert body["redact_local"] is True
+
+
+def test_streaming_fallback_is_reported_in_headers(gateway: Any) -> None:
+    import httpx
+
+    gateway.cloud.error = openai.APIConnectionError(
+        request=httpx.Request("POST", "https://cloud.test")
+    )
+
+    with gateway.client.chat.completions.with_streaming_response.create(
+        model="ugen-auto",
+        messages=[{"role": "user", "content": "please design a system"}],
+        stream=True,
+    ) as raw:
+        text = "".join(
+            chunk.choices[0].delta.content or ""
+            for chunk in raw.parse()
+            if chunk.choices
+        )
+        headers = raw.headers
+
+    assert text == "Hello there"
+    assert headers["x-ugen-provider"] == "local"
+    assert headers["x-ugen-fallback-from"] == "cloud"

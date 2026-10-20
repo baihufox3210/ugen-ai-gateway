@@ -39,6 +39,7 @@ function App() {
   const [streamingText, setStreamingText] = useState('');
   const [pii, setPii] = useState<PiiState | null>(null);
   const [analysisSource, setAnalysisSource] = useState<AnalysisSource | null>(null);
+  const [fallbackFrom, setFallbackFrom] = useState<Provider | null>(null);
   const [configuredModels, setConfiguredModels] = useState({ local: '', cloud: '' });
   const [modelsStatus, setModelsStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [error, setError] = useState('');
@@ -98,17 +99,17 @@ function App() {
     setActiveId(id); setPrompt(''); setError(''); setPhase(latest ? 'complete' : 'idle'); setView('chat'); setDrawerOpen(false);
     setProvider(latest ? latest.provider === 'cloud' ? 'cloud' : 'local' : null);
     setModel(latest?.model ?? '');
-    setPii(latest ? piiFromResult(latest) : null); setAnalysisSource(latest?.routing.analysis_source ?? null);
+    setPii(latest ? piiFromResult(latest) : null); setAnalysisSource(latest?.routing.analysis_source ?? null); setFallbackFrom(latest?.routing.fallback_from ?? null);
   }
   function newConversation() {
     if (busy) return;
-    setActiveId(null); setPrompt(''); setError(''); setPhase('idle'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setView('chat'); setDrawerOpen(false);
+    setActiveId(null); setPrompt(''); setError(''); setPhase('idle'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setFallbackFrom(null); setView('chat'); setDrawerOpen(false);
   }
   function restoreConversation(conversation: Conversation | undefined) {
     const latest = conversation ? [...conversation.turns].reverse().find(turn => turn.result)?.result : undefined;
     setActiveId(conversation?.id ?? null); setPrompt(''); setError(''); setPhase(latest ? 'complete' : 'idle');
     setProvider(latest ? latest.provider === 'cloud' ? 'cloud' : 'local' : null); setModel(latest?.model ?? '');
-    setPii(latest ? piiFromResult(latest) : null); setAnalysisSource(latest?.routing.analysis_source ?? null);
+    setPii(latest ? piiFromResult(latest) : null); setAnalysisSource(latest?.routing.analysis_source ?? null); setFallbackFrom(latest?.routing.fallback_from ?? null);
   }
   function performDelete() {
     if (!deleteAction || busy) return;
@@ -161,7 +162,7 @@ function App() {
       { ...conversation, updatedAt: Date.now(), turns: nextTurns },
       ...current.filter(item => item.id !== conversationId),
     ]);
-    setActiveId(conversationId); setPrompt(''); setStreamingText(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setError('');
+    setActiveId(conversationId); setPrompt(''); setStreamingText(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setFallbackFrom(null); setError('');
     try {
       const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v1/ugen/chat/stream`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -175,6 +176,7 @@ function App() {
         if (event.type === 'analysis_started') setPhase('analyzing');
         if (event.type === 'analysis_completed') { setPhase('analyzed'); setAnalysisSource(isSource(event.source) ? event.source : null); setPii({ found: Boolean(event.contains_personal_data), types: Array.isArray(event.personal_data_types) ? event.personal_data_types.map(String) : [] }); }
         if (event.type === 'routed') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setPhase('routing'); setPii(current => current && { ...current, redacted: Number(event.redacted_values ?? 0) }); }
+        if (event.type === 'fallback') { setFallbackFrom(event.from === 'cloud' ? 'cloud' : 'local'); setProvider(event.to === 'cloud' ? 'cloud' : 'local'); }
         if (event.type === 'generation_started') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setModel(String(event.model ?? '')); setPhase('generating'); }
         if (event.type === 'delta') setStreamingText(current => current + String(event.content ?? ''));
         if (event.type === 'result') received.result = event.data as ChatResult;
@@ -192,7 +194,7 @@ function App() {
       if (!finalResult) throw new Error('Gateway 已結束連線，但沒有收到模型回應');
       updateTurn(conversationId, turnId, finalResult); setStreamingText('');
       setProvider(finalResult.provider === 'cloud' ? 'cloud' : 'local'); setModel(finalResult.model);
-      setPii(piiFromResult(finalResult)); setAnalysisSource(finalResult.routing.analysis_source ?? null); setPhase('complete');
+      setPii(piiFromResult(finalResult)); setAnalysisSource(finalResult.routing.analysis_source ?? null); setFallbackFrom(finalResult.routing.fallback_from ?? null); setPhase('complete');
     } catch (cause) {
       setConversations(current => current.map(item => item.id !== conversationId ? item : { ...item, turns: item.turns.filter(existingTurn => existingTurn.id !== turnId) }));
       setError(cause instanceof Error ? cause.message : '無法連線至 Gateway'); setPrompt(userText); setStreamingText(''); setPhase('failed');
@@ -213,7 +215,7 @@ function App() {
       <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>對話{turns.length > 0 && <small>{turns.length}</small>}</button>
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>流程監控<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
-    <main className="workspace-area"><section className="workspace-title" aria-label="工作區標題"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>讓每個請求，<span>都走對路。</span></h1><p>本機分析後，再交給合適的模型處理。</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource}/><MonitorPanel conversations={conversations} phase={phase}/></section></main>
+    <main className="workspace-area"><section className="workspace-title" aria-label="工作區標題"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>讓每個請求，<span>都走對路。</span></h1><p>本機分析後，再交給合適的模型處理。</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom}/><MonitorPanel conversations={conversations} phase={phase}/></section></main>
     <section className="chat-column"><ResponsePanel turns={turns} busy={busy} streamingText={streamingText} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onClear={() => setPrompt('')}/></section>
     {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? '清空所有對話紀錄？' : deleteAction.type === 'turn' ? '刪除這一輪對話？' : '刪除這段對話？'}</h2><p id="delete-description">{deleteAction.type === 'all' ? '所有保存在此裝置的對話都會永久刪除。' : '這項操作會從此裝置的對話紀錄中移除內容。'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>取消</button><button className="danger-button" onClick={performDelete}>刪除</button></div></section></div>}
   </div>;

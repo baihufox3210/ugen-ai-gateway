@@ -41,7 +41,7 @@ cp .env.example .env
 | `CLOUD_BASE_URL` | Optional cloud-compatible API base URL; blank uses the SDK default | blank |
 | `CLOUD_MODEL` | Cloud model used for complex requests | blank |
 | `REQUEST_TIMEOUT` | Provider request timeout in seconds | `300` |
-| `MAX_RETRIES` | Provider client retry count | `0` |
+| `MAX_RETRIES` | Provider client retry count | `2` |
 
 Cloud routing is enabled only when both `CLOUD_API_KEY` and `CLOUD_MODEL` are
 configured. Use a cloud endpoint and model that support the OpenAI-compatible
@@ -194,6 +194,31 @@ multi-step planning, promote an underestimated simple classification to complex.
 Simple tasks stay local. If cloud routing is disabled, requests stay local. The
 returned `routing` object reports the estimated complexity, task type, detected
 personal-data types, selected provider, and the reason for that decision.
+
+## Resilience
+
+Provider calls are retried with exponential backoff on connection errors, HTTP
+`429`, and `5xx` responses (`MAX_RETRIES`, default `2`); a stream is only
+retried before any text has been sent.
+
+If the routed provider is still unavailable, automatically routed requests fall
+back to the other provider before any text has been sent:
+
+| Variable | Behavior | Default |
+| --- | --- | --- |
+| `FALLBACK_TO_LOCAL` | Cloud unavailable: answer with the local model, using the same redacted messages | `true` |
+| `FALLBACK_TO_CLOUD` | Local unavailable: answer with the cloud model, only when the local model analyzed the request and found no personal data | `false` |
+
+Requests that chose a provider explicitly (`ugen-local`, `ugen-cloud`, or
+`provider_selection`) never fall back. A fallback is reported as a `fallback`
+stream event, in `routing.fallback_from`, and in the `X-UGen-Fallback-From`
+header.
+
+Each provider has a circuit breaker: after `CIRCUIT_FAILURE_THRESHOLD`
+consecutive outages (default `3`) the provider is skipped for
+`CIRCUIT_COOLDOWN_SECONDS` (default `30`), then a single request probes it
+again. `GET /v1/ugen/providers` reports each breaker's state (`closed`, `open`,
+or `half_open`).
 
 ## Personal-data handling
 

@@ -51,6 +51,12 @@ async def gateway_config() -> dict[str, Any]:
     }
 
 
+@router.get("/v1/ugen/providers")
+async def provider_status(gateway: GatewayDependency) -> dict[str, str]:
+    """Circuit-breaker state per provider: closed, open, or half_open."""
+    return gateway.provider_status()
+
+
 @router.post("/v1/ugen/chat", response_model=ChatResponse)
 async def create_chat(
     request: ChatRequest,

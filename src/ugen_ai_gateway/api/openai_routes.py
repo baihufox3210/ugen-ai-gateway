@@ -149,12 +149,15 @@ def _ugen_details(response: ChatResponse) -> dict[str, Any]:
 
 
 def _routing_headers(routing: dict[str, Any], model: str) -> dict[str, str]:
-    return {
+    headers = {
         "X-UGen-Provider": str(routing.get("provider", "")),
         "X-UGen-Model": model,
         "X-UGen-Route-Reason": str(routing.get("reason", "")),
         "X-UGen-Redacted-Values": str(routing.get("redacted_values", 0)),
     }
+    if routing.get("fallback_from"):
+        headers["X-UGen-Fallback-From"] = str(routing["fallback_from"])
+    return headers
 
 
 @router.get("/v1/models")
@@ -219,17 +222,24 @@ async def create_chat_completion(
             ),
         )
 
-    # Run analysis and routing before answering, so request errors still get a
-    # proper HTTP status and the routing decision can go into the headers.
+    # Wait for the first generated text before answering, so failures up to
+    # that point (including a fallback that also fails) still get a proper HTTP
+    # status, and the headers name the provider that actually answers.
     events = gateway.events(request, stream=True, options=options)
     routing: dict[str, Any] = {}
     model = ""
+    first: GatewayEvent | None = None
     try:
         async for event in events:
             if event.type == "routed":
-                routing = event.data
-            if event.type == "generation_started":
+                routing = dict(event.data)
+            elif event.type == "fallback":
+                routing["provider"] = event.data["to"]
+                routing["fallback_from"] = event.data["from"]
+            elif event.type == "generation_started":
                 model = str(event.data.get("model", ""))
+            elif event.type == "delta" or event.response is not None:
+                first = event
                 break
     except Exception as exc:  # noqa: BLE001 - every failure maps to an API error
         await events.aclose()
@@ -237,7 +247,7 @@ async def create_chat_completion(
 
     include_usage = bool((body.stream_options or {}).get("include_usage"))
     return StreamingResponse(
-        _sse(events, completion_id, created, model, include_usage),
+        _sse(_replay(first, events), completion_id, created, model, include_usage),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -245,6 +255,18 @@ async def create_chat_completion(
             **_routing_headers(routing, model),
         },
     )
+
+
+async def _replay(
+    first: GatewayEvent | None, events: AsyncIterator[GatewayEvent]
+) -> AsyncIterator[GatewayEvent]:
+    try:
+        if first is not None:
+            yield first
+        async for event in events:
+            yield event
+    finally:
+        await events.aclose()  # type: ignore[attr-defined]
 
 
 async def _sse(

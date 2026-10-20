@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from time import perf_counter
 from typing import Any, Literal, cast
 
@@ -29,11 +29,13 @@ from ugen_ai_gateway.services.errors import (
     GatewayConfigurationError,
     InvalidChatRequest,
     PrivacyRedactionError,
+    ProviderOutage,
     ProviderRequestError,
     ProviderTimeout,
     ProviderUnavailable,
     RequestTooLarge,
 )
+from ugen_ai_gateway.services.resilience import CircuitBreaker, is_outage
 
 MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
 ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -65,6 +67,27 @@ class _PreparedChat:
     vault: RedactionVault | None
 
 
+@dataclass
+class _Generated:
+    content: str
+    model: str
+    usage: TokenUsage | None
+    finish_reason: str | None
+
+
+def _fallback_event(
+    failed: _PreparedChat, fallback: _PreparedChat, reason: str
+) -> GatewayEvent:
+    return GatewayEvent(
+        "fallback",
+        {
+            "from": failed.decision.provider,
+            "to": fallback.decision.provider,
+            "reason": reason,
+        },
+    )
+
+
 def _token_usage(raw_usage: Any) -> TokenUsage | None:
     if raw_usage is None:
         return None
@@ -92,6 +115,7 @@ class GatewayService:
         self._cloud_provider = cloud_provider
         self._analyzer = analyzer
         self._policy = policy
+        self._breakers: dict[str, CircuitBreaker] = {}
         self._analysis_cache = AnalysisCache(
             max_size=settings.analysis_cache_size,
             ttl_seconds=settings.analysis_cache_ttl_seconds,
@@ -166,77 +190,57 @@ class GatewayService:
         )
 
         generation_started_at = perf_counter()
-        yield GatewayEvent(
-            "generation_started",
-            {"provider": prepared.decision.provider, "model": prepared.model},
-        )
+        attempt: _PreparedChat | None = prepared
+        fallback_from: str | None = None
+        result: _Generated | None = None
+        while attempt is not None:
+            breaker = self._breaker(attempt.decision.provider)
+            next_attempt = (
+                self._fallback_for(request, attempt, analysis_source)
+                if fallback_from is None
+                else None
+            )
+            if not breaker.allow():
+                if next_attempt is None:
+                    raise ProviderUnavailable(
+                        f"The {attempt.decision.provider} provider is temporarily "
+                        "unavailable"
+                    )
+                fallback_from = attempt.decision.provider
+                yield _fallback_event(attempt, next_attempt, "circuit open")
+                attempt = next_attempt
+                continue
 
-        restorer = (
-            StreamRestorer(prepared.vault)
-            if prepared.vault and self._settings.restore_redacted
-            else None
-        )
-        if stream:
-            parts: list[str] = []
-            resolved_model = prepared.model
-            usage: TokenUsage | None = None
-            finish_reason: str | None = None
+            yield GatewayEvent(
+                "generation_started",
+                {"provider": attempt.decision.provider, "model": attempt.model},
+            )
+            emitted_text = False
             try:
-                async for chunk in prepared.provider.stream(
-                    model=prepared.model,
-                    messages=prepared.messages,
-                    temperature=request.temperature,
-                    **options,
+                async for event in self._generate(
+                    attempt, request, stream=stream, options=options
                 ):
-                    resolved_model = getattr(chunk, "model", None) or resolved_model
-                    usage = _token_usage(getattr(chunk, "usage", None)) or usage
-                    for choice in chunk.choices or []:
-                        finish_reason = (
-                            getattr(choice, "finish_reason", None) or finish_reason
-                        )
-                        text = getattr(choice.delta, "content", None)
-                        if text and restorer is not None:
-                            text = restorer.feed(text)
-                        if text:
-                            parts.append(text)
-                            yield GatewayEvent("delta", {"content": text})
-            except TimeoutError as exc:
-                raise ProviderTimeout("Model provider timed out") from exc
-            except Exception as exc:
-                raise ProviderRequestError(
-                    f"Model provider request failed: {exc}"
-                ) from exc
-            if restorer is not None and (rest := restorer.flush()):
-                parts.append(rest)
-                yield GatewayEvent("delta", {"content": rest})
-            content = "".join(parts)
-        else:
-            try:
-                completion = await prepared.provider.complete(
-                    model=prepared.model,
-                    messages=prepared.messages,
-                    temperature=request.temperature,
-                    **options,
-                )
-            except TimeoutError as exc:
-                raise ProviderTimeout("Model provider timed out") from exc
-            except Exception as exc:
-                raise ProviderRequestError(
-                    f"Model provider request failed: {exc}"
-                ) from exc
-
-            if not completion.choices:
-                raise RuntimeError("Model provider returned no choices")
-            message_content = completion.choices[0].message.content
-            if not isinstance(message_content, str):
-                raise TypeError("Model provider returned no text content")
-            content = message_content
-            finish_reason = getattr(completion.choices[0], "finish_reason", None)
-            if prepared.vault and self._settings.restore_redacted:
-                content = prepared.vault.restore(content)
-            resolved_model = completion.model
-            usage = _token_usage(getattr(completion, "usage", None))
-
+                    if isinstance(event, _Generated):
+                        result = event
+                    else:
+                        emitted_text = True
+                        yield event
+            except (ProviderOutage, ProviderTimeout) as exc:
+                breaker.record_failure()
+                if emitted_text or next_attempt is None:
+                    raise
+                fallback_from = attempt.decision.provider
+                yield _fallback_event(attempt, next_attempt, str(exc))
+                attempt = next_attempt
+                continue
+            breaker.record_success()
+            prepared = attempt
+            break
+        assert result is not None
+        content = result.content
+        resolved_model = result.model
+        usage = result.usage
+        finish_reason = result.finish_reason
         generation_ms = (perf_counter() - generation_started_at) * 1000
         response = ChatResponse(
             model=resolved_model,
@@ -252,6 +256,7 @@ class GatewayService:
                 reason=prepared.decision.reason,
                 redacted_values=len(prepared.vault or ()),
                 analysis_source=analysis_source,
+                fallback_from=fallback_from,
             ),
             usage=UsageStats(analysis=analysis.usage, generation=usage),
             performance=PerformanceStats(
@@ -261,6 +266,132 @@ class GatewayService:
             ),
         )
         yield GatewayEvent("result", response=response)
+
+    async def _generate(
+        self,
+        prepared: "_PreparedChat",
+        request: ChatRequest,
+        *,
+        stream: bool,
+        options: dict[str, Any],
+    ) -> AsyncIterator["GatewayEvent | _Generated"]:
+        """Call the provider; yield text deltas (streaming) and then the result."""
+        restore = prepared.vault is not None and self._settings.restore_redacted
+        try:
+            if stream:
+                restorer = StreamRestorer(prepared.vault) if restore else None  # type: ignore[arg-type]
+                parts: list[str] = []
+                model = prepared.model
+                usage: TokenUsage | None = None
+                finish_reason: str | None = None
+                async for chunk in prepared.provider.stream(
+                    model=prepared.model,
+                    messages=prepared.messages,
+                    temperature=request.temperature,
+                    **options,
+                ):
+                    model = getattr(chunk, "model", None) or model
+                    usage = _token_usage(getattr(chunk, "usage", None)) or usage
+                    for choice in chunk.choices or []:
+                        finish_reason = (
+                            getattr(choice, "finish_reason", None) or finish_reason
+                        )
+                        text = getattr(choice.delta, "content", None)
+                        if text and restorer is not None:
+                            text = restorer.feed(text)
+                        if text:
+                            parts.append(text)
+                            yield GatewayEvent("delta", {"content": text})
+                if restorer is not None and (rest := restorer.flush()):
+                    parts.append(rest)
+                    yield GatewayEvent("delta", {"content": rest})
+                yield _Generated("".join(parts), model, usage, finish_reason)
+                return
+
+            completion = await prepared.provider.complete(
+                model=prepared.model,
+                messages=prepared.messages,
+                temperature=request.temperature,
+                **options,
+            )
+        except TimeoutError as exc:
+            raise ProviderTimeout("Model provider timed out") from exc
+        except Exception as exc:
+            error = ProviderOutage if is_outage(exc) else ProviderRequestError
+            raise error(f"Model provider request failed: {exc}") from exc
+
+        if not completion.choices:
+            raise RuntimeError("Model provider returned no choices")
+        content = completion.choices[0].message.content
+        if not isinstance(content, str):
+            raise TypeError("Model provider returned no text content")
+        yield _Generated(
+            prepared.vault.restore(content) if restore else content,  # type: ignore[union-attr]
+            completion.model,
+            _token_usage(getattr(completion, "usage", None)),
+            getattr(completion.choices[0], "finish_reason", None),
+        )
+
+    def _breaker(self, provider: str) -> CircuitBreaker:
+        breaker = self._breakers.get(provider)
+        if breaker is None:
+            breaker = self._breakers[provider] = CircuitBreaker(
+                failure_threshold=self._settings.circuit_failure_threshold,
+                cooldown_seconds=self._settings.circuit_cooldown_seconds,
+            )
+        return breaker
+
+    def provider_status(self) -> dict[str, str]:
+        providers = ["local"] + (["cloud"] if self._cloud_provider else [])
+        return {name: self._breaker(name).state for name in providers}
+
+    def _fallback_for(
+        self,
+        request: ChatRequest,
+        prepared: "_PreparedChat",
+        analysis_source: AnalysisSource,
+    ) -> "_PreparedChat | None":
+        """The plan to use if the routed provider is down, or None.
+
+        Only automatic routing falls back; an explicit provider choice is kept.
+        """
+        if request.provider_selection != "auto":
+            return None
+        analysis = prepared.analysis
+        if prepared.decision.provider == "cloud":
+            if not (self._settings.fallback_to_local and self._settings.local_model):
+                return None
+            # Reuse the redacted messages: still safe, and the vault restores them.
+            return replace(
+                prepared,
+                decision=RoutingDecision(
+                    provider="local",
+                    reason="Cloud provider unavailable; fell back to the local model.",
+                ),
+                provider=self._local_provider,
+                model=self._settings.local_model,
+            )
+
+        if not (
+            self._settings.fallback_to_cloud
+            and self._cloud_provider is not None
+            and self._settings.cloud_model
+            and analysis_source != "rules"
+            and not analysis.contains_personal_data
+        ):
+            return None
+        vault = RedactionVault(analysis.personal_data_values)
+        return replace(
+            prepared,
+            decision=RoutingDecision(
+                provider="cloud",
+                reason="Local provider unavailable; fell back to the cloud model.",
+            ),
+            provider=self._cloud_provider,
+            model=self._settings.cloud_model,
+            messages=self._redacted_messages(request, vault),
+            vault=vault,
+        )
 
     def _validated_user_input(self, request: ChatRequest) -> str:
         if not self._settings.local_model:

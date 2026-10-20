@@ -33,7 +33,16 @@ class Settings(BaseSettings):
     rate_limit_requests: int = Field(default=60, gt=0)
     rate_limit_window_seconds: int = Field(default=60, gt=0)
     request_timeout: float = Field(default=300.0, gt=0, le=600)
-    max_retries: int = Field(default=0, ge=0, le=10)
+    # Retries with exponential backoff on connection errors, 429 and 5xx.
+    max_retries: int = Field(default=2, ge=0, le=10)
+
+    # Automatic fallback when the routed provider is down (auto routing only).
+    # Cloud -> local is privacy-safe. Local -> cloud only happens for requests
+    # the local model analyzed and found free of personal data.
+    fallback_to_local: bool = True
+    fallback_to_cloud: bool = False
+    circuit_failure_threshold: int = Field(default=3, ge=1)
+    circuit_cooldown_seconds: float = Field(default=30, gt=0)
 
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":
