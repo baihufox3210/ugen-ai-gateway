@@ -14,6 +14,8 @@ export type ChatResult = {
     redacted_values?: number;
     analysis_source?: AnalysisSource;
     fallback_from?: Provider | null;
+    provider_name?: string;
+    rule?: string | null;
   };
   usage?: { generation?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
   performance?: { analysis_ms: number; generation_ms: number; total_ms: number };

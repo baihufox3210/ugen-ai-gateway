@@ -310,10 +310,13 @@ def test_chat_redacts_text_parts_in_multimodal_messages() -> None:
     assert local.calls[0]["messages"][2]["content"][0]["text"] == "Email [EMAIL_1]"
 
 
-def test_chat_rejects_unavailable_cloud_provider() -> None:
+def test_chat_rejects_explicit_cloud_selection_without_cloud_provider() -> None:
     analyzer = FakeAnalyzer(analysis(complexity="complex"))
     service, local, cloud, _ = make_service(analyzer=analyzer, cloud_api_key="")
-    request = ChatRequest(messages=[{"role": "user", "content": "solve this"}])
+    request = ChatRequest(
+        provider_selection="cloud",
+        messages=[{"role": "user", "content": "solve this"}],
+    )
 
     with pytest.raises(RuntimeError, match="Cloud provider is unavailable"):
         asyncio.run(service.chat(request))
@@ -322,16 +325,19 @@ def test_chat_rejects_unavailable_cloud_provider() -> None:
     assert cloud.calls == []
 
 
-def test_chat_rejects_missing_cloud_model() -> None:
+def test_chat_keeps_complex_request_local_without_cloud_model() -> None:
     analyzer = FakeAnalyzer(analysis(complexity="complex"))
-    service, local, cloud, _ = make_service(analyzer=analyzer, cloud_model="")
+    service, _, cloud, _ = make_service(analyzer=analyzer, cloud_model="")
     request = ChatRequest(messages=[{"role": "user", "content": "solve this"}])
 
-    with pytest.raises(ValueError, match="No model configured for the cloud provider"):
-        asyncio.run(service.chat(request))
-
-    assert local.calls == []
+    assert asyncio.run(service.chat(request)).provider == "local"
     assert cloud.calls == []
+
+    explicit = ChatRequest(
+        provider_selection="cloud", messages=[{"role": "user", "content": "x"}]
+    )
+    with pytest.raises(RuntimeError, match="Cloud provider is unavailable"):
+        asyncio.run(service.chat(explicit))
 
 
 @pytest.mark.parametrize(

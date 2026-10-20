@@ -195,6 +195,33 @@ Simple tasks stay local. If cloud routing is disabled, requests stay local. The
 returned `routing` object reports the estimated complexity, task type, detected
 personal-data types, selected provider, and the reason for that decision.
 
+### Routing rules and multiple models
+
+For more than one local and one cloud model, point `ROUTING_CONFIG` at a YAML
+file. [`routing.example.yaml`](routing.example.yaml) documents every field:
+
+- `providers`: each OpenAI-compatible endpoint, whether it is `local` or `cloud`,
+  its API key (`api_key_env` reads it from the environment), and its models
+  with per-million-token prices for cost reporting. A provider whose key is
+  missing is skipped with a warning, and rules pointing at it are ignored.
+- `defaults`: the local and (optional) cloud model used for `ugen-local`,
+  `ugen-cloud`, fallbacks, and requests no rule matches.
+- `analysis`: the model that analyzes requests. It sees unredacted text, so it
+  must be a local provider; the file is rejected otherwise.
+- `rules`: checked in order, first match wins. A rule can match on
+  `complexity`, `task_type`, `contains_personal_data`, `personal_data_types`
+  (any of), `min_chars`, and `max_chars`, and routes to a provider and model.
+- `privacy.never_cloud`: personal-data types that always keep the request on
+  the local default model, overriding rules and explicit `ugen-cloud` requests.
+
+Every configured model appears in `GET /v1/models`; requesting one by name pins
+that model, still subject to `never_cloud`. `routing.provider_name` and
+`routing.rule` in responses report which provider and rule were used
+(`privacy.never_cloud` when the privacy rule applied).
+
+Without `ROUTING_CONFIG`, the `LOCAL_*` and `CLOUD_*` variables define one local
+and one cloud provider, with moderate and complex requests going to the cloud.
+
 ## Resilience
 
 Provider calls are retried with exponential backoff on connection errors, HTTP

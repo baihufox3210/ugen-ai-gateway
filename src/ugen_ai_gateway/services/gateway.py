@@ -8,7 +8,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.cache import AnalysisCache
 from ugen_ai_gateway.analysis.pii import supported_types
-from ugen_ai_gateway.analysis.policy import RoutingDecision, RoutingPolicy
+from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.analysis.redaction import (
     PLACEHOLDER_INSTRUCTION,
     RedactionVault,
@@ -24,7 +24,9 @@ from ugen_ai_gateway.api.schemas import (
     UsageStats,
 )
 from ugen_ai_gateway.config import Settings
-from ugen_ai_gateway.providers.base import ModelProvider
+from ugen_ai_gateway.providers.base import Locality, ModelProvider
+from ugen_ai_gateway.routing.config import RoutingConfig, config_from_settings
+from ugen_ai_gateway.routing.engine import Route, RuleEngine
 from ugen_ai_gateway.services.errors import (
     GatewayConfigurationError,
     InvalidChatRequest,
@@ -59,12 +61,19 @@ class GatewayEvent:
 @dataclass
 class _PreparedChat:
     analysis: RequestAnalysis
-    decision: RoutingDecision
+    route: Route
     provider: ModelProvider
-    model: str
     messages: list[ChatCompletionMessageParam]
     analysis_ms: float
     vault: RedactionVault | None
+
+    @property
+    def locality(self) -> Locality:
+        return self.route.locality
+
+    @property
+    def model(self) -> str:
+        return self.route.model.id
 
 
 @dataclass
@@ -81,8 +90,10 @@ def _fallback_event(
     return GatewayEvent(
         "fallback",
         {
-            "from": failed.decision.provider,
-            "to": fallback.decision.provider,
+            "from": failed.locality,
+            "to": fallback.locality,
+            "from_provider": failed.route.provider.name,
+            "to_provider": fallback.route.provider.name,
             "reason": reason,
         },
     )
@@ -109,25 +120,46 @@ class GatewayService:
         cloud_provider: ModelProvider | None,
         analyzer: RequestAnalyzer,
         policy: RoutingPolicy,
+        routing: RoutingConfig | None = None,
+        providers: dict[str, ModelProvider] | None = None,
     ) -> None:
+        """Without ``routing``, the LOCAL_* / CLOUD_* settings and the two given
+        providers define it. With ``routing``, ``providers`` maps each configured
+        provider name to its client."""
         self._settings = settings
-        self._local_provider = local_provider
-        self._cloud_provider = cloud_provider
         self._analyzer = analyzer
         self._policy = policy
+        self._configured = routing is not None or bool(settings.local_model)
+        if routing is None:
+            routing = config_from_settings(
+                settings,
+                cloud_enabled=policy.cloud_enabled and cloud_provider is not None,
+            )
+            providers = {"local": local_provider}
+            if cloud_provider is not None:
+                providers["cloud"] = cloud_provider
+        self._providers: dict[str, ModelProvider] = providers or {}
+        self._engine = RuleEngine(routing, available=set(self._providers))
         self._breakers: dict[str, CircuitBreaker] = {}
         self._analysis_cache = AnalysisCache(
             max_size=settings.analysis_cache_size,
             ttl_seconds=settings.analysis_cache_ttl_seconds,
         )
 
+    @property
+    def routing(self) -> RoutingConfig:
+        return self._engine.config
+
+    @property
+    def engine(self) -> RuleEngine:
+        return self._engine
+
     async def readiness(self) -> bool:
-        if not self._settings.local_model:
+        if not self._configured:
             return False
         try:
-            await self._local_provider.health_check()  # type: ignore[attr-defined]
-            if self._cloud_provider is not None:
-                await self._cloud_provider.health_check()  # type: ignore[attr-defined]
+            for provider in self._providers.values():
+                await provider.health_check()  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001 - readiness reports any provider failure
             return False
         return True
@@ -182,8 +214,11 @@ class GatewayService:
         yield GatewayEvent(
             "routed",
             {
-                "provider": prepared.decision.provider,
-                "reason": prepared.decision.reason,
+                "provider": prepared.locality,
+                "provider_name": prepared.route.provider.name,
+                "model": prepared.model,
+                "rule": prepared.route.rule,
+                "reason": prepared.route.reason,
                 "complexity": analysis.complexity,
                 "redacted_values": len(prepared.vault or ()),
             },
@@ -194,7 +229,7 @@ class GatewayService:
         fallback_from: str | None = None
         result: _Generated | None = None
         while attempt is not None:
-            breaker = self._breaker(attempt.decision.provider)
+            breaker = self._breaker(attempt.route.provider.name)
             next_attempt = (
                 self._fallback_for(request, attempt, analysis_source)
                 if fallback_from is None
@@ -203,17 +238,21 @@ class GatewayService:
             if not breaker.allow():
                 if next_attempt is None:
                     raise ProviderUnavailable(
-                        f"The {attempt.decision.provider} provider is temporarily "
+                        f"The {attempt.route.provider.name} provider is temporarily "
                         "unavailable"
                     )
-                fallback_from = attempt.decision.provider
+                fallback_from = attempt.locality
                 yield _fallback_event(attempt, next_attempt, "circuit open")
                 attempt = next_attempt
                 continue
 
             yield GatewayEvent(
                 "generation_started",
-                {"provider": attempt.decision.provider, "model": attempt.model},
+                {
+                    "provider": attempt.locality,
+                    "provider_name": attempt.route.provider.name,
+                    "model": attempt.model,
+                },
             )
             emitted_text = False
             try:
@@ -229,7 +268,7 @@ class GatewayService:
                 breaker.record_failure()
                 if emitted_text or next_attempt is None:
                     raise
-                fallback_from = attempt.decision.provider
+                fallback_from = attempt.locality
                 yield _fallback_event(attempt, next_attempt, str(exc))
                 attempt = next_attempt
                 continue
@@ -246,14 +285,16 @@ class GatewayService:
             model=resolved_model,
             content=content,
             finish_reason=finish_reason,
-            provider=prepared.decision.provider,
+            provider=prepared.locality,
             routing=RoutingInfo(
                 complexity=analysis.complexity,
                 task_type=analysis.task_type,
                 contains_personal_data=analysis.contains_personal_data,
                 personal_data_types=analysis.personal_data_types,
-                provider=prepared.decision.provider,
-                reason=prepared.decision.reason,
+                provider=prepared.locality,
+                provider_name=prepared.route.provider.name,
+                rule=prepared.route.rule,
+                reason=prepared.route.reason,
                 redacted_values=len(prepared.vault or ()),
                 analysis_source=analysis_source,
                 fallback_from=fallback_from,
@@ -342,8 +383,7 @@ class GatewayService:
         return breaker
 
     def provider_status(self) -> dict[str, str]:
-        providers = ["local"] + (["cloud"] if self._cloud_provider else [])
-        return {name: self._breaker(name).state for name in providers}
+        return {name: self._breaker(name).state for name in self._providers}
 
     def _fallback_for(
         self,
@@ -358,24 +398,25 @@ class GatewayService:
         if request.provider_selection != "auto":
             return None
         analysis = prepared.analysis
-        if prepared.decision.provider == "cloud":
-            if not (self._settings.fallback_to_local and self._settings.local_model):
+        if prepared.locality == "cloud":
+            route = self._engine.default("local")
+            if not (self._settings.fallback_to_local and route):
                 return None
             # Reuse the redacted messages: still safe, and the vault restores them.
             return replace(
                 prepared,
-                decision=RoutingDecision(
-                    provider="local",
+                route=replace(
+                    route,
                     reason="Cloud provider unavailable; fell back to the local model.",
                 ),
-                provider=self._local_provider,
-                model=self._settings.local_model,
+                provider=self._provider_for(route),
             )
 
+        route = self._engine.default("cloud")
         if not (
             self._settings.fallback_to_cloud
-            and self._cloud_provider is not None
-            and self._settings.cloud_model
+            and route is not None
+            and route.provider.name in self._providers
             and analysis_source != "rules"
             and not analysis.contains_personal_data
         ):
@@ -383,18 +424,25 @@ class GatewayService:
         vault = RedactionVault(analysis.personal_data_values)
         return replace(
             prepared,
-            decision=RoutingDecision(
-                provider="cloud",
+            route=replace(
+                route,
                 reason="Local provider unavailable; fell back to the cloud model.",
             ),
-            provider=self._cloud_provider,
-            model=self._settings.cloud_model,
+            provider=self._provider_for(route),
             messages=self._redacted_messages(request, vault),
             vault=vault,
         )
 
+    def _provider_for(self, route: Route) -> ModelProvider:
+        provider = self._providers.get(route.provider.name)
+        if provider is None:
+            raise ProviderUnavailable(
+                f"The {route.provider.name} provider is unavailable"
+            )
+        return provider
+
     def _validated_user_input(self, request: ChatRequest) -> str:
-        if not self._settings.local_model:
+        if not self._configured:
             raise GatewayConfigurationError("LOCAL_MODEL is not configured")
 
         user_messages: list[str] = []
@@ -451,39 +499,23 @@ class GatewayService:
         personal data (names, addresses) is still checked by the model before
         anything can be sent to the cloud.
         """
-        if request.provider_selection != "auto":
-            return request.provider_selection == "local"
-        return self._policy.decide(analysis).provider == "local"
+        return self._route(request, analysis).locality == "local"
+
+    def _route(self, request: ChatRequest, analysis: RequestAnalysis) -> Route:
+        return self._engine.decide(
+            analysis,
+            selection=request.provider_selection,
+            model=request.model,
+            chars=sum(len(text) for text in _message_texts(request.messages)),
+        )
 
     def _prepare(
         self, request: ChatRequest, analysis: RequestAnalysis, analysis_ms: float
     ) -> _PreparedChat:
-        decision = self._policy.decide(analysis)
-        if request.provider_selection != "auto":
-            decision = RoutingDecision(
-                provider=request.provider_selection,
-                reason=(
-                    "Local model selected manually."
-                    if request.provider_selection == "local"
-                    else "Cloud model selected manually."
-                ),
-            )
+        route = self._route(request, analysis)
+        provider = self._provider_for(route)
 
-        if decision.provider == "cloud":
-            if self._cloud_provider is None:
-                raise ProviderUnavailable("Cloud provider is unavailable")
-            provider = self._cloud_provider
-            model = request.model or self._settings.cloud_model
-        else:
-            provider = self._local_provider
-            model = request.model or self._settings.local_model
-
-        if not model:
-            raise GatewayConfigurationError(
-                f"No model configured for the {decision.provider} provider"
-            )
-
-        if decision.provider == "local" and not self._settings.redact_local:
+        if route.locality == "local" and not self._settings.redact_local:
             vault = None
             messages = list(request.messages)
         else:
@@ -493,9 +525,8 @@ class GatewayService:
 
         return _PreparedChat(
             analysis=analysis,
-            decision=decision,
+            route=route,
             provider=provider,
-            model=model,
             messages=messages,
             analysis_ms=analysis_ms,
             vault=vault,

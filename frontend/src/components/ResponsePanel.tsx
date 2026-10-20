@@ -35,7 +35,8 @@ function ResponsePanel({ turns, busy, streamingText, onDeleteTurn }: { turns: Co
               <span>任務：{result.routing.task_type}</span><span>複雜度：{result.routing.complexity}</span>
               {tokenRate !== null && <span className="token-stat">{tokenRate} tok/s · {generatedTokens} tokens</span>}
               {result.routing.fallback_from && <span className="fallback-note">{result.routing.fallback_from === 'cloud' ? '雲端無回應，改由本機回答' : '本機無回應，改由雲端回答'}</span>}
-              <span className={`provider-model ${result.provider === 'cloud' ? 'cloud' : ''}`}>{result.provider === 'cloud' ? '雲端' : '本機'} · {result.model}</span>
+              {result.routing.rule && <span className={result.routing.rule === 'privacy.never_cloud' ? 'policy-note' : ''}>{result.routing.rule === 'privacy.never_cloud' ? '隱私政策：留在本機' : `規則：${result.routing.rule}`}</span>}
+              <span className={`provider-model ${result.provider === 'cloud' ? 'cloud' : ''}`}>{result.routing.provider_name || (result.provider === 'cloud' ? '雲端' : '本機')} · {result.model}</span>
             </div>
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>

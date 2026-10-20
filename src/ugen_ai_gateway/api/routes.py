@@ -39,15 +39,29 @@ async def readiness(gateway: GatewayDependency, response: Response) -> dict[str,
 
 
 @router.get("/v1/ugen/config")
-async def gateway_config() -> dict[str, Any]:
+async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
     """Expose non-secret configuration for the dashboard."""
     settings = get_settings()
+    engine = gateway.engine
+    local = engine.default("local")
+    cloud = engine.default("cloud")
     return {
-        "local_model": settings.local_model.strip(),
-        "cloud_model": settings.cloud_model.strip(),
-        "cloud_enabled": bool(settings.cloud_api_key and settings.cloud_model),
+        "local_model": local.model.id if local else "",
+        "cloud_model": cloud.model.id if cloud else "",
+        "cloud_enabled": cloud is not None,
         "redact_local": settings.redact_local,
         "restore_redacted": settings.restore_redacted,
+        "providers": [
+            {
+                "name": provider.name,
+                "locality": provider.locality,
+                "available": provider.name in engine.available,
+                "models": [model.id for model in provider.models],
+            }
+            for provider in engine.config.providers
+        ],
+        "rules": [rule.name for rule in engine.config.rules],
+        "never_cloud": engine.config.privacy.never_cloud,
     }
 
 

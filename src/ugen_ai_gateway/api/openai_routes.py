@@ -16,8 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ugen_ai_gateway.api.access import check_api_access
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import MAX_CHAT_MESSAGES, ChatRequest, ChatResponse
-from ugen_ai_gateway.config import Settings, get_settings
 from ugen_ai_gateway.dependencies import get_gateway_service
+from ugen_ai_gateway.routing.engine import RuleEngine
 from ugen_ai_gateway.services.gateway import GatewayEvent, GatewayService
 
 logger = logging.getLogger(__name__)
@@ -93,19 +93,22 @@ def error_response(
     )
 
 
-def resolve_model(name: str, settings: Settings) -> Literal["auto", "local", "cloud"]:
-    """Map the requested model id to a provider selection."""
+def resolve_model(
+    name: str, engine: RuleEngine
+) -> tuple[Literal["auto", "local", "cloud"], str | None]:
+    """Map the requested model id to a provider selection and a model.
+
+    A configured model name pins that model (privacy rules still apply).
+    """
     if name in _ALIASES:
-        return _ALIASES[name]
-    if name and name == settings.local_model:
-        return "local"
-    if name and name == settings.cloud_model:
-        return "cloud"
+        return _ALIASES[name], None
+    if name in engine.models():
+        return "auto", name
     raise _RequestRejected(404, f"The model '{name}' does not exist", "model_not_found")
 
 
 def to_gateway_request(
-    body: OpenAIChatRequest, settings: Settings
+    body: OpenAIChatRequest, engine: RuleEngine
 ) -> tuple[ChatRequest, dict[str, Any]]:
     if body.n not in (None, 1):
         raise _RequestRejected(400, "Only n=1 is supported", "unsupported_parameter")
@@ -113,8 +116,10 @@ def to_gateway_request(
         raise _RequestRejected(
             400, "Tool calling is not supported yet", "unsupported_parameter"
         )
+    selection, model = resolve_model(body.model, engine)
     payload: dict[str, Any] = {
-        "provider_selection": resolve_model(body.model, settings),
+        "provider_selection": selection,
+        "model": model,
         "messages": body.messages,
     }
     if body.temperature is not None:
@@ -161,17 +166,11 @@ def _routing_headers(routing: dict[str, Any], model: str) -> dict[str, str]:
 
 
 @router.get("/v1/models")
-async def list_models() -> dict[str, Any]:
-    settings = get_settings()
-    cloud_enabled = bool(settings.cloud_api_key and settings.cloud_model)
+async def list_models(gateway: GatewayDependency) -> dict[str, Any]:
     ids = [AUTO_MODEL, LOCAL_MODEL]
-    if cloud_enabled:
+    if gateway.engine.default("cloud") is not None:
         ids.append(CLOUD_MODEL)
-    ids.extend(
-        name
-        for name in (settings.local_model, cloud_enabled and settings.cloud_model)
-        if name and name not in ids
-    )
+    ids.extend(model for model in gateway.engine.models() if model not in ids)
     return {
         "object": "list",
         "data": [
@@ -189,7 +188,7 @@ async def create_chat_completion(
 ) -> JSONResponse | StreamingResponse:
     check_api_access(http_request)
     try:
-        request, options = to_gateway_request(body, get_settings())
+        request, options = to_gateway_request(body, gateway.engine)
     except _RequestRejected as exc:
         return error_response(exc.status_code, str(exc), code=exc.code)
 

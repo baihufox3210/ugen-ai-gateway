@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     cloud_base_url: str = ""
     cloud_model: str = ""
 
+    # Optional YAML file with providers, models and routing rules. When empty,
+    # LOCAL_* / CLOUD_* define a local and a cloud provider.
+    routing_config: str = ""
+
     # Redact personal data even when the request stays on the local model.
     redact_local: bool = True
     # Put the original values back into the model's reply before returning it.

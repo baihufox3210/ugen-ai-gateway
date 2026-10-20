@@ -29,6 +29,10 @@ class RoutingPolicy:
     def __init__(self, *, cloud_enabled: bool = True) -> None:
         self._cloud_enabled = cloud_enabled
 
+    @property
+    def cloud_enabled(self) -> bool:
+        return self._cloud_enabled
+
     def classify_complexity(
         self, user_input: str, analysis: RequestAnalysis
     ) -> RequestAnalysis:

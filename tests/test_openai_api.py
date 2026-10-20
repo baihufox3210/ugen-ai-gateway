@@ -87,7 +87,7 @@ def gateway(monkeypatch) -> Any:
         cloud_api_key="cloud-key",
         gateway_api_key="",
     )
-    for module in ("access", "openai_routes", "routes"):
+    for module in ("access", "routes"):
         monkeypatch.setattr(
             f"ugen_ai_gateway.api.{module}.get_settings", lambda: settings
         )
@@ -107,7 +107,12 @@ def gateway(monkeypatch) -> Any:
         api_key="unused", base_url="http://testserver/v1", http_client=http_client
     )
     return SimpleNamespace(
-        client=client, local=local, cloud=cloud, settings=settings, http=http_client
+        client=client,
+        local=local,
+        cloud=cloud,
+        settings=settings,
+        http=http_client,
+        service=service,
     )
 
 
@@ -239,7 +244,7 @@ def test_models_endpoint_lists_aliases_and_configured_models(gateway: Any) -> No
 
 
 def test_streaming_request_errors_get_an_http_status(gateway: Any) -> None:
-    gateway.settings.cloud_model = ""
+    del gateway.service._providers["cloud"]
 
     with pytest.raises(openai.APIStatusError) as raised:
         gateway.client.chat.completions.create(
@@ -280,3 +285,36 @@ def test_streaming_fallback_is_reported_in_headers(gateway: Any) -> None:
     assert text == "Hello there"
     assert headers["x-ugen-provider"] == "local"
     assert headers["x-ugen-fallback-from"] == "cloud"
+
+
+def test_routing_config_models_are_listed_and_can_be_pinned(monkeypatch) -> None:
+    from tests.test_routing import config
+
+    local, gemini = EchoProvider("local"), EchoProvider("gemini")
+    service = GatewayService(
+        settings=Settings(),
+        local_provider=local,  # type: ignore[arg-type]
+        cloud_provider=None,
+        analyzer=SimpleAnalyzer(),  # type: ignore[arg-type]
+        policy=RoutingPolicy(),
+        routing=config(),
+        providers={"ollama": local, "gemini": gemini},  # type: ignore[dict-item]
+    )
+    monkeypatch.setattr(
+        "ugen_ai_gateway.api.access.get_settings", lambda: Settings(gateway_api_key="")
+    )
+    access._requests_by_client.clear()
+    app = create_app()
+    app.dependency_overrides[get_gateway_service] = lambda: service
+    client = openai.OpenAI(
+        api_key="x", base_url="http://testserver/v1", http_client=TestClient(app)
+    )
+
+    ids = [model.id for model in client.models.list()]
+    raw = client.chat.completions.with_raw_response.create(
+        model="pro", messages=[{"role": "user", "content": "hi"}]
+    )
+
+    assert ids == ["ugen-auto", "ugen-local", "ugen-cloud", "qwen", "flash", "pro"]
+    assert gemini.calls[0]["model"] == "pro"
+    assert raw.headers["x-ugen-provider"] == "cloud"

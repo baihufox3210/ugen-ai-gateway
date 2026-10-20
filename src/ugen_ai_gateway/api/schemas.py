@@ -16,6 +16,8 @@ class RoutingInfo(BaseModel):
     contains_personal_data: bool
     personal_data_types: list[str] = Field(default_factory=list)
     provider: Literal["local", "cloud"]
+    provider_name: str = ""
+    rule: str | None = None
     reason: str
     redacted_values: int = Field(default=0, ge=0)
     analysis_source: Literal["llm", "rules", "cache"] = "llm"

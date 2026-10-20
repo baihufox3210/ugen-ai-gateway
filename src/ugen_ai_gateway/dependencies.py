@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
@@ -7,7 +8,11 @@ from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.config import Settings, get_settings
 from ugen_ai_gateway.providers.openai_client import create_openai_client
 from ugen_ai_gateway.providers.openai_compatible import OpenAICompatibleProvider
+from ugen_ai_gateway.routing.config import RoutingConfig, load_routing_config
+from ugen_ai_gateway.services.errors import GatewayConfigurationError
 from ugen_ai_gateway.services.gateway import GatewayService
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -53,8 +58,13 @@ def get_gateway_service() -> GatewayService:
             ),
             types=[data_type for data_type, _ in ENTITY_TYPES.values()],
         )
-    local_provider = get_local_provider()
 
+    if settings.routing_config:
+        return _service_from_routing_config(
+            settings, load_routing_config(settings.routing_config)
+        )
+
+    local_provider = get_local_provider()
     return GatewayService(
         settings=settings,
         local_provider=local_provider,
@@ -63,6 +73,47 @@ def get_gateway_service() -> GatewayService:
         policy=RoutingPolicy(
             cloud_enabled=bool(settings.cloud_api_key and settings.cloud_model)
         ),
+    )
+
+
+def _service_from_routing_config(
+    settings: Settings, routing: RoutingConfig
+) -> GatewayService:
+    providers: dict[str, OpenAICompatibleProvider] = {}
+    for config in routing.providers:
+        api_key = config.resolved_api_key()
+        if not api_key:
+            logger.warning(
+                "Provider %s has no API key (%s); routes to it are disabled",
+                config.name,
+                config.api_key_env or "api_key",
+            )
+            continue
+        client = create_openai_client(
+            api_key=api_key,
+            base_url=config.base_url,
+            timeout=settings.request_timeout,
+            max_retries=settings.max_retries,
+        )
+        providers[config.name] = OpenAICompatibleProvider(
+            client, name=config.name, locality=config.locality
+        )
+
+    analysis_provider, analysis_model = routing.resolve(routing.analysis)
+    local_provider, _ = routing.resolve(routing.defaults.local)
+    for required in (analysis_provider.name, local_provider.name):
+        if required not in providers:
+            raise GatewayConfigurationError(f"Provider {required} is not usable")
+    return GatewayService(
+        settings=settings,
+        local_provider=providers[local_provider.name],
+        cloud_provider=None,
+        analyzer=RequestAnalyzer(
+            provider=providers[analysis_provider.name], model=analysis_model.id
+        ),
+        policy=RoutingPolicy(),
+        routing=routing,
+        providers=dict(providers),
     )
 
 
