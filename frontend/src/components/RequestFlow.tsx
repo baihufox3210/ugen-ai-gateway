@@ -1,8 +1,9 @@
-import type { Phase, Provider } from '../types';
+import type { Phase, Provider, ProviderSelection } from '../types';
 
 type Props = {
   phase: Phase;
   provider: Provider | null;
+  providerSelection: ProviderSelection;
   model: string;
   localModel: string;
   cloudModel: string;
@@ -36,7 +37,9 @@ function FlowBranch({ provider, animated }: { provider: Provider | null; animate
   </div>;
 }
 
-function RequestFlow({ phase, provider, model, localModel, cloudModel, modelsStatus, pii }: Props) {
+const SELECTION_LABEL: Record<ProviderSelection, string> = { auto: '自動分流', local: '指定本機', cloud: '指定雲端' };
+
+function RequestFlow({ phase, provider, providerSelection, model, localModel, cloudModel, modelsStatus, pii }: Props) {
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const analyzed = ['analyzed', 'routing', 'generating', 'complete'].includes(phase);
   const routing = phase === 'routing' || phase === 'generating';
@@ -46,7 +49,10 @@ function RequestFlow({ phase, provider, model, localModel, cloudModel, modelsSta
   return <section className="flow-card flow-v4" aria-label="請求處理流程">
     <div className="flow-heading">
       <div><span className="eyebrow">LIVE ROUTING</span><h2>請求處理流程</h2></div>
-      <span className={`live-status ${busy ? 'active' : ''}`}><i />{busy ? '正在處理' : phase === 'complete' ? '已完成' : phase === 'failed' ? '處理失敗' : '等待請求'}</span>
+      <div className="flow-heading-status">
+        <span className={`route-mode ${providerSelection}`}>{SELECTION_LABEL[providerSelection]}</span>
+        <span className={`live-status ${busy ? 'active' : ''}`}><i />{busy ? '正在處理' : phase === 'complete' ? '已完成' : phase === 'failed' ? '處理失敗' : '等待請求'}</span>
+      </div>
     </div>
 
     <div className="flow-v4-steps">
