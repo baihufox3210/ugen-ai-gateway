@@ -263,4 +263,4 @@ def test_store_file_is_created(tmp_path) -> None:
         .execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         .fetchall()
     )
-    assert {name for (name,) in tables} == {"requests", "feedback"}
+    assert {"requests", "feedback", "audit"} <= {name for (name,) in tables}

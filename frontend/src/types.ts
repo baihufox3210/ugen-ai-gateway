@@ -17,6 +17,8 @@ export type ChatResult = {
     fallback_from?: Provider | null;
     provider_name?: string;
     rule?: string | null;
+    injection_signals?: string[];
+    output_findings?: string[];
   };
   usage?: { generation?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
   performance?: { analysis_ms: number; generation_ms: number; total_ms: number };

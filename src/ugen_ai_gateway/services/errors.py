@@ -14,6 +14,10 @@ class PrivacyRedactionError(InvalidChatRequest):
     """Raised when detected personal data cannot be safely redacted."""
 
 
+class PolicyViolation(InvalidChatRequest):
+    """Raised when a guard blocks a request (for example prompt injection)."""
+
+
 class ProviderUnavailable(RuntimeError):
     """Raised when the selected provider is not configured or unavailable."""
 

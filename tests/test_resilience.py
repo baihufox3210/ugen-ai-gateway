@@ -221,22 +221,41 @@ def test_open_circuit_without_fallback_reports_unavailable() -> None:
 
 
 class FailsMidStream:
-    def __init__(self) -> None:
+    def __init__(self, text: str) -> None:
+        self.text = text
         self.calls: list[Any] = []
 
     async def stream(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
-        yield text_chunk("partial ")
+        yield text_chunk(self.text)
         raise connection_error()
 
 
-def test_no_fallback_after_text_was_already_streamed() -> None:
+def test_no_fallback_after_text_reached_the_client() -> None:
     analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    long_text = "This part of the answer was already shown to the user. "
     service, local, _, _ = make_service(
         analyzer=analyzer,
-        cloud_provider=FailsMidStream(),  # type: ignore[arg-type]
+        cloud_provider=FailsMidStream(long_text),  # type: ignore[arg-type]
     )
 
     with pytest.raises(ProviderOutage):
         asyncio.run(collect(service, complex_request()))
     assert local.calls == []
+
+
+def test_text_held_back_by_the_output_guard_is_dropped_on_fallback() -> None:
+    analyzer = FakeAnalyzer(analysis(complexity="complex"))
+    local = FakeProvider()
+    local.chunks = [text_chunk("Local answer.")]
+    service, _, _, _ = make_service(
+        analyzer=analyzer,
+        local_provider=local,
+        cloud_provider=FailsMidStream("partial "),  # type: ignore[arg-type]
+    )
+
+    events = asyncio.run(collect(service, complex_request()))
+
+    deltas = "".join(e.data["content"] for e in events if e.type == "delta")
+    assert deltas == "Local answer."
+    assert events[-1].response.content == "Local answer."

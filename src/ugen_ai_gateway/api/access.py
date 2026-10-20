@@ -36,3 +36,13 @@ def check_api_access(request: Request) -> None:
         if len(timestamps) >= settings.rate_limit_requests:
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
         timestamps.append(now)
+
+
+def check_admin_access(request: Request) -> None:
+    """Audit endpoints need ADMIN_API_KEY when it is set, else the gateway key."""
+    settings = get_settings()
+    if not settings.admin_api_key:
+        check_api_access(request)
+        return
+    if not hmac.compare_digest(presented_api_key(request), settings.admin_api_key):
+        raise HTTPException(status_code=401, detail="Invalid admin API key")

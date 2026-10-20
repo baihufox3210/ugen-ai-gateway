@@ -9,7 +9,8 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.cache import AnalysisCache
-from ugen_ai_gateway.analysis.pii import supported_types
+from ugen_ai_gateway.analysis.guard import OutputGuard, check_injection
+from ugen_ai_gateway.analysis.pii import find_personal_data, supported_types
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.analysis.redaction import (
     PLACEHOLDER_INSTRUCTION,
@@ -32,6 +33,7 @@ from ugen_ai_gateway.routing.engine import Route, RuleEngine
 from ugen_ai_gateway.services.errors import (
     GatewayConfigurationError,
     InvalidChatRequest,
+    PolicyViolation,
     PrivacyRedactionError,
     ProviderOutage,
     ProviderRequestError,
@@ -208,7 +210,8 @@ class GatewayService:
             async for event in self._events(request, stream, options or {}, record):
                 yield event
         except Exception as exc:
-            record.status = "error"
+            if record.status == "ok":
+                record.status = "error"
             record.error = type(exc).__name__
             await self._save(record)
             raise
@@ -218,6 +221,11 @@ class GatewayService:
             return
         try:
             await self._usage_store.record(record)
+            await self._usage_store.append_audit(
+                f"request.{record.status}",
+                request_id=record.id,
+                detail=_audit_detail(record),
+            )
         except Exception:
             logger.exception("Could not record usage")
 
@@ -230,6 +238,30 @@ class GatewayService:
     ) -> AsyncIterator[GatewayEvent]:
         total_started_at = perf_counter()
         user_input = self._validated_user_input(request)
+        injection_action = self._settings.injection_action
+        force_local = False
+        if injection_action != "off":
+            injection = check_injection(_user_texts(request.messages))
+            if injection.detected:
+                record.injection_signals = injection.signals
+                yield GatewayEvent(
+                    "guard",
+                    {
+                        "kind": "injection",
+                        "signals": injection.signals,
+                        "action": injection_action,
+                    },
+                )
+                if injection_action == "block":
+                    record.status = "blocked"
+                    raise PolicyViolation(
+                        "Request blocked: it looks like a prompt-injection attempt"
+                    )
+                if injection_action == "local":
+                    force_local = True
+                    request = request.model_copy(
+                        update={"provider_selection": "local", "model": None}
+                    )
 
         yield GatewayEvent("analysis_started", {"request_id": record.id})
         analysis, analysis_ms, analysis_source = await self._analyze(
@@ -253,7 +285,22 @@ class GatewayService:
         record.analysis_ms = analysis_ms
 
         prepared = self._prepare(request, analysis, analysis_ms)
+        if force_local:
+            prepared.route = replace(
+                prepared.route,
+                reason="Possible prompt injection; kept on the local model.",
+                rule="guard.injection",
+            )
         record.redacted_values = len(prepared.vault or ())
+        output_action = self._settings.output_pii_action
+        guard = (
+            OutputGuard(
+                self._allowed_output_values(request, analysis, prepared),
+                redact=output_action == "redact",
+            )
+            if output_action != "off"
+            else None
+        )
         yield GatewayEvent(
             "routed",
             {
@@ -300,7 +347,7 @@ class GatewayService:
             emitted_text = False
             try:
                 async for event in self._generate(
-                    attempt, request, stream=stream, options=options
+                    attempt, request, stream=stream, options=options, guard=guard
                 ):
                     if isinstance(event, _Generated):
                         result = event
@@ -311,6 +358,8 @@ class GatewayService:
                 breaker.record_failure()
                 if emitted_text or next_attempt is None:
                     raise
+                if guard is not None:
+                    guard.discard_pending()
                 fallback_from = attempt.locality
                 yield _fallback_event(attempt, next_attempt, str(exc))
                 attempt = next_attempt
@@ -324,6 +373,13 @@ class GatewayService:
         usage = result.usage
         finish_reason = result.finish_reason
         generation_ms = (perf_counter() - generation_started_at) * 1000
+        output_findings = guard.findings if guard else []
+        if output_findings:
+            yield GatewayEvent(
+                "guard",
+                {"kind": "output", "types": output_findings, "action": output_action},
+            )
+        record.output_redactions = len(output_findings)
         response = ChatResponse(
             id=record.id,
             model=resolved_model,
@@ -342,6 +398,8 @@ class GatewayService:
                 redacted_values=len(prepared.vault or ()),
                 analysis_source=analysis_source,
                 fallback_from=fallback_from,
+                injection_signals=record.injection_signals,
+                output_findings=output_findings,
             ),
             usage=UsageStats(analysis=analysis.usage, generation=usage),
             performance=PerformanceStats(
@@ -397,8 +455,12 @@ class GatewayService:
         *,
         stream: bool,
         options: dict[str, Any],
+        guard: OutputGuard | None = None,
     ) -> AsyncIterator["GatewayEvent | _Generated"]:
-        """Call the provider; yield text deltas (streaming) and then the result."""
+        """Call the provider; yield text deltas (streaming) and then the result.
+
+        Text passes through placeholder restoration, then the output guard.
+        """
         restore = prepared.vault is not None and self._settings.restore_redacted
         try:
             if stream:
@@ -422,10 +484,15 @@ class GatewayService:
                         text = getattr(choice.delta, "content", None)
                         if text and restorer is not None:
                             text = restorer.feed(text)
+                        if text and guard is not None:
+                            text = guard.feed(text)
                         if text:
                             parts.append(text)
                             yield GatewayEvent("delta", {"content": text})
-                if restorer is not None and (rest := restorer.flush()):
+                rest = restorer.flush() if restorer is not None else ""
+                if guard is not None:
+                    rest = guard.feed(rest) + guard.flush()
+                if rest:
                     parts.append(rest)
                     yield GatewayEvent("delta", {"content": rest})
                 yield _Generated("".join(parts), model, usage, finish_reason)
@@ -448,12 +515,31 @@ class GatewayService:
         content = completion.choices[0].message.content
         if not isinstance(content, str):
             raise TypeError("Model provider returned no text content")
+        if restore:
+            content = prepared.vault.restore(content)  # type: ignore[union-attr]
+        if guard is not None:
+            content = guard.check(content)
         yield _Generated(
-            prepared.vault.restore(content) if restore else content,  # type: ignore[union-attr]
+            content,
             completion.model,
             _token_usage(getattr(completion, "usage", None)),
             getattr(completion.choices[0], "finish_reason", None),
         )
+
+    @staticmethod
+    def _allowed_output_values(
+        request: ChatRequest, analysis: RequestAnalysis, prepared: "_PreparedChat"
+    ) -> set[str]:
+        """Personal data the user supplied may appear in the answer."""
+        allowed = {
+            match.value
+            for text in _message_texts(request.messages)
+            for match in find_personal_data(text)
+        }
+        allowed.update(analysis.personal_data_values)
+        if prepared.vault is not None:
+            allowed.update(prepared.vault.values())
+        return allowed
 
     def _breaker(self, provider: str) -> CircuitBreaker:
         breaker = self._breakers.get(provider)
@@ -659,6 +745,37 @@ class GatewayService:
         if len(vault):
             messages = _with_system_instruction(messages, PLACEHOLDER_INSTRUCTION)
         return messages
+
+
+def _user_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:
+    return _message_texts(
+        [message for message in messages if message["role"] == "user"]
+    )
+
+
+def _audit_detail(record: UsageRecord) -> dict[str, Any]:
+    """Request metadata for the audit log; never message text or values."""
+    fields = (
+        "api_key_id",
+        "status",
+        "error",
+        "provider",
+        "provider_name",
+        "model",
+        "rule",
+        "task_type",
+        "complexity",
+        "analysis_source",
+        "personal_data_types",
+        "redacted_values",
+        "fallback_from",
+        "injection_signals",
+        "output_redactions",
+        "prompt_tokens",
+        "completion_tokens",
+        "cost_usd",
+    )
+    return {name: getattr(record, name) for name in fields}
 
 
 def _message_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:

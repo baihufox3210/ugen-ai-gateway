@@ -397,7 +397,7 @@ async def collect(service: GatewayService, request: ChatRequest) -> list[Any]:
 def test_events_stream_text_deltas_then_result() -> None:
     local = FakeProvider()
     local.chunks = [text_chunk("Hel"), text_chunk("lo"), usage_chunk(2)]
-    service, _, cloud, _ = make_service(local_provider=local)
+    service, _, cloud, _ = make_service(local_provider=local, output_pii_action="off")
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     events = asyncio.run(collect(service, request))
@@ -505,7 +505,7 @@ def test_same_value_gets_the_same_placeholder_across_turns() -> None:
 def test_stream_restores_placeholders_split_across_chunks() -> None:
     local = FakeProvider()
     local.chunks = [text_chunk("Mail [EM"), text_chunk("AIL_"), text_chunk("1] now")]
-    service, _, _, _ = make_service(local_provider=local)
+    service, _, _, _ = make_service(local_provider=local, output_pii_action="off")
     request = ChatRequest(messages=[{"role": "user", "content": "alex@example.com"}])
 
     events = asyncio.run(collect(service, request))

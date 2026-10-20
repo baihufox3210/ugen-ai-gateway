@@ -11,6 +11,7 @@ type Props = {
   pii: PiiState | null;
   analysisSource: AnalysisSource | null;
   fallbackFrom: Provider | null;
+  injectionSignals: string[];
 };
 
 function ProcessCard({ glyph, label, title, className = '' }: {
@@ -49,7 +50,7 @@ const SELECTION_LABEL: Record<ProviderSelection, string> = { auto: '自動分流
 
 const SOURCE_LABEL: Record<AnalysisSource, string> = { llm: 'LOCAL MODEL', rules: 'FAST RULES', cache: 'CACHED' };
 
-function RequestFlow({ phase, provider, providerSelection, model, localModel, cloudModel, modelsStatus, pii, analysisSource, fallbackFrom }: Props) {
+function RequestFlow({ phase, provider, providerSelection, model, localModel, cloudModel, modelsStatus, pii, analysisSource, fallbackFrom, injectionSignals }: Props) {
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const analyzed = ['analyzed', 'routing', 'generating', 'complete'].includes(phase);
   const routing = phase === 'routing' || phase === 'generating';
@@ -61,6 +62,7 @@ function RequestFlow({ phase, provider, providerSelection, model, localModel, cl
       <div><span className="eyebrow">LIVE ROUTING</span><h2>請求處理流程</h2></div>
       <div className="flow-heading-status">
         <span className={`route-mode ${providerSelection}`}>{SELECTION_LABEL[providerSelection]}</span>
+        {injectionSignals.length > 0 && <span className="route-mode injection" title={`偵測到疑似提示注入：${injectionSignals.join('、')}`}>疑似注入</span>}
         {fallbackFrom && <span className="route-mode fallback" title={fallbackFrom === 'cloud' ? '雲端無回應，已改由本機處理' : '本機無回應，已改由雲端處理'}>已切換備援</span>}
         <span className={`live-status ${busy ? 'active' : ''}`}><i />{busy ? '正在處理' : phase === 'complete' ? '已完成' : phase === 'failed' ? '處理失敗' : '等待請求'}</span>
       </div>

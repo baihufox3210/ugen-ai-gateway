@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     analysis_cache_size: int = Field(default=256, ge=0)
     analysis_cache_ttl_seconds: float = Field(default=600, gt=0)
 
+    # Prompt-injection tripwire: off, flag (record only), local (never send to
+    # the cloud), or block (reject with HTTP 400).
+    injection_action: Literal["off", "flag", "local", "block"] = "flag"
+    # Personal data in model output that the user never provided: off, flag
+    # (record only), or redact (replace with a [LABEL] marker).
+    output_pii_action: Literal["off", "flag", "redact"] = "redact"
+    # Required for the audit endpoints when set; otherwise GATEWAY_API_KEY rules.
+    admin_api_key: str = ""
+
     # SQLite file for request metadata and feedback (never message text).
     # Empty disables usage tracking.
     usage_db_path: str = "data/ugen.db"

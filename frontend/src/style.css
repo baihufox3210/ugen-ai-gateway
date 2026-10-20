@@ -439,3 +439,4 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .feedback button{border:0;border-radius:6px;padding:2px 5px;background:transparent;font-size:11px;line-height:1.2;cursor:pointer;filter:grayscale(1);opacity:.55;transition:background .18s,opacity .18s,filter .18s}
 .feedback button:hover{background:#eef5f1;opacity:1}
 .feedback button.selected{background:#eaf4ef;filter:none;opacity:1}
+.route-mode.injection{background:#fdeceb;color:#b4483d}

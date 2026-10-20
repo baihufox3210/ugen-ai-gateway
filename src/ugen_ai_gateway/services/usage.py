@@ -6,6 +6,7 @@ never written.
 """
 
 import asyncio
+import hashlib
 import json
 import sqlite3
 import time
@@ -37,9 +38,20 @@ CREATE TABLE IF NOT EXISTS requests (
     generation_ms REAL NOT NULL DEFAULT 0,
     total_ms REAL NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0,
-    baseline_cost_usd REAL NOT NULL DEFAULT 0
+    baseline_cost_usd REAL NOT NULL DEFAULT 0,
+    injection_signals TEXT NOT NULL DEFAULT '[]',
+    output_redactions INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS requests_created_at ON requests (created_at);
+CREATE TABLE IF NOT EXISTS audit (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,
+    request_id TEXT,
+    event TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    prev_hash TEXT NOT NULL,
+    hash TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS feedback (
     request_id TEXT PRIMARY KEY REFERENCES requests (id),
     rating INTEGER NOT NULL CHECK (rating IN (-1, 1)),
@@ -71,6 +83,8 @@ class UsageRecord:
     total_ms: float = 0.0
     cost_usd: float = 0.0
     baseline_cost_usd: float = 0.0
+    injection_signals: list[str] = field(default_factory=list)
+    output_redactions: int = 0
     created_at: float = field(default_factory=time.time)
 
 
@@ -85,6 +99,20 @@ def token_cost(
     ) / 1_000_000
 
 
+_ADDED_COLUMNS = {
+    "injection_signals": "TEXT NOT NULL DEFAULT '[]'",
+    "output_redactions": "INTEGER NOT NULL DEFAULT 0",
+}
+_GENESIS_HASH = "0" * 64
+
+
+def _audit_hash(prev_hash: str, entry: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        entry, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    return hashlib.sha256(f"{prev_hash}|{canonical}".encode()).hexdigest()
+
+
 class UsageStore:
     def __init__(self, path: str | Path) -> None:
         self._path = str(path)
@@ -95,6 +123,20 @@ class UsageStore:
         self._lock = Lock()
         with self._lock:
             self._connection.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created."""
+        existing = {
+            row["name"]
+            for row in self._connection.execute("PRAGMA table_info(requests)")
+        }
+        for name, definition in _ADDED_COLUMNS.items():
+            if name not in existing:
+                self._connection.execute(
+                    f"ALTER TABLE requests ADD COLUMN {name} {definition}"
+                )
+        self._connection.commit()
 
     def close(self) -> None:
         self._connection.close()
@@ -118,6 +160,7 @@ class UsageStore:
     def _record(self, record: UsageRecord) -> None:
         row = asdict(record)
         row["personal_data_types"] = json.dumps(record.personal_data_types)
+        row["injection_signals"] = json.dumps(record.injection_signals)
         columns = ", ".join(row)
         placeholders = ", ".join(f":{name}" for name in row)
         with self._lock, self._connection:
@@ -150,7 +193,7 @@ class UsageStore:
                 SELECT
                     COUNT(*) AS requests,
                     COALESCE(SUM(status = 'ok'), 0) AS completed,
-                    COALESCE(SUM(status != 'ok'), 0) AS failed,
+                    COALESCE(SUM(status = 'error'), 0) AS failed,
                     COALESCE(SUM(status = 'ok' AND provider = 'local'), 0) AS local,
                     COALESCE(SUM(status = 'ok' AND provider = 'cloud'), 0) AS cloud,
                     COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
@@ -163,6 +206,9 @@ class UsageStore:
                     COALESCE(SUM(fallback_from IS NOT NULL), 0) AS fallbacks,
                     COALESCE(SUM(analysis_source = 'rules'), 0) AS analysis_rules,
                     COALESCE(SUM(analysis_source = 'cache'), 0) AS analysis_cache,
+                    COALESCE(SUM(injection_signals != '[]'), 0) AS injection_flagged,
+                    COALESCE(SUM(status = 'blocked'), 0) AS blocked,
+                    COALESCE(SUM(output_redactions), 0) AS output_redactions,
                     COALESCE(AVG(CASE WHEN status = 'ok' THEN total_ms END), 0) AS avg_total_ms
                 FROM requests WHERE created_at >= ?
                 """,
@@ -223,5 +269,84 @@ class UsageStore:
         for row in rows:
             item = dict(row)
             item["personal_data_types"] = json.loads(item["personal_data_types"])
+            item["injection_signals"] = json.loads(item["injection_signals"])
             items.append(item)
         return items
+
+    # Audit log: append-only, each entry hashes the previous entry's hash, so a
+    # changed, removed or reordered row breaks verification from that point on.
+
+    async def append_audit(
+        self, event: str, *, request_id: str | None, detail: dict[str, Any]
+    ) -> None:
+        await asyncio.to_thread(self._append_audit, event, request_id, detail)
+
+    async def audit_entries(
+        self, *, since: float | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._audit_entries, since, limit)
+
+    async def verify_audit(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self._verify_audit)
+
+    def _append_audit(
+        self, event: str, request_id: str | None, detail: dict[str, Any]
+    ) -> None:
+        with self._lock, self._connection:
+            last = self._connection.execute(
+                "SELECT hash FROM audit ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            prev_hash = last["hash"] if last else _GENESIS_HASH
+            entry = {
+                "created_at": time.time(),
+                "request_id": request_id,
+                "event": event,
+                "detail": detail,
+            }
+            self._connection.execute(
+                "INSERT INTO audit (created_at, request_id, event, detail, prev_hash, hash) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    entry["created_at"],
+                    request_id,
+                    event,
+                    json.dumps(detail, sort_keys=True, ensure_ascii=False),
+                    prev_hash,
+                    _audit_hash(prev_hash, entry),
+                ),
+            )
+
+    def _audit_entries(self, since: float | None, limit: int) -> list[dict[str, Any]]:
+        query = "SELECT * FROM audit"
+        parameters: tuple[Any, ...] = ()
+        if since is not None:
+            query += " WHERE created_at >= ?"
+            parameters = (since,)
+        query += " ORDER BY seq LIMIT ?"
+        with self._lock:
+            rows = self._connection.execute(query, (*parameters, limit)).fetchall()
+        return [{**dict(row), "detail": json.loads(row["detail"])} for row in rows]
+
+    def _verify_audit(self) -> dict[str, Any]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM audit ORDER BY seq"
+            ).fetchall()
+        prev_hash = _GENESIS_HASH
+        for row in rows:
+            entry = {
+                "created_at": row["created_at"],
+                "request_id": row["request_id"],
+                "event": row["event"],
+                "detail": json.loads(row["detail"]),
+            }
+            if row["prev_hash"] != prev_hash or row["hash"] != _audit_hash(
+                prev_hash, entry
+            ):
+                return {
+                    "ok": False,
+                    "entries": len(rows),
+                    "first_invalid_seq": row["seq"],
+                }
+            prev_hash = row["hash"]
+        return {"ok": True, "entries": len(rows), "first_invalid_seq": None}

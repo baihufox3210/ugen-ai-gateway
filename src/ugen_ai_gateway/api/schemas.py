@@ -22,6 +22,8 @@ class RoutingInfo(BaseModel):
     redacted_values: int = Field(default=0, ge=0)
     analysis_source: Literal["llm", "rules", "cache"] = "llm"
     fallback_from: Literal["local", "cloud"] | None = None
+    injection_signals: list[str] = Field(default_factory=list)
+    output_findings: list[str] = Field(default_factory=list)
 
 
 class UsageStats(BaseModel):

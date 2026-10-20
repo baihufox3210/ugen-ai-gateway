@@ -1,6 +1,8 @@
 """Gateway-specific endpoints used by the dashboard: health, config, and chat
 with routing details and stage-by-stage progress."""
 
+import csv
+import io
 import json
 import logging
 from typing import Annotated, Any, Literal
@@ -9,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ugen_ai_gateway.api.access import check_api_access
+from ugen_ai_gateway.api.access import check_admin_access, check_api_access
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.config import get_settings
@@ -122,6 +124,56 @@ async def submit_feedback(
     if not await _require_store(store).set_feedback(body.request_id, body.rating):
         raise HTTPException(status_code=404, detail="Unknown request id")
     return Response(status_code=204)
+
+
+@router.get("/v1/ugen/audit", response_model=None)
+async def audit_log(
+    store: UsageStoreDependency,
+    http_request: Request,
+    since: float | None = None,
+    limit: Annotated[int, Query(ge=1, le=10_000)] = 1000,
+    format: Literal["json", "csv"] = "json",
+) -> dict[str, Any] | Response:
+    """Export the hash-chained audit log (metadata only) as JSON or CSV."""
+    check_admin_access(http_request)
+    entries = await _require_store(store).audit_entries(since=since, limit=limit)
+    if format == "json":
+        return {"data": entries}
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    columns = [
+        "seq",
+        "created_at",
+        "request_id",
+        "event",
+        "detail",
+        "prev_hash",
+        "hash",
+    ]
+    writer.writerow(columns)
+    for entry in entries:
+        writer.writerow(
+            [
+                json.dumps(entry[column], ensure_ascii=False, sort_keys=True)
+                if column == "detail"
+                else entry[column]
+                for column in columns
+            ]
+        )
+    return Response(
+        buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="ugen-audit.csv"'},
+    )
+
+
+@router.get("/v1/ugen/audit/verify")
+async def verify_audit_log(
+    store: UsageStoreDependency, http_request: Request
+) -> dict[str, Any]:
+    """Recompute the hash chain; ``ok`` is false from the first altered entry."""
+    check_admin_access(http_request)
+    return await _require_store(store).verify_audit()
 
 
 @router.post("/v1/ugen/chat", response_model=ChatResponse)

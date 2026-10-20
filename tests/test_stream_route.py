@@ -40,7 +40,7 @@ class SimpleAnalyzer:
 
 def client_for(provider: StreamingProvider) -> TestClient:
     service = GatewayService(
-        settings=Settings(local_model="local-model"),
+        settings=Settings(local_model="local-model", output_pii_action="off"),
         local_provider=provider,  # type: ignore[arg-type]
         cloud_provider=None,
         analyzer=SimpleAnalyzer(),  # type: ignore[arg-type]

@@ -41,6 +41,9 @@ class RedactionVault:
     def __len__(self) -> int:
         return len(self._value_by_placeholder)
 
+    def values(self) -> list[str]:
+        return list(self._value_by_placeholder.values())
+
     def reserve(self, texts: Iterable[str]) -> None:
         """Never issue placeholders that already appear in the input."""
         for text in texts:

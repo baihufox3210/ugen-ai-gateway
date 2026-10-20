@@ -172,6 +172,44 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
 - `POST /v1/ugen/feedback` with `{"request_id": "...", "rating": 1}` (or `-1`)
   records feedback on an answer; `request_id` is the `id` of the chat response.
 
+### Guards
+
+**Prompt injection.** User messages are checked for common injection
+phrasings in English and Chinese ("ignore all previous instructions",
+「忽略之前的指示」, requests to reveal the system prompt, "developer mode",
+sending keys to a URL). This is a heuristic tripwire, not a guarantee.
+`INJECTION_ACTION` decides what happens:
+
+| Value | Behavior |
+| --- | --- |
+| `flag` (default) | Record the signals (`routing.injection_signals`, a `guard` stream event, usage and audit logs) and continue |
+| `local` | Also keep the request on the local model |
+| `block` | Reject with HTTP `400` before any model is called |
+| `off` | Skip the check |
+
+**Personal data in answers.** The reply is scanned for personal data that the
+user did not provide, such as a phone number or key the model produced on its
+own. `OUTPUT_PII_ACTION=redact` (default) replaces it with a `[LABEL]` marker,
+`flag` only records it, `off` skips the check. Values from the request are left
+alone. When streaming, text is released only at points no value can span (the
+last 24 characters are held until the next safe break), so a value is never
+sent in pieces before it can be checked. Findings appear in
+`routing.output_findings`.
+
+### Audit log
+
+Every request appends an entry to an audit log in the usage database: the same
+metadata as usage tracking (never message text or values), chained so that
+each entry's SHA-256 covers the previous entry's hash. Changing, deleting, or
+reordering an entry breaks verification from that point on.
+
+- `GET /v1/ugen/audit?since=<unix time>&limit=1000&format=json|csv` exports it.
+- `GET /v1/ugen/audit/verify` recomputes the chain and returns
+  `{"ok": true, "entries": N, "first_invalid_seq": null}`.
+
+Both need `ADMIN_API_KEY` when it is set (as `X-API-Key` or a bearer token),
+and otherwise follow `GATEWAY_API_KEY`.
+
 ### Usage tracking
 
 Each request's metadata is stored in SQLite at `USAGE_DB_PATH` (default
