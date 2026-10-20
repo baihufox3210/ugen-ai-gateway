@@ -8,6 +8,7 @@ function Markdown({ text }: { text: string }) {
     return part;
   });
   return <div className="markdown">{text.split(/\n\s*\n/).map((block, i) => {
+    if (/^#{1,4}\s*$/.test(block)) return null;
     const lines = block.split('\n');
     if (lines.every(line => /^\s*[-*+]\s+/.test(line))) return <ul key={i}>{lines.map((line, j) => <li key={j}>{inline(line.replace(/^\s*[-*+]\s+/, ''))}</li>)}</ul>;
     if (lines.every(line => /^\s*\d+[.)]\s+/.test(line))) return <ol key={i}>{lines.map((line, j) => <li key={j}>{inline(line.replace(/^\s*\d+[.)]\s+/, ''))}</li>)}</ol>;

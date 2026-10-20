@@ -49,12 +49,12 @@ function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }:
               {(result.routing.output_findings?.length ?? 0) > 0 && <span className="fallback-note">Redacted {result.routing.output_findings!.length} personal data item(s) you did not provide</span>}
               {result.routing.fallback_from && <span className="fallback-note">{result.routing.fallback_from === 'cloud' ? 'Cloud did not respond; answered locally' : 'Local model did not respond; answered by cloud'}</span>}
               {result.routing.rule && <span className={POLICY_RULES[result.routing.rule] ? 'policy-note' : ''}>{POLICY_RULES[result.routing.rule] ?? `Rule: ${result.routing.rule}`}</span>}
-              <span className={`provider-model ${result.provider === 'cloud' ? 'cloud' : ''}`}>{result.routing.provider_name || (result.provider === 'cloud' ? 'Cloud' : 'Local')} · {result.model}</span>
+              <span className={`provider-model ${result.provider === 'cloud' ? 'cloud' : ''}`}>{result.provider === 'cloud' ? 'Cloud' : 'Local'}</span>
             </div>
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>
           <span className="message-avatar assistant-avatar">✳</span><div className="message-body"><div className="message-author"><b>UGen</b></div>{busy && index === turns.length - 1 && streamingText
-            ? <div className="markdown-wrap streaming"><Markdown text={streamingText}/><i className="stream-caret" aria-hidden="true"/></div>
+            ? <div className="markdown-wrap streaming"><Markdown text={streamingText}/></div>
             : <p>{busy && index === turns.length - 1 ? 'Analyzing and generating a response…' : 'No response received for this message'}</p>}</div>
         </article>}
       </section>;

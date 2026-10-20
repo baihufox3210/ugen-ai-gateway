@@ -160,7 +160,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .flow-v4-card.analysis.done{border-color:#b9ddd1}
 .flow-v4-card.analysis.working{border-color:#9ab9e4;background:#f4f8ff;box-shadow:0 0 0 4px #668dd612}
 .flow-v4-link{position:relative;justify-self:stretch;height:2px;margin:0 5px;background:#d2e1db}
-.flow-v4-link::after{position:absolute;right:0;top:-2.5px;width:7px;height:7px;border-top:2px solid #b5ccc3;border-right:2px solid #b5ccc3;content:'';transform:rotate(45deg)}
+.flow-v4-link::after{position:absolute;right:0;top:-2.5px;box-sizing:border-box;width:7px;height:7px;border-top:2px solid #b5ccc3;border-right:2px solid #b5ccc3;content:'';transform:rotate(45deg)}
 .flow-v4-link.done{background:#86c3a8}
 .flow-v4-link.done::after{border-color:#86c3a8}
 .flow-v4-link i{display:none;position:absolute;top:-3px;left:0;width:8px;height:8px;border-radius:50%;background:#4d9d83;box-shadow:0 0 8px #4d9d8388}
@@ -420,8 +420,8 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}.flow-v4-branch-dot,.flow-v4-link i{display:none!important}}
 
 /* Live streaming reply */
-.streaming>.markdown,.streaming .markdown>*:last-child{display:inline}
-.stream-caret{display:inline-block;width:7px;height:14px;margin-left:2px;vertical-align:-2px;border-radius:1px;background:#65a580;animation:cursor-blink 1s steps(2,end) infinite}
+/* The caret is drawn after the last block so blocks keep their normal layout while text arrives. */
+.streaming .markdown>:is(p,h2,h3,h4,h5):last-child::after,.streaming .markdown>:is(ul,ol):last-child>li:last-child::after,.streaming .markdown>pre:last-child>code::after{content:'';display:inline-block;width:7px;height:14px;margin-left:2px;vertical-align:-2px;border-radius:1px;background:#65a580;animation:cursor-blink 1s steps(2,end) infinite}
 .route-mode.fallback{background:#fdf1e3;color:#a4692a}
 .result-foot .fallback-note{border-color:#f0dcc2;background:#fff8ef;color:#a4692a;font-weight:600}
 .result-foot .policy-note{border-color:#cde5da;background:#f0f8f4;color:#2f7a5f;font-weight:600}
