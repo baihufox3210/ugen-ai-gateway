@@ -434,28 +434,28 @@
 /* The workspace adapts to its own width (not the viewport), so the dashboard never overflows its column. */
 .workspace-content{container:workspace/inline-size}
 .workspace-content>*{min-width:0}
+/* Narrow workspace: keep the left-to-right flow, but compress it and stack each card's icon above its text. */
 @container workspace (max-width:560px){
-  .workspace-content>.flow-v4{padding:24px 16px 20px}
-  .flow-v4-steps{grid-template-columns:minmax(0,1fr);justify-items:center;margin-top:16px}
-  .flow-v4-steps>.flow-v4-card{width:100%}
-  .flow-v4-card{min-height:58px;padding:9px 11px;gap:10px}
-  .flow-v4-icon{flex-basis:34px;width:34px;height:34px;font-size:17px}
-  .flow-v4-copy small{font-size:8px}
-  .flow-v4-copy b{font-size:12px;overflow-wrap:break-word}
-  .flow-v4-link{justify-self:center;width:2px;height:24px;margin:5px 0}
-  .flow-v4-link:after{right:-3px;top:auto;bottom:0;transform:rotate(135deg)}
-  .flow-v4-link i{left:-3px}
-  .flow-v4-link.active i{animation-name:flow-arrow-vertical}
-  .flow-v4-branch{justify-self:center;width:2px;height:24px;min-height:0;margin:5px 0;background:#d3e1db}
-  .flow-v4-branch.selected{background:#86c3a8}
-  .flow-v4-branch-svg,.flow-v4-tip{display:none}
-  .flow-v4-targets{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-  .flow-v4-targets .flow-v4-card{width:100%;min-height:58px;padding:9px 10px}
+  .workspace-content>.flow-v4{padding:24px 14px 20px}
+  .flow-v4-steps{grid-template-columns:minmax(0,.85fr) 22px minmax(0,1fr) 26px minmax(0,1.15fr);margin-top:16px}
+  .flow-v4-steps>.flow-v4-card,.flow-v4-targets .flow-v4-card{width:100%}
+  .flow-v4-card,.flow-v4-targets .flow-v4-card{flex-direction:column;align-items:flex-start;justify-content:center;gap:6px;min-height:0;padding:9px 8px}
+  .flow-v4-icon{flex-basis:auto;width:28px;height:28px;font-size:15px}
+  .flow-v4-copy{width:100%}
+  .flow-v4-copy small{font-size:7px}
+  .flow-v4-copy b{font-size:11px}
+  .flow-v4-link{margin:0 3px}
+  .flow-v4-branch{min-height:150px;margin:0 2px}
+  .flow-v4-targets{gap:10px}
 }
-@container workspace (max-width:340px){
-  .flow-v4-targets{grid-template-columns:minmax(0,1fr)}
+@container workspace (max-width:360px){
+  .workspace-content>.flow-v4{padding:20px 10px 16px}
+  .flow-v4-steps{grid-template-columns:minmax(0,.8fr) 16px minmax(0,1fr) 20px minmax(0,1.2fr)}
+  .flow-v4-card,.flow-v4-targets .flow-v4-card{padding:8px 6px}
+  .flow-v4-copy small{font-size:6px}
+  .flow-v4-copy b{font-size:10px}
+  .flow-v4-link,.flow-v4-branch{margin:0 1px}
 }
-@keyframes flow-arrow-vertical{from{top:0;opacity:.3}50%{opacity:1}to{top:calc(100% - 8px);opacity:.3}}
 @container workspace (max-width:470px){
   .workspace-content .monitor-stats{grid-template-columns:minmax(0,1fr)}
   .workspace-content .metric-card{min-height:0;grid-template-rows:auto auto auto}
