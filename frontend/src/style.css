@@ -201,35 +201,31 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .privacy-result.found .privacy-symbol{background:#fbecd4;color:#b17b2c}
 .privacy-result.found b{color:#98702f}
 
-/* Not enough room for icon + text side by side in three columns: switch to a top-to-bottom flow. */
+/* The flow is always left to right, icon and text on one row. Narrow columns
+   shrink spacing, icons and type; only below 300px does it scroll sideways. */
+.flow-v4-scroll{overflow-x:auto;margin:0 -6px;padding:0 6px 4px;overscroll-behavior-x:contain;scrollbar-color:#d9e6df transparent;scrollbar-width:thin}
+.flow-v4-scroll>.flow-v4-steps{min-width:290px}
 @container workspace (max-width:680px){
-  .flow-v4{padding:26px 18px 22px}
-  .flow-v4-steps{grid-template-columns:minmax(0,1fr);justify-items:stretch;margin-top:18px}
-  .flow-v4-steps>.flow-v4-card,.flow-v4-targets .flow-v4-card{width:100%;min-height:58px}
-  .flow-v4-link{justify-self:center;width:2px;height:26px;margin:6px 0}
-  .flow-v4-link::after{top:auto;right:auto;bottom:0;left:-2.5px;transform:rotate(135deg)}
-  .flow-v4-link i{left:-3px}
-  .flow-v4-link.active i{animation-name:flow-arrow-down}
-  /* Fork: stem down from the analysis card, then one arm down into each target card. */
-  .flow-v4-steps{--target-gap:12px}
-  .flow-v4-branch{justify-self:stretch;height:34px;min-height:0;margin:6px 0}
-  .flow-v4-branch-stem{top:0;left:calc(50% - 1px);width:2px;height:50%}
-  .flow-v4-branch-route.local{top:calc(50% - 1px);bottom:2px;left:calc(var(--arm) - 1px);right:calc(50% - 1px);border-width:2px 0 0 2px;border-radius:7px 0 0 0}
-  .flow-v4-branch-route.cloud{top:calc(50% - 1px);bottom:2px;left:calc(50% - 1px);right:calc(var(--arm) - 1px);border-width:2px 2px 0 0;border-radius:0 7px 0 0}
-  .flow-v4-tip{transform:rotate(135deg)}
-  .flow-v4-tip.local{top:auto;right:auto;bottom:0;left:calc(var(--arm) - 3.5px)}
-  .flow-v4-tip.cloud{top:auto;bottom:0;right:calc(var(--arm) - 3.5px)}
-  .flow-v4-branch-dot.local{animation-name:branch-local-down}
-  .flow-v4-branch-dot.cloud{animation-name:branch-cloud-down}
-  .flow-v4-targets{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .flow-v4-targets .flow-v4-card{padding:9px 10px}
+  .flow-v4{padding:24px 14px 20px}
+  .flow-v4-steps{--target-gap:8px;grid-template-columns:minmax(0,1fr) 24px minmax(0,1.1fr) 28px minmax(0,1.15fr);margin-top:16px}
+  .flow-v4-steps>.flow-v4-card,.flow-v4-targets .flow-v4-card{width:100%;min-height:56px;gap:7px;padding:8px}
+  .flow-v4-icon{flex-basis:28px;width:28px;height:28px;border-radius:8px;font-size:15px}
+  .flow-v4-copy{gap:3px}
+  .flow-v4-copy small{font-size:6.5px;letter-spacing:.3px}
+  .flow-v4-copy b{font-size:10.5px;line-height:1.25}
+  .flow-v4-link{margin:0 3px}
+  .flow-v4-branch{min-height:120px;margin:0 2px}
   .privacy-lock{display:none}
 }
-@container workspace (max-width:400px){
-  .flow-v4{padding:22px 12px 18px}
-  .flow-v4-card,.flow-v4-targets .flow-v4-card{gap:8px;padding:8px}
-  .flow-v4-icon{flex-basis:30px;width:30px;height:30px;font-size:16px}
-  .flow-v4-steps{--target-gap:8px}
+@container workspace (max-width:420px){
+  .flow-v4{padding:20px 10px 16px}
+  .flow-v4-steps{grid-template-columns:minmax(0,1fr) 16px minmax(0,1.1fr) 22px minmax(0,1.15fr)}
+  .flow-v4-steps>.flow-v4-card,.flow-v4-targets .flow-v4-card{min-height:50px;gap:5px;padding:7px 6px;border-radius:10px}
+  .flow-v4-icon{flex-basis:22px;width:22px;height:22px;border-radius:6px;font-size:12px}
+  .flow-v4-copy small{font-size:6px;letter-spacing:.2px}
+  .flow-v4-copy b{font-size:9.5px}
+  .flow-v4-link{margin:0 2px}
+  .flow-v4-branch{min-height:108px;margin:0 1px}
 }
 
 /* ── Monitor panels ────────────────────────────────────────────── */
@@ -413,9 +409,6 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 @keyframes flow-arrow{to{left:calc(100% - 8px)}}
 @keyframes branch-local{0%{top:50%;left:0}40%{top:50%;left:40%}62%{top:var(--arm);left:40%}100%{top:var(--arm);left:calc(100% - 6px)}}
 @keyframes branch-cloud{0%{top:50%;left:0}40%{top:50%;left:40%}62%{top:calc(100% - var(--arm));left:40%}100%{top:calc(100% - var(--arm));left:calc(100% - 6px)}}
-@keyframes branch-local-down{0%{top:0;left:50%}40%{top:50%;left:50%}62%{top:50%;left:var(--arm)}100%{top:calc(100% - 6px);left:var(--arm)}}
-@keyframes branch-cloud-down{0%{top:0;left:50%}40%{top:50%;left:50%}62%{top:50%;left:calc(100% - var(--arm))}100%{top:calc(100% - 6px);left:calc(100% - var(--arm))}}
-@keyframes flow-arrow-down{from{top:0;opacity:.3}50%{opacity:1}to{top:calc(100% - 8px);opacity:.3}}
 @keyframes pulse{50%{opacity:.45}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes glow{50%{box-shadow:0 0 0 3px #67ae8d22}}

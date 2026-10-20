@@ -68,6 +68,7 @@ function RequestFlow({ phase, provider, providerSelection, model, localModel, cl
       </div>
     </div>
 
+    <div className="flow-v4-scroll">
     <div className="flow-v4-steps">
       <ProcessCard glyph="↗" label="STEP 01 · INPUT" title="使用者請求" className={busy || phase === 'complete' ? 'done' : ''} />
       <div className={`flow-v4-link ${phase === 'sending' || phase === 'analyzing' ? 'active' : analyzed ? 'done' : ''}`} aria-hidden="true"><i /></div>
@@ -77,6 +78,7 @@ function RequestFlow({ phase, provider, providerSelection, model, localModel, cl
         <ProcessCard glyph="⌂" label="STEP 03A · LOCAL" title={localName} className={`local ${provider === 'local' ? 'chosen' : ''} ${phase === 'generating' && provider === 'local' ? 'working' : ''} ${modelsStatus === 'error' && !localModel && !(provider === 'local' && model) ? 'config-error' : ''}`} />
         <ProcessCard glyph="✳" label="STEP 03B · CLOUD" title={cloudName} className={`cloud ${provider === 'cloud' ? 'chosen' : ''} ${phase === 'generating' && provider === 'cloud' ? 'working' : ''} ${modelsStatus === 'error' && !cloudModel && !(provider === 'cloud' && model) ? 'config-error' : ''}`} />
       </div>
+    </div>
     </div>
 
     <div className={`privacy-result ${pii ? pii.found ? 'found' : 'clear' : ''}`}><span className="privacy-symbol">{pii?.found ? '!' : '⌑'}</span><span><b>{pii ? pii.found ? '偵測到隱私資訊' : '未偵測到隱私資訊' : '隱私資訊檢查'}</b>{pii && <small>{pii.found ? piiSummary(pii) : '請求在本機完成檢查'}</small>}</span><span className="privacy-lock">LOCAL CHECK</span></div>
