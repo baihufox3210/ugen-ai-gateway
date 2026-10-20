@@ -113,6 +113,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .new-chat kbd{margin-left:auto;border:1px solid #e5ece8;border-radius:5px;padding:2px 5px;color:#91a49b;font:9px 'DM Sans',sans-serif}
 .sidebar-footer{display:flex;align-items:center;gap:9px;padding:1px 6px 2px;color:#879990}
 .sidebar-footer>span:nth-child(2){display:grid;gap:3px}
+.sidebar-footer .settings-button{margin-left:auto}
 .sidebar-footer b{color:#647d72;font-size:9px;font-weight:600}
 .sidebar-footer small{font-size:8px}
 .sidebar-status-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#51aa83;box-shadow:0 0 0 3px #51aa8318}

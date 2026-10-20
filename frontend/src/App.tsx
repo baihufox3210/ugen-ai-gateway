@@ -8,6 +8,9 @@ import Sidebar from './components/Sidebar';
 import { apiFetch, errorMessage, loadApiKey, saveApiKey } from './api';
 import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from './types';
 
+// crypto.randomUUID only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere.
+const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+
 const STORAGE_KEY = 'ugen-gateway-conversations-v1';
 const PROVIDER_SELECTION_KEY = 'ugen-gateway-provider-selection';
 type View = 'chat' | 'monitor';
@@ -162,8 +165,8 @@ function App() {
     const userText = prompt.trim();
     if (!userText || busy) return;
     const existing = activeConversation;
-    const conversationId = existing?.id ?? crypto.randomUUID();
-    const turnId = crypto.randomUUID();
+    const conversationId = existing?.id ?? newId();
+    const turnId = newId();
     const conversation: Conversation = existing ?? { id: conversationId, title: userText.slice(0, 36), updatedAt: Date.now(), turns: [] };
     const turn: ConversationTurn = { id: turnId, user: userText };
     const nextTurns = [...conversation.turns, turn];
