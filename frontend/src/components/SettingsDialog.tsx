@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch, apiUrl, errorMessage } from '../api';
+import { apiFetch, apiUrl, errorMessage, isValidApiKey } from '../api';
 
 type Props = { apiKey: string; onApiKeyChange: (key: string) => void; onClose: () => void };
 type Whoami = {
@@ -25,6 +25,7 @@ function describe(whoami: Whoami): string {
 
 function SettingsDialog({ apiKey, onApiKeyChange, onClose }: Props) {
   const [draft, setDraft] = useState(apiKey);
+  const [draftError, setDraftError] = useState('');
   const [whoami, setWhoami] = useState<Whoami | null>(null);
   const [whoamiError, setWhoamiError] = useState('');
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
@@ -88,15 +89,20 @@ function SettingsDialog({ apiKey, onApiKeyChange, onClose }: Props) {
         <button className="icon-button" onClick={onClose} aria-label="Close settings">×</button>
       </div>
 
-      <form className="settings-section" onSubmit={event => { event.preventDefault(); onApiKeyChange(draft.trim()); }}>
+      <form className="settings-section" onSubmit={event => {
+        event.preventDefault();
+        const key = draft.trim();
+        if (!isValidApiKey(key)) { setDraftError('API keys contain only letters, digits and symbols (no spaces or non-ASCII characters).'); return; }
+        setDraftError(''); onApiKeyChange(key);
+      }}>
         <h3>Connection key</h3>
         <p>The key this browser uses to call the gateway. It is stored only on this device.</p>
         <div className="settings-row">
-          <input type="password" value={draft} onChange={event => setDraft(event.target.value)} placeholder="ugk_… or master key" autoComplete="off" aria-label="API key"/>
+          <input type="password" value={draft} onChange={event => { setDraft(event.target.value); setDraftError(''); }} placeholder="ugk_… or master key" autoComplete="off" aria-label="API key"/>
           <button className="send-button" type="submit">Save</button>
-          {apiKey && <button className="cancel-button" type="button" onClick={() => { setDraft(''); onApiKeyChange(''); }}>Clear</button>}
+          {apiKey && <button className="cancel-button" type="button" onClick={() => { setDraft(''); setDraftError(''); onApiKeyChange(''); }}>Clear</button>}
         </div>
-        <div className={`settings-status ${whoami ? 'ok' : 'error'}`}>{whoami ? describe(whoami) : whoamiError || 'Loading…'}</div>
+        <div className={`settings-status ${whoami && !draftError ? 'ok' : 'error'}`}>{draftError || (whoami ? describe(whoami) : whoamiError || 'Loading…')}</div>
       </form>
 
       <div className="settings-section">

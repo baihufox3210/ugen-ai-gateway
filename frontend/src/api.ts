@@ -2,8 +2,14 @@ const API_KEY_STORAGE = 'ugen-gateway-api-key';
 
 export const apiUrl = (import.meta.env.VITE_GATEWAY_URL || '/api').replace(/\/$/, '');
 
+/** Keys are sent in an HTTP header, which only carries printable ASCII. */
+export const isValidApiKey = (key: string) => /^[\x21-\x7e]*$/.test(key);
+
 export function loadApiKey(): string {
-  try { return localStorage.getItem(API_KEY_STORAGE) ?? ''; } catch { return ''; }
+  try {
+    const key = localStorage.getItem(API_KEY_STORAGE) ?? '';
+    return isValidApiKey(key) ? key : '';
+  } catch { return ''; }
 }
 
 export function saveApiKey(key: string): void {
@@ -16,10 +22,10 @@ export function saveApiKey(key: string): void {
 }
 
 /** Fetch a gateway path, sending the saved API key as a bearer token. */
-export function apiFetch(path: string, init: RequestInit = {}, apiKey = loadApiKey()): Promise<Response> {
+export async function apiFetch(path: string, init: RequestInit = {}, apiKey = loadApiKey()): Promise<Response> {
   const headers = new Headers(init.headers);
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
-  if (apiKey) headers.set('Authorization', `Bearer ${apiKey}`);
+  if (apiKey && isValidApiKey(apiKey)) headers.set('Authorization', `Bearer ${apiKey}`);
   return fetch(`${apiUrl}${path}`, { ...init, headers });
 }
 
