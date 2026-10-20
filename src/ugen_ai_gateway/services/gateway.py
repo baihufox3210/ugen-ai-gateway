@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -151,6 +152,7 @@ class GatewayService:
         self._providers: dict[str, ModelProvider] = providers or {}
         self._engine = RuleEngine(routing, available=set(self._providers))
         self._breakers: dict[str, CircuitBreaker] = {}
+        self._background: set[asyncio.Task[None]] = set()
         self._analysis_cache = AnalysisCache(
             max_size=settings.analysis_cache_size,
             ttl_seconds=settings.analysis_cache_ttl_seconds,
@@ -208,16 +210,28 @@ class GatewayService:
         """
         principal = principal or Principal(api_key_id=None)
         record = UsageRecord(id=uuid.uuid4().hex, api_key_id=principal.api_key_id)
+        finished = False
         try:
             async for event in self._events(
                 request, stream, options or {}, record, principal
             ):
+                finished = finished or event.response is not None
                 yield event
         except Exception as exc:
             if record.status == "ok":
                 record.status = "error"
             record.error = type(exc).__name__
             await self._save(record)
+            raise
+        except (GeneratorExit, asyncio.CancelledError):
+            if finished:  # closed after the result: already recorded as complete
+                raise
+            # The client went away mid-request. The prompt may already have
+            # reached a model, so the request is still logged, without waiting.
+            record.status = "cancelled"
+            task = asyncio.get_running_loop().create_task(self._save(record))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
             raise
 
     async def _save(self, record: UsageRecord) -> None:
@@ -299,6 +313,7 @@ class GatewayService:
             reason, rule = force_local
             prepared.route = replace(prepared.route, reason=reason, rule=rule)
         record.redacted_values = len(prepared.vault or ())
+        _note_route(record, prepared)
         output_action = self._settings.output_pii_action
         guard = (
             OutputGuard(
@@ -341,6 +356,8 @@ class GatewayService:
                 fallback_from = attempt.locality
                 yield _fallback_event(attempt, next_attempt, "circuit open")
                 attempt = next_attempt
+                _note_route(record, attempt)
+                record.fallback_from = fallback_from
                 continue
 
             yield GatewayEvent(
@@ -370,6 +387,8 @@ class GatewayService:
                 fallback_from = attempt.locality
                 yield _fallback_event(attempt, next_attempt, str(exc))
                 attempt = next_attempt
+                _note_route(record, attempt)
+                record.fallback_from = fallback_from
                 continue
             breaker.record_success()
             prepared = attempt
@@ -695,13 +714,27 @@ class GatewayService:
         self, request: ChatRequest, analysis: RequestAnalysis, analysis_ms: float
     ) -> _PreparedChat:
         route = self._route(request, analysis)
+        if route.locality == "cloud" and not self._redactable(analysis):
+            # The analysis found personal data it could not pin down (e.g. "a
+            # name" without the name), so redaction cannot be trusted: keep the
+            # request on this machine rather than refusing it.
+            local = self._engine.default("local")
+            if local is None:
+                raise PrivacyRedactionError(
+                    "Detected personal data could not be safely redacted"
+                )
+            route = Route(
+                local.provider,
+                local.model,
+                "Personal data could not be redacted reliably; kept on the local model.",
+                "privacy.unredactable",
+            )
         provider = self._provider_for(route)
 
         if route.locality == "local" and not self._settings.redact_local:
             vault = None
             messages = list(request.messages)
         else:
-            self._ensure_redactable(analysis)
             vault = RedactionVault(analysis.personal_data_values)
             messages = self._redacted_messages(request, vault)
 
@@ -715,22 +748,19 @@ class GatewayService:
         )
 
     @staticmethod
-    def _ensure_redactable(analysis: RequestAnalysis) -> None:
+    def _redactable(analysis: RequestAnalysis) -> bool:
+        """Whether every detected personal-data item can actually be redacted."""
         unredactable_types = {
             data_type.casefold()
             for data_type in analysis.personal_data_types
             if data_type.casefold() not in supported_types()
         }
         if unredactable_types and not analysis.personal_data_values:
-            raise PrivacyRedactionError(
-                "Detected personal data could not be safely redacted"
-            )
-        if analysis.contains_personal_data and not (
-            analysis.personal_data_types or analysis.personal_data_values
-        ):
-            raise PrivacyRedactionError(
-                "Detected personal data could not be safely redacted"
-            )
+            return False
+        return not (
+            analysis.contains_personal_data
+            and not (analysis.personal_data_types or analysis.personal_data_values)
+        )
 
     @staticmethod
     def _redacted_messages(
@@ -759,6 +789,13 @@ class GatewayService:
         if len(vault):
             messages = _with_system_instruction(messages, PLACEHOLDER_INSTRUCTION)
         return messages
+
+
+def _note_route(record: UsageRecord, prepared: _PreparedChat) -> None:
+    record.provider = prepared.locality
+    record.provider_name = prepared.route.provider.name
+    record.model = prepared.model
+    record.rule = prepared.route.rule
 
 
 def _user_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:

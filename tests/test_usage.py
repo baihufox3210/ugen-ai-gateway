@@ -264,3 +264,64 @@ def test_store_file_is_created(tmp_path) -> None:
         .fetchall()
     )
     assert {"requests", "feedback", "audit"} <= {name for (name,) in tables}
+
+
+def test_requests_closed_mid_stream_are_recorded_as_cancelled() -> None:
+    from tests.test_gateway import text_chunk
+
+    async def scenario() -> list[dict[str, Any]]:
+        usage = store()
+        local = FakeProvider()
+        local.chunks = [text_chunk("x " * 40), text_chunk("y " * 40)]
+        service, _, _, _ = make_service(local_provider=local, output_pii_action="off")
+        service._usage_store = usage
+        events = service.events(
+            ChatRequest(messages=[{"role": "user", "content": "hi"}]), stream=True
+        )
+        async for event in events:
+            if event.type == "delta":
+                break
+        await events.aclose()
+        await asyncio.sleep(0.05)
+        return await usage.recent(limit=5)
+
+    rows = asyncio.run(scenario())
+
+    assert [(row["status"], row["provider"]) for row in rows] == [
+        ("cancelled", "local")
+    ]
+
+
+def test_completed_requests_stay_completed_after_the_stream_is_closed() -> None:
+    usage = store()
+    service, _, _, _ = make_service()
+    service._usage_store = usage
+
+    asyncio.run(service.chat(ChatRequest(messages=[{"role": "user", "content": "hi"}])))
+
+    assert asyncio.run(usage.recent(limit=5))[0]["status"] == "ok"
+
+
+def test_audit_chain_survives_several_processes(tmp_path) -> None:
+    import multiprocessing
+
+    path = str(tmp_path / "ugen.db")
+    UsageStore(path).close()
+    context = multiprocessing.get_context("spawn")
+    processes = [
+        context.Process(target=_append_audit_entries, args=(path,)) for _ in range(3)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join()
+
+    assert [process.exitcode for process in processes] == [0, 0, 0]
+    result = asyncio.run(UsageStore(path).verify_audit())
+    assert result == {"ok": True, "entries": 90, "first_invalid_seq": None}
+
+
+def _append_audit_entries(path: str) -> None:
+    store = UsageStore(path)
+    for _ in range(30):
+        asyncio.run(store.append_audit("request.ok", request_id=None, detail={}))

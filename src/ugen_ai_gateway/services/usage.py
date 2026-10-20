@@ -132,8 +132,14 @@ class UsageStore:
         self._path = str(path)
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self._path, check_same_thread=False)
+        # Several gateway processes may share one file: wait for locks instead
+        # of failing, and use WAL so readers do not block the writer.
+        self._connection = sqlite3.connect(
+            self._path, check_same_thread=False, timeout=30
+        )
         self._connection.row_factory = sqlite3.Row
+        if self._path != ":memory:":
+            self._connection.execute("PRAGMA journal_mode=WAL")
         self._lock = Lock()
         with self._lock:
             self._connection.executescript(SCHEMA)
@@ -223,6 +229,7 @@ class UsageStore:
                     COUNT(*) AS requests,
                     COALESCE(SUM(status = 'ok'), 0) AS completed,
                     COALESCE(SUM(status = 'error'), 0) AS failed,
+                    COALESCE(SUM(status = 'cancelled'), 0) AS cancelled,
                     COALESCE(SUM(status = 'ok' AND provider = 'local'), 0) AS local,
                     COALESCE(SUM(status = 'ok' AND provider = 'cloud'), 0) AS cloud,
                     COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
@@ -327,7 +334,10 @@ class UsageStore:
     def _append_audit(
         self, event: str, request_id: str | None, detail: dict[str, Any]
     ) -> None:
+        # BEGIN IMMEDIATE takes SQLite's write lock before reading the last
+        # hash, so processes sharing the file cannot both chain onto it.
         with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
             last = self._connection.execute(
                 "SELECT hash FROM audit ORDER BY seq DESC LIMIT 1"
             ).fetchone()

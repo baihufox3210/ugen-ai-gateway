@@ -395,8 +395,9 @@ non-textual content is not inspected for personal data.
 
 Name, address, and other free-form data do not have a universal deterministic
 pattern. Detection of those values depends on the analysis model; if the model
-reports a personal-data type that cannot be safely redacted, the gateway rejects
-the request instead of forwarding it unredacted. PII detection is a safeguard,
+reports personal data it cannot point to exactly (a type without the values),
+the request is kept on the local model (`routing.rule` is
+`privacy.unredactable`) and is only refused when no local model is available. PII detection is a safeguard,
 not a guarantee that every sensitive value will be recognized.
 
 ## Limits and errors

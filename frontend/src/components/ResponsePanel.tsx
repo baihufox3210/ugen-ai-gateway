@@ -5,6 +5,7 @@ import Markdown from './Markdown';
 // Built-in rules that keep a request local, with the reason in plain words.
 const POLICY_RULES: Record<string, string> = {
   'privacy.never_cloud': '隱私政策：留在本機',
+  'privacy.unredactable': '無法安全遮蔽：留在本機',
   'key.local_only': '金鑰限制：僅限本機',
   'key.budget': '預算已用完：改用本機',
   'guard.injection': '疑似注入：留在本機',

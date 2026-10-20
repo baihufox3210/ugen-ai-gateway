@@ -180,14 +180,15 @@ def test_chat_redacts_personal_data_before_sending_to_local_provider() -> None:
 
 
 @pytest.mark.parametrize("contains_personal_data", [True, False])
-def test_chat_rejects_unredactable_personal_data_without_provider_forwarding(
-    contains_personal_data: bool,
+@pytest.mark.parametrize("complexity", ["simple", "complex"])
+def test_unredactable_personal_data_never_leaves_the_machine(
+    contains_personal_data: bool, complexity: str
 ) -> None:
     analyzer = FakeAnalyzer(
         RequestAnalysis(
             contains_personal_data=contains_personal_data,
             personal_data_types=["name"],
-            complexity="complex",
+            complexity=complexity,  # type: ignore[arg-type]
             task_type="general",
             reason="A name was detected.",
         )
@@ -195,10 +196,41 @@ def test_chat_rejects_unredactable_personal_data_without_provider_forwarding(
     service, local, cloud, _ = make_service(analyzer=analyzer)
     request = ChatRequest(messages=[{"role": "user", "content": "My name is Alex"}])
 
-    with pytest.raises(ValueError, match="could not be safely redacted"):
-        asyncio.run(service.chat(request))
+    response = asyncio.run(service.chat(request))
 
-    assert local.calls == []
+    assert response.provider == "local"
+    assert local.calls and cloud.calls == []
+    if complexity == "complex":
+        assert response.routing.rule == "privacy.unredactable"
+
+
+def test_unredactable_personal_data_is_refused_without_a_local_model() -> None:
+    from tests.test_routing import config
+
+    analyzer = FakeAnalyzer(
+        RequestAnalysis(
+            contains_personal_data=True,
+            personal_data_types=["name"],
+            complexity="complex",
+            task_type="general",
+            reason="A name was detected.",
+        )
+    )
+    cloud = FakeProvider()
+    service = GatewayService(
+        settings=Settings(analysis_mode="llm"),
+        local_provider=FakeProvider(),  # type: ignore[arg-type]
+        cloud_provider=None,
+        analyzer=analyzer,  # type: ignore[arg-type]
+        policy=RoutingPolicy(),
+        routing=config(),
+        providers={"gemini": cloud},  # type: ignore[dict-item]
+    )
+
+    with pytest.raises(ValueError, match="could not be safely redacted"):
+        asyncio.run(
+            service.chat(ChatRequest(messages=[{"role": "user", "content": "x " * 80}]))
+        )
     assert cloud.calls == []
 
 
