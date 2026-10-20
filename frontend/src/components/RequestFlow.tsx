@@ -21,19 +21,13 @@ function ProcessCard({ glyph, label, title, className = '' }: {
 }
 
 function FlowBranch({ provider, animated }: { provider: Provider | null; animated: boolean }) {
-  const route = provider === 'local'
-    ? 'M0 50H32Q40 50 40 42V31Q40 23 48 23H100'
-    : 'M0 50H32Q40 50 40 58V69Q40 77 48 77H100';
   return <div className={`flow-v4-branch ${provider ? `selected ${provider}` : ''}`} aria-hidden="true">
-    <svg className="flow-v4-branch-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-      <path className="flow-v4-branch-path muted" d="M0 50H40" />
-      <path className="flow-v4-branch-path muted" d="M40 50V31Q40 23 48 23H100" />
-      <path className="flow-v4-branch-path muted" d="M40 50V69Q40 77 48 77H100" />
-      {provider && <path className="flow-v4-branch-path chosen" d={route} />}
-      {provider && animated && <circle className="flow-v4-branch-dot" r="3"><animateMotion dur="1.15s" calcMode="paced" repeatCount="indefinite" path={route} /><animate attributeName="opacity" values="0.55;1;0.55" dur="1.15s" repeatCount="indefinite" /></circle>}
-    </svg>
+    <i className="flow-v4-branch-stem" />
+    <i className={`flow-v4-branch-route local ${provider === 'local' ? 'chosen' : ''}`} />
+    <i className={`flow-v4-branch-route cloud ${provider === 'cloud' ? 'chosen' : ''}`} />
     <i className={`flow-v4-tip local ${provider === 'local' ? 'chosen' : ''}`} />
     <i className={`flow-v4-tip cloud ${provider === 'cloud' ? 'chosen' : ''}`} />
+    {provider && animated && <i className={`flow-v4-branch-dot ${provider}`} />}
   </div>;
 }
 
