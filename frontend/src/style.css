@@ -469,7 +469,7 @@
 /* Provider selector: auto routing or a manually pinned local / cloud model. */
 .composer-topline{flex-wrap:wrap;gap:8px}
 .composer-topline .char-count{margin:0 auto 0 0}
-.provider-switch{display:inline-flex;align-items:center;gap:2px;margin-left:auto;padding:3px;border:1px solid #dbe7e1;border-radius:10px;background:#f4f8f6}
+.provider-switch{display:inline-flex;align-items:center;gap:2px;padding:3px;border:1px solid #dbe7e1;border-radius:10px;background:#f4f8f6}
 .provider-option{display:inline-flex;align-items:center;gap:5px;border:0;border-radius:7px;padding:5px 10px;background:transparent;color:#6f877d;font-size:10px;font-weight:600;cursor:pointer;transition:background .2s,color .2s,box-shadow .2s}
 .provider-option i{font-style:normal;font-size:12px;line-height:1}
 .provider-option:hover:not(:disabled):not(.selected){color:#2d5d4d;background:#e9f2ee}
@@ -482,4 +482,7 @@
 .route-mode{border-radius:20px;padding:6px 10px;background:#e8f4ee;color:#367e64;font-size:9px;font-weight:600;white-space:nowrap}
 .route-mode.cloud{background:#efecfa;color:#6a5aa3}
 .route-mode.local{background:#e3f2ea;color:#2f7a5f}
+.provider-option,.clear-draft,.send-button{white-space:nowrap}
+.prompt-footer{flex-wrap:wrap;row-gap:8px}
 @media(max-width:620px){.provider-option{padding:5px 8px;font-size:9px}}
+@media(max-width:420px){.provider-option{padding:5px 7px}.provider-option i{display:none}.prompt-actions{gap:4px}}
