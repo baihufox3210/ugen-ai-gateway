@@ -111,15 +111,46 @@ The routing decision is reported in response headers (`X-UGen-Provider`,
 Lists `ugen-auto`, `ugen-local`, `ugen-cloud` (when cloud routing is enabled),
 and the configured model names.
 
-### Authentication and limits
+### Authentication and API keys
 
-When `GATEWAY_API_KEY` is set, chat requests must send it either as
-`Authorization: Bearer <key>` (what OpenAI SDKs send) or as `X-API-Key`;
-invalid or missing keys receive HTTP `401`. Requests are limited per client IP
-using `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_SECONDS`; an exceeded limit
-receives HTTP `429`. The built-in limiter is per process, so deployments with
-multiple workers or replicas should enforce a shared limit at the reverse proxy
-or API gateway as well.
+Requests authenticate with `Authorization: Bearer <key>` (what OpenAI SDKs
+send) or `X-API-Key`. Three kinds of key are accepted:
+
+- `GATEWAY_API_KEY` and `ADMIN_API_KEY`: no restrictions, and stats cover
+  every request.
+- API keys created through the admin API: one per team or application, each
+  with its own policy, and stats and feedback limited to its own requests.
+
+The gateway runs open (no key needed) only while there is no
+`GATEWAY_API_KEY`, no `ADMIN_API_KEY`, and no API key has ever been created.
+Creating the first key locks it, and revoking every key does not reopen it.
+
+Manage keys with `ADMIN_API_KEY` (or `GATEWAY_API_KEY` when no admin key is
+set). Without either, the key endpoints work only until the first key exists:
+
+```sh
+curl -X POST localhost:7632/v1/ugen/keys -H 'X-API-Key: <admin key>' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "marketing", "allow_cloud": true, "monthly_budget_usd": 20, "rate_limit_per_minute": 60}'
+```
+
+The response includes the secret `key` (`ugk_…`) once; only its SHA-256 hash is
+stored. `GET /v1/ugen/keys` lists keys with this month's request count and
+cost, `DELETE /v1/ugen/keys/{id}` revokes one, and `GET /v1/ugen/whoami`
+reports what the presented key allows. A key with `allow_cloud: false`, or
+whose monthly cloud spend has reached `monthly_budget_usd`, is answered by the
+local model instead (`routing.rule` is `key.local_only` or `key.budget`).
+
+Requests are rate limited per API key (`rate_limit_per_minute`) or, for the
+other keys and open mode, per client IP (`RATE_LIMIT_REQUESTS` per
+`RATE_LIMIT_WINDOW_SECONDS`); an exceeded limit returns HTTP `429`. The
+limiter is in-memory and per process behind a small `RateLimiter` interface,
+so running several workers needs a shared store, such as Redis, behind that
+interface.
+
+The dashboard's settings dialog (gear icon in the sidebar) stores the key it
+uses in the browser, shows what the key allows, and lets an admin create,
+list, and revoke keys and export the audit log.
 
 ### Dashboard endpoints
 
@@ -207,8 +238,8 @@ reordering an entry breaks verification from that point on.
 - `GET /v1/ugen/audit/verify` recomputes the chain and returns
   `{"ok": true, "entries": N, "first_invalid_seq": null}`.
 
-Both need `ADMIN_API_KEY` when it is set (as `X-API-Key` or a bearer token),
-and otherwise follow `GATEWAY_API_KEY`.
+Both need `ADMIN_API_KEY` (or `GATEWAY_API_KEY` when no admin key is set),
+like key management.
 
 ### Usage tracking
 

@@ -91,7 +91,7 @@ def gateway(monkeypatch) -> Any:
         monkeypatch.setattr(
             f"ugen_ai_gateway.api.{module}.get_settings", lambda: settings
         )
-    access._requests_by_client.clear()
+    access.rate_limiter.clear()
     local, cloud = EchoProvider("local"), EchoProvider("cloud")
     service = GatewayService(
         settings=settings,
@@ -303,7 +303,7 @@ def test_routing_config_models_are_listed_and_can_be_pinned(monkeypatch) -> None
     monkeypatch.setattr(
         "ugen_ai_gateway.api.access.get_settings", lambda: Settings(gateway_api_key="")
     )
-    access._requests_by_client.clear()
+    access.rate_limiter.clear()
     app = create_app()
     app.dependency_overrides[get_gateway_service] = lambda: service
     client = openai.OpenAI(

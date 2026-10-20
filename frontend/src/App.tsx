@@ -3,7 +3,9 @@ import PromptPanel from './components/PromptPanel';
 import MonitorPanel from './components/MonitorPanel';
 import RequestFlow from './components/RequestFlow';
 import ResponsePanel from './components/ResponsePanel';
+import SettingsDialog from './components/SettingsDialog';
 import Sidebar from './components/Sidebar';
+import { apiFetch, errorMessage, loadApiKey, saveApiKey } from './api';
 import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from './types';
 
 const STORAGE_KEY = 'ugen-gateway-conversations-v1';
@@ -52,30 +54,25 @@ function App() {
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const activeConversation = conversations.find(item => item.id === activeId) ?? null;
   const turns = activeConversation?.turns ?? [];
-  const apiUrl = import.meta.env.VITE_GATEWAY_URL || '/api';
+  const [apiKey, setApiKey] = useState(loadApiKey);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations)); }, [conversations]);
   useEffect(() => { try { localStorage.setItem(PROVIDER_SELECTION_KEY, providerSelection); } catch { /* selection simply resets next visit */ } }, [providerSelection]);
   useEffect(() => {
     let active = true;
     const loadModels = async () => {
-      const baseUrl = apiUrl.replace(/\/$/, '').replace(/\/v1$/, '');
-      const primary = `${baseUrl}/v1/ugen/config`;
-      const endpoints = [...new Set([primary, '/api/v1/ugen/config', '/v1/ugen/config'])];
       let data: { local_model: string; cloud_model: string } | undefined;
-      for (const endpoint of endpoints) {
-        try {
-          const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
-          if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) continue;
-          const payload: unknown = await response.json();
-          if (!payload || typeof payload !== 'object') continue;
-          const candidate = payload as { local_model?: unknown; cloud_model?: unknown };
-          if (typeof candidate.local_model !== 'string' || typeof candidate.cloud_model !== 'string') continue;
-          data = { local_model: candidate.local_model, cloud_model: candidate.cloud_model };
-          break;
-        } catch {
-          // Try the next configured route when a proxy or fallback route is unavailable.
+      try {
+        const response = await apiFetch('/v1/ugen/config', {}, apiKey);
+        if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
+          const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown };
+          if (typeof candidate.local_model === 'string' && typeof candidate.cloud_model === 'string') {
+            data = { local_model: candidate.local_model, cloud_model: candidate.cloud_model };
+          }
         }
+      } catch {
+        // Reported below as a configuration error.
       }
       if (!active) return;
       if (!data) { setModelsStatus('error'); return; }
@@ -84,11 +81,11 @@ function App() {
     };
     void loadModels();
     return () => { active = false; };
-  }, [apiUrl]);
+  }, [apiKey]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); newConversation(); }
-      if (event.key === 'Escape') { setDeleteAction(null); setDrawerOpen(false); }
+      if (event.key === 'Escape') { setDeleteAction(null); setDrawerOpen(false); setSettingsOpen(false); }
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
@@ -146,7 +143,7 @@ function App() {
       ...conversation, turns: conversation.turns.map(turn => turn.id === turnId ? { ...turn, feedback: rating } : turn),
     }));
     try {
-      await fetch(`${apiUrl.replace(/\/$/, '')}/v1/ugen/feedback`, {
+      await apiFetch('/v1/ugen/feedback', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ request_id: requestId, rating }),
       });
@@ -183,11 +180,11 @@ function App() {
     ]);
     setActiveId(conversationId); setPrompt(''); setStreamingText(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setFallbackFrom(null); setInjectionSignals([]); setError('');
     try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v1/ugen/chat/stream`, {
+      const response = await apiFetch('/v1/ugen/chat/stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2 }),
       });
-      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.detail ?? `請求失敗（HTTP ${response.status}）`); }
+      if (!response.ok) throw new Error(response.status === 401 ? '需要 API 金鑰：請在「設定」中輸入金鑰。' : await errorMessage(response));
       if (!response.body) throw new Error('伺服器沒有回傳即時進度資料');
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       const received: { result: ChatResult | null } = { result: null }; let streamError = '';
@@ -229,14 +226,15 @@ function App() {
       <button className="icon-button new-chat-mini" onClick={newConversation} disabled={busy} aria-label="開始新對話" title="開始新對話">＋</button>
     </header>
     <Sidebar conversations={conversations} activeId={activeId} busy={busy} onNew={newConversation} onSelect={selectConversation}
-      onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)}/>
+      onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)} onSettings={() => { setSettingsOpen(true); setDrawerOpen(false); }}/>
     <div className="drawer-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true"/>
     <nav className="view-tabs" role="tablist" aria-label="切換檢視">
       <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>對話{turns.length > 0 && <small>{turns.length}</small>}</button>
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>流程監控<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
-    <main className="workspace-area"><section className="workspace-title" aria-label="工作區標題"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>讓每個請求，<span>都走對路。</span></h1><p>本機分析後，再交給合適的模型處理。</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} apiUrl={apiUrl} refreshKey={statsVersion}/></section></main>
+    <main className="workspace-area"><section className="workspace-title" aria-label="工作區標題"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>讓每個請求，<span>都走對路。</span></h1><p>本機分析後，再交給合適的模型處理。</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} apiKey={apiKey} refreshKey={statsVersion}/></section></main>
     <section className="chat-column"><ResponsePanel turns={turns} busy={busy} streamingText={streamingText} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onClear={() => setPrompt('')}/></section>
+    {settingsOpen && <SettingsDialog apiKey={apiKey} onApiKeyChange={key => { saveApiKey(key); setApiKey(key); setStatsVersion(version => version + 1); }} onClose={() => setSettingsOpen(false)}/>}
     {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? '清空所有對話紀錄？' : deleteAction.type === 'turn' ? '刪除這一輪對話？' : '刪除這段對話？'}</h2><p id="delete-description">{deleteAction.type === 'all' ? '所有保存在此裝置的對話都會永久刪除。' : '這項操作會從此裝置的對話紀錄中移除內容。'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>取消</button><button className="danger-button" onClick={performDelete}>刪除</button></div></section></div>}
   </div>;
 }

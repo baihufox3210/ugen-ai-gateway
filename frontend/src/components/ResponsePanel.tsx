@@ -2,6 +2,14 @@ import { useEffect, useRef } from 'react';
 import type { ConversationTurn } from '../types';
 import Markdown from './Markdown';
 
+// Built-in rules that keep a request local, with the reason in plain words.
+const POLICY_RULES: Record<string, string> = {
+  'privacy.never_cloud': '隱私政策：留在本機',
+  'key.local_only': '金鑰限制：僅限本機',
+  'key.budget': '預算已用完：改用本機',
+  'guard.injection': '疑似注入：留在本機',
+};
+
 function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }: { turns: ConversationTurn[]; busy: boolean; streamingText: string; onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void }) {
   const threadRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -39,7 +47,7 @@ function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }:
               {tokenRate !== null && <span className="token-stat">{tokenRate} tok/s · {generatedTokens} tokens</span>}
               {(result.routing.output_findings?.length ?? 0) > 0 && <span className="fallback-note">已遮蔽回覆中 {result.routing.output_findings!.length} 項非你提供的個資</span>}
               {result.routing.fallback_from && <span className="fallback-note">{result.routing.fallback_from === 'cloud' ? '雲端無回應，改由本機回答' : '本機無回應，改由雲端回答'}</span>}
-              {result.routing.rule && <span className={result.routing.rule === 'privacy.never_cloud' ? 'policy-note' : ''}>{result.routing.rule === 'privacy.never_cloud' ? '隱私政策：留在本機' : `規則：${result.routing.rule}`}</span>}
+              {result.routing.rule && <span className={POLICY_RULES[result.routing.rule] ? 'policy-note' : ''}>{POLICY_RULES[result.routing.rule] ?? `規則：${result.routing.rule}`}</span>}
               <span className={`provider-model ${result.provider === 'cloud' ? 'cloud' : ''}`}>{result.routing.provider_name || (result.provider === 'cloud' ? '雲端' : '本機')} · {result.model}</span>
             </div>
           </div>

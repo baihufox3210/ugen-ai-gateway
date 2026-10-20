@@ -262,7 +262,7 @@ def test_tampering_breaks_verification(tamper: str) -> None:
 def admin_api(monkeypatch) -> Any:
     settings = Settings(gateway_api_key="", admin_api_key="admin-secret")
     monkeypatch.setattr("ugen_ai_gateway.api.access.get_settings", lambda: settings)
-    access._requests_by_client.clear()
+    access.rate_limiter.clear()
     usage = UsageStore(":memory:")
     run_requests(usage, 2)
     app = create_app()
@@ -298,7 +298,7 @@ def test_blocked_requests_return_http_400_on_the_openai_api(monkeypatch) -> None
     monkeypatch.setattr(
         "ugen_ai_gateway.api.access.get_settings", lambda: Settings(gateway_api_key="")
     )
-    access._requests_by_client.clear()
+    access.rate_limiter.clear()
     service, _, _, _ = make_service(injection_action="block")
     app = create_app()
     app.dependency_overrides[get_gateway_service] = lambda: service

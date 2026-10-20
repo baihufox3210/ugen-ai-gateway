@@ -41,6 +41,7 @@ from ugen_ai_gateway.services.errors import (
     ProviderUnavailable,
     RequestTooLarge,
 )
+from ugen_ai_gateway.services.keys import Principal
 from ugen_ai_gateway.services.resilience import CircuitBreaker, is_outage
 from ugen_ai_gateway.services.usage import UsageRecord, UsageStore, token_cost
 
@@ -179,11 +180,11 @@ class GatewayService:
         progress: ProgressCallback | None = None,
         *,
         options: dict[str, Any] | None = None,
-        api_key_id: str | None = None,
+        principal: Principal | None = None,
     ) -> ChatResponse:
         """Run a request to completion, reporting stage events to ``progress``."""
         async for event in self.events(
-            request, stream=False, options=options, api_key_id=api_key_id
+            request, stream=False, options=options, principal=principal
         ):
             if event.response is not None:
                 return event.response
@@ -197,7 +198,7 @@ class GatewayService:
         *,
         stream: bool,
         options: dict[str, Any] | None = None,
-        api_key_id: str | None = None,
+        principal: Principal | None = None,
     ) -> AsyncIterator[GatewayEvent]:
         """Yield stage events, text deltas (when streaming) and the final result.
 
@@ -205,9 +206,12 @@ class GatewayService:
         ...) passed through to the provider unchanged. Every request, including
         failed ones, is recorded in the usage store (metadata only).
         """
-        record = UsageRecord(id=uuid.uuid4().hex, api_key_id=api_key_id)
+        principal = principal or Principal(api_key_id=None)
+        record = UsageRecord(id=uuid.uuid4().hex, api_key_id=principal.api_key_id)
         try:
-            async for event in self._events(request, stream, options or {}, record):
+            async for event in self._events(
+                request, stream, options or {}, record, principal
+            ):
                 yield event
         except Exception as exc:
             if record.status == "ok":
@@ -235,11 +239,13 @@ class GatewayService:
         stream: bool,
         options: dict[str, Any],
         record: UsageRecord,
+        principal: Principal,
     ) -> AsyncIterator[GatewayEvent]:
         total_started_at = perf_counter()
         user_input = self._validated_user_input(request)
         injection_action = self._settings.injection_action
-        force_local = False
+        # (reason, rule) when something other than routing keeps this request local.
+        force_local: tuple[str, str] | None = await self._key_restriction(principal)
         if injection_action != "off":
             injection = check_injection(_user_texts(request.messages))
             if injection.detected:
@@ -258,10 +264,14 @@ class GatewayService:
                         "Request blocked: it looks like a prompt-injection attempt"
                     )
                 if injection_action == "local":
-                    force_local = True
-                    request = request.model_copy(
-                        update={"provider_selection": "local", "model": None}
+                    force_local = (
+                        "Possible prompt injection; kept on the local model.",
+                        "guard.injection",
                     )
+        if force_local:
+            request = request.model_copy(
+                update={"provider_selection": "local", "model": None}
+            )
 
         yield GatewayEvent("analysis_started", {"request_id": record.id})
         analysis, analysis_ms, analysis_source = await self._analyze(
@@ -285,12 +295,9 @@ class GatewayService:
         record.analysis_ms = analysis_ms
 
         prepared = self._prepare(request, analysis, analysis_ms)
-        if force_local:
-            prepared.route = replace(
-                prepared.route,
-                reason="Possible prompt injection; kept on the local model.",
-                rule="guard.injection",
-            )
+        if force_local and prepared.route.rule != "privacy.never_cloud":
+            reason, rule = force_local
+            prepared.route = replace(prepared.route, reason=reason, rule=rule)
         record.redacted_values = len(prepared.vault or ())
         output_action = self._settings.output_pii_action
         guard = (
@@ -411,6 +418,20 @@ class GatewayService:
         self._fill_record(record, response, prepared)
         await self._save(record)
         yield GatewayEvent("result", response=response)
+
+    async def _key_restriction(self, principal: Principal) -> tuple[str, str] | None:
+        """Why this API key must stay on local models, if it must."""
+        if not principal.allow_cloud:
+            return ("This API key may only use local models.", "key.local_only")
+        if (
+            principal.monthly_budget_usd is not None
+            and principal.api_key_id
+            and self._usage_store is not None
+            and await self._usage_store.month_spend(principal.api_key_id)
+            >= principal.monthly_budget_usd
+        ):
+            return ("Monthly cloud budget for this API key is used up.", "key.budget")
+        return None
 
     def _fill_record(
         self, record: UsageRecord, response: ChatResponse, prepared: _PreparedChat

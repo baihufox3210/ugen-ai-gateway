@@ -56,7 +56,6 @@ def read_events(response: Any) -> list[dict[str, Any]]:
 
 
 def test_stream_route_emits_deltas_and_result(monkeypatch) -> None:
-    monkeypatch.setattr("ugen_ai_gateway.api.routes.check_api_access", lambda _: None)
     client = client_for(StreamingProvider(["a", "b"]))
 
     response = client.post(
@@ -70,7 +69,6 @@ def test_stream_route_emits_deltas_and_result(monkeypatch) -> None:
 
 
 def test_stream_route_reports_errors_after_partial_output(monkeypatch) -> None:
-    monkeypatch.setattr("ugen_ai_gateway.api.routes.check_api_access", lambda _: None)
     client = client_for(StreamingProvider(["a"], error=RuntimeError("boom")))
 
     response = client.post(

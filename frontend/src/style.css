@@ -440,3 +440,43 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .feedback button:hover{background:#eef5f1;opacity:1}
 .feedback button.selected{background:#eaf4ef;filter:none;opacity:1}
 .route-mode.injection{background:#fdeceb;color:#b4483d}
+
+/* Settings and API keys */
+.settings-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
+.settings-button:hover{background:#eef5f1;color:#3b5a4e}
+.settings-modal{width:min(100%,600px);max-height:min(88dvh,820px);overflow-y:auto;padding:22px}
+.settings-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.settings-head h2{margin:6px 0 0}
+.settings-section{margin-top:18px;padding-top:16px;border-top:1px solid #eaf0ed}
+.settings-section h3{margin:0;color:#203c34;font-size:13px}
+.settings-section>p{margin:5px 0 10px;color:#788c83;font-size:10px;line-height:1.7}
+.settings-row{display:flex;gap:8px}
+.settings-section input:not([type=checkbox]){min-width:0;flex:1;border:1px solid #e1e9e6;border-radius:9px;padding:9px 11px;background:#fafcfb;color:#263e37;font-size:12px;outline:none;transition:border-color .2s,box-shadow .2s}
+.settings-section input:focus{border-color:#89bba7;box-shadow:0 0 0 3px #64a88e15}
+.settings-status{margin-top:8px;border-radius:8px;padding:7px 10px;font-size:10px;line-height:1.6}
+.settings-status.ok{background:#f0f8f4;color:#2f7a5f}
+.settings-status.error{background:#fff7f5;color:#a1574f}
+.key-form{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center}
+.key-form .key-check{display:flex;align-items:center;gap:6px;color:#4f6a60;font-size:11px;grid-column:1/3}
+.key-form .send-button{justify-content:center}
+.key-list{display:grid;gap:6px;margin:14px 0 0;padding:0;list-style:none}
+.key-list li{display:flex;align-items:center;gap:12px;border:1px solid #e3ebe7;border-radius:10px;padding:9px 11px}
+.key-list li.revoked{opacity:.55}
+.key-main,.key-usage{display:grid;gap:3px;min-width:0}
+.key-main{flex:1}
+.key-main b,.key-usage b{color:#2c4a3f;font-size:11px}
+.key-main small,.key-usage small{overflow:hidden;color:#8a9c95;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.key-usage{text-align:right}
+.key-list .text-action{margin-left:0}
+.key-empty{margin:12px 0 0;color:#8a9c95;font-size:10px}
+.created-key{display:grid;gap:7px;margin-bottom:12px;border:1px solid #ecd6b3;border-radius:10px;padding:11px;background:#fffaf1;color:#7d5b25;font-size:10px}
+.created-key code{overflow-wrap:anywhere;border-radius:6px;padding:7px 9px;background:#fff;color:#3d3a2c;font:11px var(--mono)}
+.created-key button{justify-self:start}
+.audit-link{display:inline-block;margin-top:14px;color:#338567;font-size:10px}
+@media(max-width:520px){
+  .settings-modal{padding:16px}
+  .key-form{grid-template-columns:minmax(0,1fr)}
+  .key-form .key-check{grid-column:auto}
+  .key-list li{flex-wrap:wrap}
+  .key-usage{text-align:left}
+}

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ugen_ai_gateway.api.access import check_admin_access, check_api_access
+from ugen_ai_gateway.api.access import authenticate, check_admin_access
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.config import get_settings
@@ -91,10 +91,14 @@ async def usage_stats(
     days: Annotated[int, Query(ge=1, le=366)] = 7,
     tz_offset_minutes: Annotated[int, Query(ge=-840, le=840)] = 0,
 ) -> dict[str, Any]:
-    """Totals, savings and daily counts. Daily buckets use the given UTC offset."""
-    check_api_access(http_request)
+    """Totals, savings and daily counts. Daily buckets use the given UTC offset.
+
+    An API key sees only its own requests; the master key sees everything."""
+    principal = await authenticate(http_request, store)
     return await _require_store(store).stats(
-        days=days, tz_offset_minutes=tz_offset_minutes
+        days=days,
+        tz_offset_minutes=tz_offset_minutes,
+        api_key_id=principal.api_key_id,
     )
 
 
@@ -106,8 +110,10 @@ async def recent_requests(
     before: float | None = None,
 ) -> dict[str, Any]:
     """Recent request metadata, newest first; pass ``before`` to page back."""
-    check_api_access(http_request)
-    items = await _require_store(store).recent(limit=limit, before=before)
+    principal = await authenticate(http_request, store)
+    items = await _require_store(store).recent(
+        limit=limit, before=before, api_key_id=principal.api_key_id
+    )
     return {"data": items}
 
 
@@ -120,8 +126,10 @@ class FeedbackRequest(BaseModel):
 async def submit_feedback(
     body: FeedbackRequest, store: UsageStoreDependency, http_request: Request
 ) -> Response:
-    check_api_access(http_request)
-    if not await _require_store(store).set_feedback(body.request_id, body.rating):
+    principal = await authenticate(http_request, store)
+    if not await _require_store(store).set_feedback(
+        body.request_id, body.rating, api_key_id=principal.api_key_id
+    ):
         raise HTTPException(status_code=404, detail="Unknown request id")
     return Response(status_code=204)
 
@@ -135,7 +143,7 @@ async def audit_log(
     format: Literal["json", "csv"] = "json",
 ) -> dict[str, Any] | Response:
     """Export the hash-chained audit log (metadata only) as JSON or CSV."""
-    check_admin_access(http_request)
+    await check_admin_access(http_request, store)
     entries = await _require_store(store).audit_entries(since=since, limit=limit)
     if format == "json":
         return {"data": entries}
@@ -172,19 +180,74 @@ async def verify_audit_log(
     store: UsageStoreDependency, http_request: Request
 ) -> dict[str, Any]:
     """Recompute the hash chain; ``ok`` is false from the first altered entry."""
-    check_admin_access(http_request)
+    await check_admin_access(http_request, store)
     return await _require_store(store).verify_audit()
+
+
+class KeyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    allow_cloud: bool = True
+    monthly_budget_usd: float | None = Field(default=None, ge=0)
+    rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+
+
+@router.post("/v1/ugen/keys", status_code=201)
+async def create_api_key(
+    body: KeyRequest, store: UsageStoreDependency, http_request: Request
+) -> dict[str, Any]:
+    """Create an API key. The returned ``key`` is shown only this once."""
+    await check_admin_access(http_request, store)
+    view, secret = await _require_store(store).create_key(**body.model_dump())
+    return {**view, "key": secret}
+
+
+@router.get("/v1/ugen/keys")
+async def list_api_keys(
+    store: UsageStoreDependency, http_request: Request
+) -> dict[str, Any]:
+    """All keys with this month's request count and cost; secrets are never shown."""
+    await check_admin_access(http_request, store)
+    return {"data": await _require_store(store).list_keys()}
+
+
+@router.delete("/v1/ugen/keys/{key_id}", status_code=204)
+async def revoke_api_key(
+    key_id: str, store: UsageStoreDependency, http_request: Request
+) -> Response:
+    await check_admin_access(http_request, store)
+    if not await _require_store(store).revoke_key(key_id):
+        raise HTTPException(status_code=404, detail="Unknown or already revoked key")
+    return Response(status_code=204)
+
+
+@router.get("/v1/ugen/whoami")
+async def whoami(store: UsageStoreDependency, http_request: Request) -> dict[str, Any]:
+    """What the presented credential is allowed to do."""
+    principal = await authenticate(http_request, store)
+    spend = (
+        await store.month_spend(principal.api_key_id)
+        if store is not None and principal.api_key_id
+        else None
+    )
+    return {
+        "api_key_id": principal.api_key_id,
+        "allow_cloud": principal.allow_cloud,
+        "monthly_budget_usd": principal.monthly_budget_usd,
+        "month_cost_usd": spend,
+        "rate_limit_per_minute": principal.rate_limit_per_minute,
+    }
 
 
 @router.post("/v1/ugen/chat", response_model=ChatResponse)
 async def create_chat(
     request: ChatRequest,
     gateway: GatewayDependency,
+    store: UsageStoreDependency,
     http_request: Request,
 ) -> ChatResponse:
-    check_api_access(http_request)
+    principal = await authenticate(http_request, store)
     try:
-        return await gateway.chat(request)
+        return await gateway.chat(request, principal=principal)
     except Exception as exc:
         status_code, detail = http_error_for(exc)
         raise HTTPException(status_code=status_code, detail=detail) from exc
@@ -194,13 +257,16 @@ async def create_chat(
 async def create_chat_stream(
     request: ChatRequest,
     gateway: GatewayDependency,
+    store: UsageStoreDependency,
     http_request: Request,
 ) -> StreamingResponse:
-    check_api_access(http_request)
+    principal = await authenticate(http_request, store)
 
     async def events():
         try:
-            async for event in gateway.events(request, stream=True):
+            async for event in gateway.events(
+                request, stream=True, principal=principal
+            ):
                 yield json.dumps(event.to_json(), ensure_ascii=False) + "\n"
         except Exception as exc:
             logger.exception("Streaming chat completion failed")

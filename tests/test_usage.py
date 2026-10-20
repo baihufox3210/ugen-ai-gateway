@@ -199,7 +199,7 @@ def api(monkeypatch) -> Any:
     monkeypatch.setattr(
         "ugen_ai_gateway.api.access.get_settings", lambda: Settings(gateway_api_key="")
     )
-    access._requests_by_client.clear()
+    access.rate_limiter.clear()
     usage = store()
     service, _, _, _ = make_service()
     service._usage_store = usage

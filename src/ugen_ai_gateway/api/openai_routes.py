@@ -12,12 +12,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ugen_ai_gateway.api.access import check_api_access
+from ugen_ai_gateway.api.access import authenticate
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import MAX_CHAT_MESSAGES, ChatRequest, ChatResponse
-from ugen_ai_gateway.dependencies import get_gateway_service
+from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.routing.engine import RuleEngine
 from ugen_ai_gateway.services.gateway import GatewayEvent, GatewayService
+from ugen_ai_gateway.services.usage import UsageStore
 
 logger = logging.getLogger(__name__)
 
@@ -183,9 +184,10 @@ async def list_models(gateway: GatewayDependency) -> dict[str, Any]:
 async def create_chat_completion(
     body: OpenAIChatRequest,
     gateway: GatewayDependency,
+    store: Annotated[UsageStore | None, Depends(get_usage_store)],
     http_request: Request,
 ) -> JSONResponse | StreamingResponse:
-    check_api_access(http_request)
+    principal = await authenticate(http_request, store)
     try:
         request, options = to_gateway_request(body, gateway.engine)
     except _RequestRejected as exc:
@@ -195,7 +197,7 @@ async def create_chat_completion(
 
     if not body.stream:
         try:
-            response = await gateway.chat(request, options=options)
+            response = await gateway.chat(request, options=options, principal=principal)
         except Exception as exc:  # noqa: BLE001 - every failure maps to an API error
             return error_response(*http_error_for(exc))
         return JSONResponse(
@@ -222,7 +224,7 @@ async def create_chat_completion(
     # Wait for the first generated text before answering, so failures up to
     # that point (including a fallback that also fails) still get a proper HTTP
     # status, and the headers name the provider that actually answers.
-    events = gateway.events(request, stream=True, options=options)
+    events = gateway.events(request, stream=True, options=options, principal=principal)
     routing: dict[str, Any] = {}
     model = ""
     completion_id = "chatcmpl-ugen"
