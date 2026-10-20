@@ -5,7 +5,7 @@ this process."""
 import re
 from collections.abc import Iterable
 
-from ugen_ai_gateway.analysis.pii import find_personal_data
+from ugen_ai_gateway.analysis.pii import find_personal_data, value_pattern
 
 PLACEHOLDER_PATTERN = re.compile(r"\[([A-Z][A-Z_]*)_(\d+)\]")
 # A trailing fragment that could still grow into a placeholder, e.g. "[EMA" or "[EMAIL_1".
@@ -57,8 +57,7 @@ class RedactionVault:
         for value in self._additional_values:
             if value not in redacted:
                 continue
-            pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)")
-            redacted = pattern.sub(
+            redacted = value_pattern(value).sub(
                 lambda _, value=value: self._placeholder(value, ADDITIONAL_VALUE_LABEL),
                 redacted,
             )

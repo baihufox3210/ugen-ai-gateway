@@ -1,6 +1,8 @@
 from functools import lru_cache
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
+from ugen_ai_gateway.analysis.ner import ENTITY_TYPES, build_presidio_finder
+from ugen_ai_gateway.analysis.pii import register_finder
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.config import Settings, get_settings
 from ugen_ai_gateway.providers.openai_client import create_openai_client
@@ -42,6 +44,15 @@ def get_cloud_provider() -> OpenAICompatibleProvider:
 @lru_cache
 def get_gateway_service() -> GatewayService:
     settings = get_settings()
+    if settings.pii_ner == "presidio":
+        register_finder(
+            build_presidio_finder(
+                language=settings.pii_ner_language,
+                spacy_model=settings.pii_ner_spacy_model,
+                score_threshold=settings.pii_ner_score_threshold,
+            ),
+            types=[data_type for data_type, _ in ENTITY_TYPES.values()],
+        )
     local_provider = get_local_provider()
 
     return GatewayService(

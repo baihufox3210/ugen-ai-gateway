@@ -33,7 +33,12 @@ function FlowBranch({ provider, animated }: { provider: Provider | null; animate
   </div>;
 }
 
-const PII_LABEL: Record<string, string> = { email: '電子郵件', taiwan_mobile: '手機號碼', taiwan_id: '身分證字號', credit_card: '信用卡號' };
+const PII_LABEL: Record<string, string> = {
+  email: '電子郵件', taiwan_mobile: '手機號碼', taiwan_landline: '市話', taiwan_id: '身分證字號',
+  taiwan_resident_certificate: '居留證號', taiwan_ubn: '統一編號', passport: '護照號碼', nhi_card: '健保卡號',
+  credit_card: '信用卡號', api_key: 'API 金鑰', jwt: '存取權杖', private_key: '私鑰', password: '密碼',
+  person_name: '姓名', location: '地點',
+};
 
 function piiSummary(pii: PiiState): string {
   const types = pii.types.map(type => PII_LABEL[type] ?? type).join('、') || '已辨識資訊';

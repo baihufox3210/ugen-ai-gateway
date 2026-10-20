@@ -7,7 +7,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.cache import AnalysisCache
-from ugen_ai_gateway.analysis.pii import SUPPORTED_TYPES
+from ugen_ai_gateway.analysis.pii import supported_types
 from ugen_ai_gateway.analysis.policy import RoutingDecision, RoutingPolicy
 from ugen_ai_gateway.analysis.redaction import (
     PLACEHOLDER_INSTRUCTION,
@@ -506,7 +506,7 @@ class GatewayService:
         unredactable_types = {
             data_type.casefold()
             for data_type in analysis.personal_data_types
-            if data_type.casefold() not in SUPPORTED_TYPES
+            if data_type.casefold() not in supported_types()
         }
         if unredactable_types and not analysis.personal_data_values:
             raise PrivacyRedactionError(

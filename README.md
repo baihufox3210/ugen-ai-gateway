@@ -222,10 +222,38 @@ or `half_open`).
 
 ## Personal-data handling
 
-Before sending messages to the generation provider, the gateway redacts detected
-email addresses, Taiwan mobile numbers, valid Taiwan national ID numbers, and
-valid credit card numbers. The analysis model can also report additional exact
-personal-data values, which are redacted from text message content.
+Before sending messages to the generation provider, the gateway redacts the
+following, detected locally with regular expressions (and checksums where the
+format has one):
+
+| Type | Examples |
+| --- | --- |
+| `email` | `alex@example.com` |
+| `taiwan_mobile`, `taiwan_landline` | `0912-345-678`, `(02)2345-6789`, `+886-2-2345-6789` |
+| `taiwan_id`, `taiwan_resident_certificate` | National ID, old and new resident certificate numbers (checksum validated) |
+| `taiwan_ubn` | 統一編號 (checksum validated) |
+| `passport`, `nhi_card` | Passport and 健保卡 numbers |
+| `credit_card` | Card numbers (Luhn validated) |
+| `api_key`, `jwt`, `private_key`, `password` | `sk-…`, `AKIA…`, `ghp_…`, JWTs, PEM private keys, `password=…` |
+
+Short numeric identifiers (統一編號, passport, 健保卡) only count when a keyword
+such as `統編`, `護照`, or `健保卡號` comes right before them, so ordinary 8-digit
+amounts or dates are left alone. For passwords and those keyword-led values,
+only the value is replaced and the keyword stays readable. The analysis model
+can also report additional exact personal-data values, which are redacted from
+text message content. Matching works inside Chinese text without spaces.
+
+Names and places can optionally be detected with
+[Presidio](https://microsoft.github.io/presidio/) named-entity recognition:
+
+```sh
+uv sync --extra ner
+uv run python -m spacy download zh_core_web_sm
+```
+
+Then set `PII_NER=presidio` (`PII_NER_LANGUAGE`, default `zh`;
+`PII_NER_SPACY_MODEL`, default `zh_core_web_sm`; `PII_NER_SCORE_THRESHOLD`,
+default `0.5`).
 
 Redaction is reversible. Each value is replaced with a numbered placeholder such
 as `[EMAIL_1]`; the same value gets the same placeholder across every message in

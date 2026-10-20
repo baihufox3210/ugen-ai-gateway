@@ -16,6 +16,12 @@ dependencies = [
     "uvicorn[standard]>=0.54.0",
 ]
 
+[project.optional-dependencies]
+# Name and location detection (PII_NER=presidio). Also needs a spaCy model.
+ner = [
+    "presidio-analyzer>=2.2",
+]
+
 [project.scripts]
 ugen-ai-gateway = "ugen_ai_gateway:main"
 

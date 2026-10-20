@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # Put the original values back into the model's reply before returning it.
     restore_redacted: bool = True
 
+    # Optional name/location detection: none or presidio (uv sync --extra ner).
+    pii_ner: Literal["none", "presidio"] = "none"
+    pii_ner_language: str = "zh"
+    pii_ner_spacy_model: str = "zh_core_web_sm"
+    pii_ner_score_threshold: float = Field(default=0.5, ge=0, le=1)
+
     # llm: always ask the local model. rules: regular expressions only.
     # hybrid: rules when the request stays local anyway, the local model otherwise.
     analysis_mode: Literal["llm", "rules", "hybrid"] = "hybrid"

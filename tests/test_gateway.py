@@ -592,3 +592,30 @@ def test_analysis_events_report_the_source() -> None:
 
     completed = next(event for event in events if event.type == "analysis_completed")
     assert completed.data["source"] == "rules"
+
+
+def test_personal_data_inside_chinese_text_is_redacted_and_restored() -> None:
+    analyzer = FakeAnalyzer(
+        RequestAnalysis(
+            contains_personal_data=True,
+            personal_data_types=["name", "taiwan_mobile"],
+            personal_data_values=["王小明"],
+            complexity="complex",
+            task_type="general",
+            reason="test",
+        )
+    )
+    cloud = FakeProvider(
+        completion=reply("已通知[PERSONAL_DATA_1]（[TAIWAN_MOBILE_1]）")
+    )
+    service, _, _, _ = make_service(analyzer=analyzer, cloud_provider=cloud)
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "請通知王小明，電話0912345678"}]
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert cloud.calls[0]["messages"][-1]["content"] == (
+        "請通知[PERSONAL_DATA_1]，電話[TAIWAN_MOBILE_1]"
+    )
+    assert response.content == "已通知王小明（0912345678）"
