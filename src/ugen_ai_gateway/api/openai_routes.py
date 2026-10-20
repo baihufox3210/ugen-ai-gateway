@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -153,16 +154,23 @@ def _ugen_details(response: ChatResponse) -> dict[str, Any]:
     }
 
 
+def _header_value(value: Any) -> str:
+    """HTTP header values must be Latin-1; percent-encode anything else, such
+    as a Chinese rule name, instead of failing the whole response."""
+    text = str(value)
+    return text if text.isascii() else quote(text, safe=" !#$&'()*+,-./:;=?@[]^_{|}~")
+
+
 def _routing_headers(routing: dict[str, Any], model: str) -> dict[str, str]:
     headers = {
-        "X-UGen-Provider": str(routing.get("provider", "")),
+        "X-UGen-Provider": routing.get("provider", ""),
         "X-UGen-Model": model,
-        "X-UGen-Route-Reason": str(routing.get("reason", "")),
-        "X-UGen-Redacted-Values": str(routing.get("redacted_values", 0)),
+        "X-UGen-Route-Reason": routing.get("reason", ""),
+        "X-UGen-Redacted-Values": routing.get("redacted_values", 0),
     }
     if routing.get("fallback_from"):
-        headers["X-UGen-Fallback-From"] = str(routing["fallback_from"])
-    return headers
+        headers["X-UGen-Fallback-From"] = routing["fallback_from"]
+    return {name: _header_value(value) for name, value in headers.items()}
 
 
 @router.get("/v1/models")

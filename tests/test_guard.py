@@ -313,3 +313,35 @@ def test_blocked_requests_return_http_400_on_the_openai_api(monkeypatch) -> None
 
     assert response.status_code == 400
     assert "prompt-injection" in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("given", "echoed"),
+    [
+        ("0912345678", "0912-345-678"),
+        ("+886 912 345 678", "0912345678"),
+        ("4111111111111111", "4111 1111 1111 1111"),
+        ("Alex@Example.com", "alex@example.com"),
+    ],
+)
+def test_reformatted_user_values_are_not_treated_as_new(
+    given: str, echoed: str
+) -> None:
+    guard = OutputGuard({given}, redact=True)
+
+    assert guard.check(f"OK: {echoed}") == f"OK: {echoed}"
+    assert guard.findings == []
+
+
+def test_gateway_keeps_the_users_own_number_when_the_model_reformats_it() -> None:
+    local = FakeProvider(completion=reply("好的，我會打 0912-345-678 給你"))
+    service, _, _, _ = make_service(local_provider=local)
+
+    response = asyncio.run(
+        service.chat(
+            ChatRequest(messages=[{"role": "user", "content": "我的電話是0912345678"}])
+        )
+    )
+
+    assert response.content == "好的，我會打 0912-345-678 給你"
+    assert response.routing.output_findings == []

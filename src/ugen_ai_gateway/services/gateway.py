@@ -634,15 +634,8 @@ class GatewayService:
         if not self._configured:
             raise GatewayConfigurationError("LOCAL_MODEL is not configured")
 
-        user_messages: list[str] = []
-        for message in request.messages:
-            if message["role"] != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, str):
-                user_messages.append(content)
-
-        user_input = "\n".join(user_messages)
+        # Text parts count too: many OpenAI clients send content as a list.
+        user_input = "\n".join(_user_texts(request.messages))
         if not user_input:
             raise InvalidChatRequest("A text user message is required")
         if len(user_input) > MAX_ANALYSIS_INPUT_CHARACTERS:

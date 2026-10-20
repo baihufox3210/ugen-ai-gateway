@@ -270,8 +270,9 @@ async def create_chat_stream(
                 yield json.dumps(event.to_json(), ensure_ascii=False) + "\n"
         except Exception as exc:
             logger.exception("Streaming chat completion failed")
+            _, detail = http_error_for(exc)
             yield (
-                json.dumps({"type": "error", "detail": str(exc)}, ensure_ascii=False)
+                json.dumps({"type": "error", "detail": detail}, ensure_ascii=False)
                 + "\n"
             )
 

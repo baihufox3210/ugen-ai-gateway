@@ -82,6 +82,21 @@ _BOUNDARY = re.compile(r"[\s，。、；：！？「」『』（）()]")
 _HOLD_BACK = 24
 
 
+def _comparable(value: str) -> str:
+    """Normalize a value so reformatting does not make it look new.
+
+    "0912345678", "0912-345-678" and "+886 912 345 678" compare equal, as do
+    "4111 1111 1111 1111" and "4111-1111-1111-1111" or e-mail case changes.
+    """
+    if "@" in value:
+        return value.strip().casefold()
+    compact = re.sub(r"[\s\-().]", "", value).casefold()
+    compact = compact.removeprefix("+")
+    if compact.startswith("886") and compact[3:4].isdigit() and len(compact) >= 11:
+        compact = "0" + compact[3:]
+    return compact
+
+
 class OutputGuard:
     """Redact personal data in model output that the user never provided.
 
@@ -92,7 +107,7 @@ class OutputGuard:
     """
 
     def __init__(self, allowed_values: Iterable[str], *, redact: bool) -> None:
-        self._allowed = {value for value in allowed_values if value}
+        self._allowed = {_comparable(value) for value in allowed_values if value}
         self._redact = redact
         self._pending = ""
         self.findings: list[str] = []
@@ -139,7 +154,7 @@ class OutputGuard:
             return text
         output = text
         for match in reversed(find_personal_data(text)):
-            if match.value in self._allowed:
+            if _comparable(match.value) in self._allowed:
                 continue
             self.findings.append(match.type)
             if self._redact:

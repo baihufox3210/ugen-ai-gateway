@@ -79,3 +79,19 @@ def test_stream_route_reports_errors_after_partial_output(monkeypatch) -> None:
     events = read_events(response)
     assert events[-2] == {"type": "delta", "content": "a"}
     assert events[-1]["type"] == "error"
+
+
+def test_stream_errors_do_not_expose_upstream_details() -> None:
+    client = client_for(
+        StreamingProvider(
+            [], error=RuntimeError("upstream said: key sk-secret invalid")
+        )
+    )
+
+    response = client.post(
+        "/v1/ugen/chat/stream",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    error = read_events(response)[-1]
+    assert error == {"type": "error", "detail": "Model provider request failed"}

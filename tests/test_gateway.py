@@ -259,7 +259,14 @@ def test_chat_rejects_missing_local_model() -> None:
 def test_chat_requires_text_user_message() -> None:
     service, local, cloud, analyzer = make_service()
     request = ChatRequest(
-        messages=[{"role": "user", "content": [{"type": "text", "text": "image"}]}]
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "https://x.test/a.png"}}
+                ],
+            }
+        ]
     )
 
     with pytest.raises(ValueError, match="A text user message is required"):
@@ -270,21 +277,21 @@ def test_chat_requires_text_user_message() -> None:
     assert cloud.calls == []
 
 
-def test_chat_analyzes_only_string_user_messages() -> None:
+def test_chat_analyzes_user_text_from_strings_and_text_parts() -> None:
     service, _, _, analyzer = make_service()
     request = ChatRequest(
         messages=[
             {"role": "system", "content": "system prompt"},
             {"role": "user", "content": "first"},
             {"role": "assistant", "content": "answer"},
-            {"role": "user", "content": [{"type": "text", "text": "ignored"}]},
+            {"role": "user", "content": [{"type": "text", "text": "from a part"}]},
             {"role": "user", "content": "second"},
         ]
     )
 
     asyncio.run(service.chat(request))
 
-    assert analyzer.inputs == ["first\nsecond"]
+    assert analyzer.inputs == ["first\nfrom a part\nsecond"]
 
 
 def test_chat_redacts_text_parts_in_multimodal_messages() -> None:

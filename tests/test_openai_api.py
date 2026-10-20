@@ -318,3 +318,49 @@ def test_routing_config_models_are_listed_and_can_be_pinned(monkeypatch) -> None
     assert ids == ["ugen-auto", "ugen-local", "ugen-cloud", "qwen", "flash", "pro"]
     assert gemini.calls[0]["model"] == "pro"
     assert raw.headers["x-ugen-provider"] == "cloud"
+
+
+def test_non_ascii_rule_names_do_not_break_response_headers(monkeypatch) -> None:
+    from urllib.parse import unquote
+
+    from tests.test_routing import config
+
+    local, gemini = EchoProvider("local"), EchoProvider("gemini")
+    service = GatewayService(
+        settings=Settings(),
+        local_provider=local,  # type: ignore[arg-type]
+        cloud_provider=None,
+        analyzer=SimpleAnalyzer(),  # type: ignore[arg-type]
+        policy=RoutingPolicy(),
+        routing=config(
+            rules=[{"name": "長文送雲端", "when": {}, "route": {"provider": "gemini"}}]
+        ),
+        providers={"ollama": local, "gemini": gemini},  # type: ignore[dict-item]
+    )
+    access.rate_limiter.clear()
+    app = create_app()
+    app.dependency_overrides[get_gateway_service] = lambda: service
+    client = TestClient(app)
+
+    for stream in (False, True):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "ugen-auto",
+                "stream": stream,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        assert response.status_code == 200
+        assert unquote(response.headers["x-ugen-route-reason"]) == (
+            "Matched rule '長文送雲端'."
+        )
+
+
+def test_text_content_parts_are_accepted(gateway: Any) -> None:
+    completion = gateway.client.chat.completions.create(
+        model="ugen-local",
+        messages=[{"role": "user", "content": [{"type": "text", "text": "hi there"}]}],
+    )
+
+    assert completion.choices[0].message.content == "Hello there"
