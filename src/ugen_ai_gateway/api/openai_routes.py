@@ -196,7 +196,7 @@ async def create_chat_completion(
     if not body.stream:
         try:
             response = await gateway.chat(request, options=options)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - every failure maps to an API error
             return error_response(*http_error_for(exc))
         return JSONResponse(
             {
@@ -231,7 +231,7 @@ async def create_chat_completion(
             if event.type == "generation_started":
                 model = str(event.data.get("model", ""))
                 break
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - every failure maps to an API error
         await events.aclose()
         return error_response(*http_error_for(exc))
 
@@ -297,7 +297,7 @@ async def _sse(
                         )
                         + "\n\n"
                     )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - every failure maps to an API error
         status_code, message = http_error_for(exc)
         error = {"message": message, "type": "server_error", "code": status_code}
         yield f"data: {json.dumps({'error': error})}\n\n"
