@@ -11,6 +11,7 @@ export type ChatResult = {
     contains_personal_data: boolean;
     personal_data_types: string[];
     reason: string;
+    redacted_values?: number;
   };
   usage?: { generation?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
   performance?: { analysis_ms: number; generation_ms: number; total_ms: number };
@@ -18,3 +19,4 @@ export type ChatResult = {
 export type ConversationTurn = { id: string; user: string; result?: ChatResult };
 export type Conversation = { id: string; title: string; updatedAt: number; turns: ConversationTurn[] };
 export type GatewayEvent = { type: string; [key: string]: unknown };
+export type PiiState = { found: boolean; types: string[]; redacted?: number };

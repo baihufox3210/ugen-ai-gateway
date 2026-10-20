@@ -17,6 +17,7 @@ class RoutingInfo(BaseModel):
     personal_data_types: list[str] = Field(default_factory=list)
     provider: Literal["local", "cloud"]
     reason: str
+    redacted_values: int = Field(default=0, ge=0)
 
 
 class UsageStats(BaseModel):

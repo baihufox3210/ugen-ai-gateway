@@ -1,4 +1,4 @@
-import type { Phase, Provider, ProviderSelection } from '../types';
+import type { Phase, PiiState, Provider, ProviderSelection } from '../types';
 
 type Props = {
   phase: Phase;
@@ -8,7 +8,7 @@ type Props = {
   localModel: string;
   cloudModel: string;
   modelsStatus: 'loading' | 'loaded' | 'error';
-  pii: { found: boolean; types: string[] } | null;
+  pii: PiiState | null;
 };
 
 function ProcessCard({ glyph, label, title, className = '' }: {
@@ -29,6 +29,13 @@ function FlowBranch({ provider, animated }: { provider: Provider | null; animate
     <i className={`flow-v4-tip cloud ${provider === 'cloud' ? 'chosen' : ''}`} />
     {provider && animated && <i className={`flow-v4-branch-dot ${provider}`} />}
   </div>;
+}
+
+const PII_LABEL: Record<string, string> = { email: '電子郵件', taiwan_mobile: '手機號碼', taiwan_id: '身分證字號', credit_card: '信用卡號' };
+
+function piiSummary(pii: PiiState): string {
+  const types = pii.types.map(type => PII_LABEL[type] ?? type).join('、') || '已辨識資訊';
+  return pii.redacted ? `${types} · 已遮蔽 ${pii.redacted} 項，回覆在本機還原` : `${types} · 已依安全政策處理`;
 }
 
 const SELECTION_LABEL: Record<ProviderSelection, string> = { auto: '自動分流', local: '指定本機', cloud: '指定雲端' };
@@ -60,7 +67,7 @@ function RequestFlow({ phase, provider, providerSelection, model, localModel, cl
       </div>
     </div>
 
-    <div className={`privacy-result ${pii ? pii.found ? 'found' : 'clear' : ''}`}><span className="privacy-symbol">{pii?.found ? '!' : '⌑'}</span><span><b>{pii ? pii.found ? '偵測到隱私資訊' : '未偵測到隱私資訊' : '隱私資訊檢查'}</b>{pii && <small>{pii.found ? `${pii.types.join('、') || '已辨識資訊'} · 已依安全政策處理` : '請求在本機完成檢查'}</small>}</span><span className="privacy-lock">LOCAL CHECK</span></div>
+    <div className={`privacy-result ${pii ? pii.found ? 'found' : 'clear' : ''}`}><span className="privacy-symbol">{pii?.found ? '!' : '⌑'}</span><span><b>{pii ? pii.found ? '偵測到隱私資訊' : '未偵測到隱私資訊' : '隱私資訊檢查'}</b>{pii && <small>{pii.found ? piiSummary(pii) : '請求在本機完成檢查'}</small>}</span><span className="privacy-lock">LOCAL CHECK</span></div>
   </section>;
 }
 

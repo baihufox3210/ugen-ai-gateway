@@ -6,8 +6,13 @@ from typing import Any, cast
 from openai.types.chat import ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
-from ugen_ai_gateway.analysis.pii import redact_personal_data
+from ugen_ai_gateway.analysis.pii import SUPPORTED_TYPES
 from ugen_ai_gateway.analysis.policy import RoutingDecision, RoutingPolicy
+from ugen_ai_gateway.analysis.redaction import (
+    PLACEHOLDER_INSTRUCTION,
+    RedactionVault,
+    StreamRestorer,
+)
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis, TokenUsage
 from ugen_ai_gateway.api.schemas import (
     ChatRequest,
@@ -30,12 +35,6 @@ from ugen_ai_gateway.services.errors import (
 
 MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
 ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
-SUPPORTED_PERSONAL_DATA_TYPES = {
-    "email",
-    "taiwan_mobile",
-    "taiwan_id",
-    "credit_card",
-}
 
 
 @dataclass
@@ -60,6 +59,7 @@ class _PreparedChat:
     model: str
     messages: list[ChatCompletionMessageParam]
     analysis_ms: float
+    vault: RedactionVault | None
 
 
 def _token_usage(raw_usage: Any) -> TokenUsage | None:
@@ -140,6 +140,7 @@ class GatewayService:
                 "provider": prepared.decision.provider,
                 "reason": prepared.decision.reason,
                 "complexity": analysis.complexity,
+                "redacted_values": len(prepared.vault or ()),
             },
         )
 
@@ -149,6 +150,11 @@ class GatewayService:
             {"provider": prepared.decision.provider, "model": prepared.model},
         )
 
+        restorer = (
+            StreamRestorer(prepared.vault)
+            if prepared.vault and self._settings.restore_redacted
+            else None
+        )
         if stream:
             parts: list[str] = []
             resolved_model = prepared.model
@@ -163,6 +169,8 @@ class GatewayService:
                     usage = _token_usage(getattr(chunk, "usage", None)) or usage
                     for choice in chunk.choices or []:
                         text = getattr(choice.delta, "content", None)
+                        if text and restorer is not None:
+                            text = restorer.feed(text)
                         if text:
                             parts.append(text)
                             yield GatewayEvent("delta", {"content": text})
@@ -172,6 +180,9 @@ class GatewayService:
                 raise ProviderRequestError(
                     f"Model provider request failed: {exc}"
                 ) from exc
+            if restorer is not None and (rest := restorer.flush()):
+                parts.append(rest)
+                yield GatewayEvent("delta", {"content": rest})
             content = "".join(parts)
         else:
             try:
@@ -193,6 +204,8 @@ class GatewayService:
             if not isinstance(message_content, str):
                 raise TypeError("Model provider returned no text content")
             content = message_content
+            if prepared.vault and self._settings.restore_redacted:
+                content = prepared.vault.restore(content)
             resolved_model = completion.model
             usage = _token_usage(getattr(completion, "usage", None))
 
@@ -208,6 +221,7 @@ class GatewayService:
                 personal_data_types=analysis.personal_data_types,
                 provider=prepared.decision.provider,
                 reason=prepared.decision.reason,
+                redacted_values=len(prepared.vault or ()),
             ),
             usage=UsageStats(analysis=analysis.usage, generation=usage),
             performance=PerformanceStats(
@@ -253,22 +267,6 @@ class GatewayService:
     def _prepare(
         self, request: ChatRequest, analysis: RequestAnalysis, analysis_ms: float
     ) -> _PreparedChat:
-        unredactable_types = {
-            data_type.casefold()
-            for data_type in analysis.personal_data_types
-            if data_type.casefold() not in SUPPORTED_PERSONAL_DATA_TYPES
-        }
-        if unredactable_types and not analysis.personal_data_values:
-            raise PrivacyRedactionError(
-                "Detected personal data could not be safely redacted"
-            )
-        if analysis.contains_personal_data and not (
-            analysis.personal_data_types or analysis.personal_data_values
-        ):
-            raise PrivacyRedactionError(
-                "Detected personal data could not be safely redacted"
-            )
-
         decision = self._policy.decide(analysis)
         if request.provider_selection != "auto":
             decision = RoutingDecision(
@@ -294,27 +292,53 @@ class GatewayService:
                 f"No model configured for the {decision.provider} provider"
             )
 
+        if decision.provider == "local" and not self._settings.redact_local:
+            vault = None
+            messages = list(request.messages)
+        else:
+            self._ensure_redactable(analysis)
+            vault = RedactionVault(analysis.personal_data_values)
+            messages = self._redacted_messages(request, vault)
+
         return _PreparedChat(
             analysis=analysis,
             decision=decision,
             provider=provider,
             model=model,
-            messages=self._redacted_messages(request, analysis),
+            messages=messages,
             analysis_ms=analysis_ms,
+            vault=vault,
         )
 
     @staticmethod
+    def _ensure_redactable(analysis: RequestAnalysis) -> None:
+        unredactable_types = {
+            data_type.casefold()
+            for data_type in analysis.personal_data_types
+            if data_type.casefold() not in SUPPORTED_TYPES
+        }
+        if unredactable_types and not analysis.personal_data_values:
+            raise PrivacyRedactionError(
+                "Detected personal data could not be safely redacted"
+            )
+        if analysis.contains_personal_data and not (
+            analysis.personal_data_types or analysis.personal_data_values
+        ):
+            raise PrivacyRedactionError(
+                "Detected personal data could not be safely redacted"
+            )
+
+    @staticmethod
     def _redacted_messages(
-        request: ChatRequest, analysis: RequestAnalysis
+        request: ChatRequest, vault: RedactionVault
     ) -> list[ChatCompletionMessageParam]:
+        vault.reserve(_message_texts(request.messages))
         messages: list[ChatCompletionMessageParam] = []
         for message in request.messages:
             redacted_message = cast(dict[str, Any], message).copy()
             content = redacted_message.get("content")
             if isinstance(content, str):
-                redacted_message["content"] = redact_personal_data(
-                    content, additional_values=analysis.personal_data_values
-                )
+                redacted_message["content"] = vault.redact(content)
             elif content is not None and not isinstance(content, dict):
                 redacted_parts = []
                 for part in content:
@@ -323,11 +347,42 @@ class GatewayService:
                         continue
                     redacted_part = part.copy()
                     if isinstance(redacted_part.get("text"), str):
-                        redacted_part["text"] = redact_personal_data(
-                            redacted_part["text"],
-                            additional_values=analysis.personal_data_values,
-                        )
+                        redacted_part["text"] = vault.redact(redacted_part["text"])
                     redacted_parts.append(redacted_part)
                 redacted_message["content"] = redacted_parts
             messages.append(cast(ChatCompletionMessageParam, redacted_message))
+
+        if len(vault):
+            messages = _with_system_instruction(messages, PLACEHOLDER_INSTRUCTION)
         return messages
+
+
+def _message_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:
+    texts: list[str] = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts.extend(
+                part["text"]
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+    return texts
+
+
+def _with_system_instruction(
+    messages: list[ChatCompletionMessageParam], instruction: str
+) -> list[ChatCompletionMessageParam]:
+    """Append to the first system message, or add one at the start."""
+    for index, message in enumerate(messages):
+        if message["role"] == "system" and isinstance(message.get("content"), str):
+            updated = cast(dict[str, Any], message).copy()
+            updated["content"] = f"{updated['content']}\n\n{instruction}"
+            return [
+                *messages[:index],
+                cast(ChatCompletionMessageParam, updated),
+                *messages[index + 1 :],
+            ]
+    return [{"role": "system", "content": instruction}, *messages]

@@ -1,5 +1,6 @@
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 
 EMAIL_PATTERN = re.compile(
     r"(?<![\w.+-])[\w+-]+(?:\.[\w+-]+)*@"
@@ -69,46 +70,78 @@ def _is_valid_credit_card(value: str) -> bool:
     return checksum % 10 == 0
 
 
+@dataclass(frozen=True)
+class Detector:
+    """A personal-data type: how to find it and how to label it."""
+
+    type: str
+    label: str
+    pattern: re.Pattern[str]
+    validate: Callable[[str], bool] | None = None
+
+    def matches(self, text: str) -> Iterator[re.Match[str]]:
+        for match in self.pattern.finditer(text):
+            if self.validate is None or self.validate(match.group()):
+                yield match
+
+
+@dataclass(frozen=True)
+class PersonalDataMatch:
+    type: str
+    label: str
+    start: int
+    end: int
+    value: str
+
+
+DETECTORS: tuple[Detector, ...] = (
+    Detector("email", "EMAIL", EMAIL_PATTERN),
+    Detector("taiwan_mobile", "TAIWAN_MOBILE", TAIWAN_MOBILE_PATTERN),
+    Detector("taiwan_id", "TAIWAN_ID", TAIWAN_ID_PATTERN, _is_valid_taiwan_id),
+    Detector("credit_card", "CREDIT_CARD", CREDIT_CARD_PATTERN, _is_valid_credit_card),
+)
+SUPPORTED_TYPES = frozenset(detector.type for detector in DETECTORS)
+
+
+def find_personal_data(text: str) -> list[PersonalDataMatch]:
+    """Return non-overlapping personal-data matches in text order.
+
+    Detectors earlier in ``DETECTORS`` win when two matches overlap.
+    """
+    found: list[PersonalDataMatch] = []
+    for detector in DETECTORS:
+        for match in detector.matches(text):
+            if any(
+                match.start() < other.end and other.start < match.end()
+                for other in found
+            ):
+                continue
+            found.append(
+                PersonalDataMatch(
+                    detector.type,
+                    detector.label,
+                    match.start(),
+                    match.end(),
+                    match.group(),
+                )
+            )
+    return sorted(found, key=lambda item: item.start)
+
+
 def detect_personal_data(text: str) -> list[str]:
     """Detect common personal-data patterns in text."""
-    detected: list[str] = []
-
-    if EMAIL_PATTERN.search(text):
-        detected.append("email")
-
-    if TAIWAN_MOBILE_PATTERN.search(text):
-        detected.append("taiwan_mobile")
-
-    if any(
-        _is_valid_taiwan_id(match.group()) for match in TAIWAN_ID_PATTERN.finditer(text)
-    ):
-        detected.append("taiwan_id")
-
-    if any(
-        _is_valid_credit_card(match.group())
-        for match in CREDIT_CARD_PATTERN.finditer(text)
-    ):
-        detected.append("credit_card")
-
-    return detected
+    return [
+        detector.type
+        for detector in DETECTORS
+        if next(detector.matches(text), None) is not None
+    ]
 
 
 def redact_personal_data(text: str, *, additional_values: Iterable[str] = ()) -> str:
     """Replace supported personal-data patterns with descriptive markers."""
-    redacted = EMAIL_PATTERN.sub("[EMAIL]", text)
-    redacted = TAIWAN_MOBILE_PATTERN.sub("[TAIWAN_MOBILE]", redacted)
-    redacted = TAIWAN_ID_PATTERN.sub(
-        lambda match: (
-            "[TAIWAN_ID]" if _is_valid_taiwan_id(match.group()) else match.group()
-        ),
-        redacted,
-    )
-    redacted = CREDIT_CARD_PATTERN.sub(
-        lambda match: (
-            "[CREDIT_CARD]" if _is_valid_credit_card(match.group()) else match.group()
-        ),
-        redacted,
-    )
+    redacted = text
+    for match in reversed(find_personal_data(text)):
+        redacted = redacted[: match.start] + f"[{match.label}]" + redacted[match.end :]
 
     for value in sorted(set(additional_values), key=len, reverse=True):
         if len(value) < 2 or value not in redacted:

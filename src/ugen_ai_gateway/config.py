@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     cloud_base_url: str = ""
     cloud_model: str = ""
 
+    # Redact personal data even when the request stays on the local model.
+    redact_local: bool = True
+    # Put the original values back into the model's reply before returning it.
+    restore_redacted: bool = True
+
     gateway_api_key: str = ""
     rate_limit_requests: int = Field(default=60, gt=0)
     rate_limit_window_seconds: int = Field(default=60, gt=0)

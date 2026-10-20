@@ -4,7 +4,7 @@ import MonitorPanel from './components/MonitorPanel';
 import RequestFlow from './components/RequestFlow';
 import ResponsePanel from './components/ResponsePanel';
 import Sidebar from './components/Sidebar';
-import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, Phase, Provider, ProviderSelection } from './types';
+import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, Phase, PiiState, Provider, ProviderSelection } from './types';
 
 const STORAGE_KEY = 'ugen-gateway-conversations-v1';
 const PROVIDER_SELECTION_KEY = 'ugen-gateway-provider-selection';
@@ -15,6 +15,9 @@ function loadConversations(): Conversation[] {
     const stored: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
     return Array.isArray(stored) ? stored as Conversation[] : [];
   } catch { return []; }
+}
+function piiFromResult(result: ChatResult): PiiState {
+  return { found: result.routing.contains_personal_data, types: result.routing.personal_data_types ?? [], redacted: result.routing.redacted_values ?? 0 };
 }
 function loadProviderSelection(): ProviderSelection {
   try {
@@ -31,7 +34,7 @@ function App() {
   const [provider, setProvider] = useState<Provider | null>(null);
   const [model, setModel] = useState('');
   const [streamingText, setStreamingText] = useState('');
-  const [pii, setPii] = useState<{ found: boolean; types: string[] } | null>(null);
+  const [pii, setPii] = useState<PiiState | null>(null);
   const [configuredModels, setConfiguredModels] = useState({ local: '', cloud: '' });
   const [modelsStatus, setModelsStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [error, setError] = useState('');
@@ -91,7 +94,7 @@ function App() {
     setActiveId(id); setPrompt(''); setError(''); setPhase(latest ? 'complete' : 'idle'); setView('chat'); setDrawerOpen(false);
     setProvider(latest ? latest.provider === 'cloud' ? 'cloud' : 'local' : null);
     setModel(latest?.model ?? '');
-    setPii(latest ? { found: latest.routing.contains_personal_data, types: latest.routing.personal_data_types ?? [] } : null);
+    setPii(latest ? piiFromResult(latest) : null);
   }
   function newConversation() {
     if (busy) return;
@@ -101,7 +104,7 @@ function App() {
     const latest = conversation ? [...conversation.turns].reverse().find(turn => turn.result)?.result : undefined;
     setActiveId(conversation?.id ?? null); setPrompt(''); setError(''); setPhase(latest ? 'complete' : 'idle');
     setProvider(latest ? latest.provider === 'cloud' ? 'cloud' : 'local' : null); setModel(latest?.model ?? '');
-    setPii(latest ? { found: latest.routing.contains_personal_data, types: latest.routing.personal_data_types ?? [] } : null);
+    setPii(latest ? piiFromResult(latest) : null);
   }
   function performDelete() {
     if (!deleteAction || busy) return;
@@ -167,7 +170,7 @@ function App() {
       const onEvent = (event: GatewayEvent) => {
         if (event.type === 'analysis_started') setPhase('analyzing');
         if (event.type === 'analysis_completed') { setPhase('analyzed'); setPii({ found: Boolean(event.contains_personal_data), types: Array.isArray(event.personal_data_types) ? event.personal_data_types.map(String) : [] }); }
-        if (event.type === 'routed') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setPhase('routing'); }
+        if (event.type === 'routed') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setPhase('routing'); setPii(current => current && { ...current, redacted: Number(event.redacted_values ?? 0) }); }
         if (event.type === 'generation_started') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setModel(String(event.model ?? '')); setPhase('generating'); }
         if (event.type === 'delta') setStreamingText(current => current + String(event.content ?? ''));
         if (event.type === 'result') received.result = event.data as ChatResult;
@@ -185,7 +188,7 @@ function App() {
       if (!finalResult) throw new Error('Gateway 已結束連線，但沒有收到模型回應');
       updateTurn(conversationId, turnId, finalResult); setStreamingText('');
       setProvider(finalResult.provider === 'cloud' ? 'cloud' : 'local'); setModel(finalResult.model);
-      setPii({ found: finalResult.routing.contains_personal_data, types: finalResult.routing.personal_data_types ?? [] }); setPhase('complete');
+      setPii(piiFromResult(finalResult)); setPhase('complete');
     } catch (cause) {
       setConversations(current => current.map(item => item.id !== conversationId ? item : { ...item, turns: item.turns.filter(existingTurn => existingTurn.id !== turnId) }));
       setError(cause instanceof Error ? cause.message : '無法連線至 Gateway'); setPrompt(userText); setStreamingText(''); setPhase('failed');

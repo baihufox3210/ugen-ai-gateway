@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
+from ugen_ai_gateway.analysis.redaction import PLACEHOLDER_INSTRUCTION
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis
 from ugen_ai_gateway.api.schemas import ChatRequest
 from ugen_ai_gateway.config import Settings
@@ -80,6 +81,7 @@ def make_service(
     cloud_provider: FakeProvider | None = None,
     analyzer: FakeAnalyzer | None = None,
     cloud_enabled: bool = True,
+    **settings: Any,
 ) -> tuple[GatewayService, FakeProvider, FakeProvider, FakeAnalyzer]:
     local = local_provider or FakeProvider()
     cloud = cloud_provider or FakeProvider()
@@ -89,6 +91,7 @@ def make_service(
             local_model=local_model,
             cloud_model=cloud_model,
             cloud_api_key=cloud_api_key,
+            **settings,
         ),
         local_provider=local,  # type: ignore[arg-type]
         cloud_provider=cloud if cloud_api_key else None,  # type: ignore[arg-type]
@@ -155,7 +158,11 @@ def test_chat_redacts_personal_data_and_routes_complex_request_to_cloud() -> Non
     response = asyncio.run(service.chat(request))
 
     assert response.provider == "cloud"
-    assert cloud.calls[0]["messages"] == [{"role": "user", "content": "Email [EMAIL]"}]
+    assert response.routing.redacted_values == 1
+    assert cloud.calls[0]["messages"] == [
+        {"role": "system", "content": PLACEHOLDER_INSTRUCTION},
+        {"role": "user", "content": "Email [EMAIL_1]"},
+    ]
     assert local.calls == []
     assert request.messages[0].get("content") == "Email alex@example.com"
 
@@ -166,8 +173,8 @@ def test_chat_redacts_personal_data_before_sending_to_local_provider() -> None:
 
     asyncio.run(service.chat(request))
 
-    assert local.calls[0]["messages"] == [
-        {"role": "user", "content": "Call [TAIWAN_MOBILE]"}
+    assert local.calls[0]["messages"][1:] == [
+        {"role": "user", "content": "Call [TAIWAN_MOBILE_1]"}
     ]
     assert cloud.calls == []
 
@@ -300,7 +307,7 @@ def test_chat_redacts_text_parts_in_multimodal_messages() -> None:
 
     asyncio.run(service.chat(request))
 
-    assert local.calls[0]["messages"][1]["content"][0]["text"] == "Email [EMAIL]"
+    assert local.calls[0]["messages"][2]["content"][0]["text"] == "Email [EMAIL_1]"
 
 
 def test_chat_rejects_unavailable_cloud_provider() -> None:
@@ -418,3 +425,86 @@ def test_events_stream_wraps_provider_failure() -> None:
 
     with pytest.raises(RuntimeError, match="Model provider request failed: offline"):
         asyncio.run(collect(service, request))
+
+
+def reply(content: str) -> Any:
+    return SimpleNamespace(
+        model="m", choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+    )
+
+
+def test_chat_restores_placeholders_in_the_reply() -> None:
+    local = FakeProvider(completion=reply("I will email [EMAIL_1] today."))
+    service, _, _, _ = make_service(local_provider=local)
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "Write to alex@example.com"}]
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert response.content == "I will email alex@example.com today."
+    assert "alex@example.com" not in str(local.calls[0]["messages"])
+
+
+def test_chat_keeps_placeholders_when_restore_is_disabled() -> None:
+    local = FakeProvider(completion=reply("Mail [EMAIL_1]"))
+    service, _, _, _ = make_service(local_provider=local, restore_redacted=False)
+    request = ChatRequest(messages=[{"role": "user", "content": "alex@example.com"}])
+
+    assert asyncio.run(service.chat(request)).content == "Mail [EMAIL_1]"
+
+
+def test_chat_sends_raw_text_to_local_model_when_local_redaction_is_off() -> None:
+    service, local, _, _ = make_service(redact_local=False)
+    request = ChatRequest(messages=[{"role": "user", "content": "Call 0912-345-678"}])
+
+    response = asyncio.run(service.chat(request))
+
+    assert local.calls[0]["messages"] == [
+        {"role": "user", "content": "Call 0912-345-678"}
+    ]
+    assert response.routing.redacted_values == 0
+
+
+def test_cloud_requests_are_redacted_even_when_local_redaction_is_off() -> None:
+    analyzer = FakeAnalyzer(analysis(contains_personal_data=True, complexity="complex"))
+    service, _, cloud, _ = make_service(analyzer=analyzer, redact_local=False)
+    request = ChatRequest(messages=[{"role": "user", "content": "alex@example.com"}])
+
+    asyncio.run(service.chat(request))
+
+    assert cloud.calls[0]["messages"][-1]["content"] == "[EMAIL_1]"
+
+
+def test_same_value_gets_the_same_placeholder_across_turns() -> None:
+    service, local, _, _ = make_service()
+    request = ChatRequest(
+        messages=[
+            {"role": "system", "content": "Be brief."},
+            {"role": "user", "content": "Email alex@example.com"},
+            {"role": "assistant", "content": "Sent to alex@example.com."},
+            {"role": "user", "content": "Also cc sam@example.org and alex@example.com"},
+        ]
+    )
+
+    asyncio.run(service.chat(request))
+
+    sent = local.calls[0]["messages"]
+    assert sent[0]["content"] == f"Be brief.\n\n{PLACEHOLDER_INSTRUCTION}"
+    assert sent[1]["content"] == "Email [EMAIL_1]"
+    assert sent[2]["content"] == "Sent to [EMAIL_1]."
+    assert sent[3]["content"] == "Also cc [EMAIL_2] and [EMAIL_1]"
+
+
+def test_stream_restores_placeholders_split_across_chunks() -> None:
+    local = FakeProvider()
+    local.chunks = [text_chunk("Mail [EM"), text_chunk("AIL_"), text_chunk("1] now")]
+    service, _, _, _ = make_service(local_provider=local)
+    request = ChatRequest(messages=[{"role": "user", "content": "alex@example.com"}])
+
+    events = asyncio.run(collect(service, request))
+
+    deltas = [event.data["content"] for event in events if event.type == "delta"]
+    assert "".join(deltas) == "Mail alex@example.com now"
+    assert all("[" not in delta for delta in deltas)
+    assert events[-1].response.content == "Mail alex@example.com now"

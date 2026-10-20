@@ -161,7 +161,23 @@ event instead of `result`, even after some deltas were sent.
 Before sending messages to the generation provider, the gateway redacts detected
 email addresses, Taiwan mobile numbers, valid Taiwan national ID numbers, and
 valid credit card numbers. The analysis model can also report additional exact
-personal-data values, which are redacted from text message content. Common
+personal-data values, which are redacted from text message content.
+
+Redaction is reversible. Each value is replaced with a numbered placeholder such
+as `[EMAIL_1]`; the same value gets the same placeholder across every message in
+the request, and a short system instruction asks the model to keep placeholders
+as written. The placeholder-to-value mapping exists only in memory for that one
+request. When the reply comes back, placeholders are replaced with the original
+values (also in streamed deltas, even when a placeholder is split across
+chunks), so the user sees a complete answer while the model never saw the data.
+The response's `routing.redacted_values` reports how many values were replaced.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `REDACT_LOCAL` | Also redact requests routed to the local model | `true` |
+| `RESTORE_REDACTED` | Put original values back into the reply | `true` |
+
+Requests routed to the cloud are always redacted. Common
 patterns are detected locally as a backstop if the analysis model misses them.
 The current analysis and redaction flow applies to text; image or other
 non-textual content is not inspected for personal data.
