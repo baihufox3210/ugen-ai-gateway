@@ -1,4 +1,3 @@
-import asyncio
 import hmac
 import json
 import logging
@@ -122,37 +121,15 @@ async def create_chat_completion_stream(
     check_api_access(http_request)
 
     async def events():
-        queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
-
-        async def report(stage: str, data: dict) -> None:
-            await queue.put((stage, data))
-
-        task = asyncio.create_task(gateway.chat(request, progress=report))
         try:
-            while not task.done() or not queue.empty():
-                try:
-                    stage, data = await asyncio.wait_for(queue.get(), timeout=0.2)
-                    yield json.dumps(
-                        {"type": stage, **data}, ensure_ascii=False
-                    ) + "\n"
-                except TimeoutError:
-                    continue
-
-            try:
-                result = task.result()
-            except Exception as exc:
-                logger.exception("Streaming chat completion failed")
-                yield json.dumps(
-                    {"type": "error", "detail": str(exc)}, ensure_ascii=False
-                ) + "\n"
-            else:
-                yield json.dumps(
-                    {"type": "result", "data": result.model_dump(mode="json")},
-                    ensure_ascii=False,
-                ) + "\n"
-        finally:
-            if not task.done():
-                task.cancel()
+            async for event in gateway.events(request, stream=True):
+                yield json.dumps(event.to_json(), ensure_ascii=False) + "\n"
+        except Exception as exc:
+            logger.exception("Streaming chat completion failed")
+            yield (
+                json.dumps({"type": "error", "detail": str(exc)}, ensure_ascii=False)
+                + "\n"
+            )
 
     return StreamingResponse(
         events(),

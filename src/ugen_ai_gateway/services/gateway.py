@@ -1,12 +1,14 @@
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, cast
 
 from openai.types.chat import ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.pii import redact_personal_data
 from ugen_ai_gateway.analysis.policy import RoutingDecision, RoutingPolicy
-from ugen_ai_gateway.analysis.schemas import TokenUsage
+from ugen_ai_gateway.analysis.schemas import RequestAnalysis, TokenUsage
 from ugen_ai_gateway.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -15,8 +17,7 @@ from ugen_ai_gateway.api.schemas import (
     UsageStats,
 )
 from ugen_ai_gateway.config import Settings
-from ugen_ai_gateway.providers.cloud import CloudProvider
-from ugen_ai_gateway.providers.local import LocalProvider
+from ugen_ai_gateway.providers.base import ModelProvider
 from ugen_ai_gateway.services.errors import (
     GatewayConfigurationError,
     InvalidChatRequest,
@@ -37,6 +38,40 @@ SUPPORTED_PERSONAL_DATA_TYPES = {
 }
 
 
+@dataclass
+class GatewayEvent:
+    """One step of a chat request: a stage update, a text delta, or the result."""
+
+    type: str
+    data: dict[str, Any] = field(default_factory=dict)
+    response: ChatResponse | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        if self.response is not None:
+            return {"type": self.type, "data": self.response.model_dump(mode="json")}
+        return {"type": self.type, **self.data}
+
+
+@dataclass
+class _PreparedChat:
+    analysis: RequestAnalysis
+    decision: RoutingDecision
+    provider: ModelProvider
+    model: str
+    messages: list[ChatCompletionMessageParam]
+    analysis_ms: float
+
+
+def _token_usage(raw_usage: Any) -> TokenUsage | None:
+    if raw_usage is None:
+        return None
+    return TokenUsage(
+        prompt_tokens=getattr(raw_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(raw_usage, "completion_tokens", 0) or 0,
+        total_tokens=getattr(raw_usage, "total_tokens", 0) or 0,
+    )
+
+
 class GatewayService:
     """Analyze requests and route them to the appropriate model provider."""
 
@@ -44,8 +79,8 @@ class GatewayService:
         self,
         *,
         settings: Settings,
-        local_provider: LocalProvider,
-        cloud_provider: CloudProvider | None,
+        local_provider: ModelProvider,
+        cloud_provider: ModelProvider | None,
         analyzer: RequestAnalyzer,
         policy: RoutingPolicy,
     ) -> None:
@@ -59,9 +94,9 @@ class GatewayService:
         if not self._settings.local_model:
             return False
         try:
-            await self._local_provider.health_check()
+            await self._local_provider.health_check()  # type: ignore[attr-defined]
             if self._cloud_provider is not None:
-                await self._cloud_provider.health_check()
+                await self._cloud_provider.health_check()  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001 - readiness reports any provider failure
             return False
         return True
@@ -71,11 +106,119 @@ class GatewayService:
         request: ChatRequest,
         progress: ProgressCallback | None = None,
     ) -> ChatResponse:
-        async def report(stage: str, **data: Any) -> None:
+        """Run a request to completion, reporting stage events to ``progress``."""
+        async for event in self.events(request, stream=False):
+            if event.response is not None:
+                return event.response
             if progress is not None:
-                await progress(stage, data)
+                await progress(event.type, event.data)
+        raise RuntimeError("Gateway finished without a response")
 
+    async def events(
+        self, request: ChatRequest, *, stream: bool
+    ) -> AsyncIterator[GatewayEvent]:
+        """Yield stage events, text deltas (when streaming) and the final result."""
         total_started_at = perf_counter()
+        user_input = self._validated_user_input(request)
+
+        yield GatewayEvent("analysis_started")
+        analysis, analysis_ms = await self._analyze(user_input)
+        yield GatewayEvent(
+            "analysis_completed",
+            {
+                "complexity": analysis.complexity,
+                "task_type": analysis.task_type,
+                "contains_personal_data": analysis.contains_personal_data,
+                "personal_data_types": analysis.personal_data_types,
+            },
+        )
+
+        prepared = self._prepare(request, analysis, analysis_ms)
+        yield GatewayEvent(
+            "routed",
+            {
+                "provider": prepared.decision.provider,
+                "reason": prepared.decision.reason,
+                "complexity": analysis.complexity,
+            },
+        )
+
+        generation_started_at = perf_counter()
+        yield GatewayEvent(
+            "generation_started",
+            {"provider": prepared.decision.provider, "model": prepared.model},
+        )
+
+        if stream:
+            parts: list[str] = []
+            resolved_model = prepared.model
+            usage: TokenUsage | None = None
+            try:
+                async for chunk in prepared.provider.stream(
+                    model=prepared.model,
+                    messages=prepared.messages,
+                    temperature=request.temperature,
+                ):
+                    resolved_model = getattr(chunk, "model", None) or resolved_model
+                    usage = _token_usage(getattr(chunk, "usage", None)) or usage
+                    for choice in chunk.choices or []:
+                        text = getattr(choice.delta, "content", None)
+                        if text:
+                            parts.append(text)
+                            yield GatewayEvent("delta", {"content": text})
+            except TimeoutError as exc:
+                raise ProviderTimeout("Model provider timed out") from exc
+            except Exception as exc:
+                raise ProviderRequestError(
+                    f"Model provider request failed: {exc}"
+                ) from exc
+            content = "".join(parts)
+        else:
+            try:
+                completion = await prepared.provider.complete(
+                    model=prepared.model,
+                    messages=prepared.messages,
+                    temperature=request.temperature,
+                )
+            except TimeoutError as exc:
+                raise ProviderTimeout("Model provider timed out") from exc
+            except Exception as exc:
+                raise ProviderRequestError(
+                    f"Model provider request failed: {exc}"
+                ) from exc
+
+            if not completion.choices:
+                raise RuntimeError("Model provider returned no choices")
+            message_content = completion.choices[0].message.content
+            if not isinstance(message_content, str):
+                raise TypeError("Model provider returned no text content")
+            content = message_content
+            resolved_model = completion.model
+            usage = _token_usage(getattr(completion, "usage", None))
+
+        generation_ms = (perf_counter() - generation_started_at) * 1000
+        response = ChatResponse(
+            model=resolved_model,
+            content=content,
+            provider=prepared.decision.provider,
+            routing=RoutingInfo(
+                complexity=analysis.complexity,
+                task_type=analysis.task_type,
+                contains_personal_data=analysis.contains_personal_data,
+                personal_data_types=analysis.personal_data_types,
+                provider=prepared.decision.provider,
+                reason=prepared.decision.reason,
+            ),
+            usage=UsageStats(analysis=analysis.usage, generation=usage),
+            performance=PerformanceStats(
+                analysis_ms=analysis_ms,
+                generation_ms=generation_ms,
+                total_ms=(perf_counter() - total_started_at) * 1000,
+            ),
+        )
+        yield GatewayEvent("result", response=response)
+
+    def _validated_user_input(self, request: ChatRequest) -> str:
         if not self._settings.local_model:
             raise GatewayConfigurationError("LOCAL_MODEL is not configured")
 
@@ -83,40 +226,33 @@ class GatewayService:
         for message in request.messages:
             if message["role"] != "user":
                 continue
-
             content = message.get("content")
             if isinstance(content, str):
                 user_messages.append(content)
 
         user_input = "\n".join(user_messages)
-
         if not user_input:
             raise InvalidChatRequest("A text user message is required")
-
         if len(user_input) > MAX_ANALYSIS_INPUT_CHARACTERS:
             raise RequestTooLarge(
                 f"User text exceeds the {MAX_ANALYSIS_INPUT_CHARACTERS}-character limit"
             )
+        return user_input
 
-        analysis_started_at = perf_counter()
-        await report("analysis_started")
+    async def _analyze(self, user_input: str) -> tuple[RequestAnalysis, float]:
+        started_at = perf_counter()
         try:
             analysis = await self._analyzer.analyze(user_input)
         except TimeoutError as exc:
             raise ProviderTimeout("Analysis provider timed out") from exc
         except Exception as exc:
             raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
-        analysis_ms = (perf_counter() - analysis_started_at) * 1000
+        analysis_ms = (perf_counter() - started_at) * 1000
+        return self._policy.classify_complexity(user_input, analysis), analysis_ms
 
-        analysis = self._policy.classify_complexity(user_input, analysis)
-        await report(
-            "analysis_completed",
-            complexity=analysis.complexity,
-            task_type=analysis.task_type,
-            contains_personal_data=analysis.contains_personal_data,
-            personal_data_types=analysis.personal_data_types,
-        )
-
+    def _prepare(
+        self, request: ChatRequest, analysis: RequestAnalysis, analysis_ms: float
+    ) -> _PreparedChat:
         unredactable_types = {
             data_type.casefold()
             for data_type in analysis.personal_data_types
@@ -144,17 +280,9 @@ class GatewayService:
                 ),
             )
 
-        await report(
-            "routed",
-            provider=decision.provider,
-            reason=decision.reason,
-            complexity=analysis.complexity,
-        )
-
         if decision.provider == "cloud":
             if self._cloud_provider is None:
                 raise ProviderUnavailable("Cloud provider is unavailable")
-
             provider = self._cloud_provider
             model = request.model or self._settings.cloud_model
         else:
@@ -166,15 +294,26 @@ class GatewayService:
                 f"No model configured for the {decision.provider} provider"
             )
 
+        return _PreparedChat(
+            analysis=analysis,
+            decision=decision,
+            provider=provider,
+            model=model,
+            messages=self._redacted_messages(request, analysis),
+            analysis_ms=analysis_ms,
+        )
+
+    @staticmethod
+    def _redacted_messages(
+        request: ChatRequest, analysis: RequestAnalysis
+    ) -> list[ChatCompletionMessageParam]:
         messages: list[ChatCompletionMessageParam] = []
         for message in request.messages:
-            message_data = cast(dict[str, Any], message)
-            redacted_message = message_data.copy()
+            redacted_message = cast(dict[str, Any], message).copy()
             content = redacted_message.get("content")
             if isinstance(content, str):
                 redacted_message["content"] = redact_personal_data(
-                    content,
-                    additional_values=analysis.personal_data_values,
+                    content, additional_values=analysis.personal_data_values
                 )
             elif content is not None and not isinstance(content, dict):
                 redacted_parts = []
@@ -182,7 +321,6 @@ class GatewayService:
                     if not isinstance(part, dict):
                         redacted_parts.append(part)
                         continue
-
                     redacted_part = part.copy()
                     if isinstance(redacted_part.get("text"), str):
                         redacted_part["text"] = redact_personal_data(
@@ -190,65 +328,6 @@ class GatewayService:
                             additional_values=analysis.personal_data_values,
                         )
                     redacted_parts.append(redacted_part)
-
                 redacted_message["content"] = redacted_parts
-
             messages.append(cast(ChatCompletionMessageParam, redacted_message))
-
-        generation_started_at = perf_counter()
-        await report("generation_started", provider=decision.provider, model=model)
-        try:
-            completion = await provider.complete(
-                model=model,
-                messages=messages,
-                temperature=request.temperature,
-            )
-        except TimeoutError as exc:
-            raise ProviderTimeout("Model provider timed out") from exc
-        except Exception as exc:
-            raise ProviderRequestError(f"Model provider request failed: {exc}") from exc
-        generation_ms = (perf_counter() - generation_started_at) * 1000
-
-        if not completion.choices:
-            raise RuntimeError("Model provider returned no choices")
-
-        content = completion.choices[0].message.content
-
-        if not isinstance(content, str):
-            raise TypeError("Model provider returned no text content")
-
-        raw_usage = getattr(completion, "usage", None)
-        generation_usage = (
-            TokenUsage(
-                prompt_tokens=getattr(raw_usage, "prompt_tokens", 0) or 0,
-                completion_tokens=getattr(raw_usage, "completion_tokens", 0) or 0,
-                total_tokens=getattr(raw_usage, "total_tokens", 0) or 0,
-            )
-            if raw_usage is not None
-            else None
-        )
-
-        routing = RoutingInfo(
-            complexity=analysis.complexity,
-            task_type=analysis.task_type,
-            contains_personal_data=analysis.contains_personal_data,
-            personal_data_types=analysis.personal_data_types,
-            provider=decision.provider,
-            reason=decision.reason,
-        )
-
-        return ChatResponse(
-            model=completion.model,
-            content=content,
-            provider=decision.provider,
-            routing=routing,
-            usage=UsageStats(
-                analysis=analysis.usage,
-                generation=generation_usage,
-            ),
-            performance=PerformanceStats(
-                analysis_ms=analysis_ms,
-                generation_ms=generation_ms,
-                total_ms=(perf_counter() - total_started_at) * 1000,
-            ),
-        )
+        return messages

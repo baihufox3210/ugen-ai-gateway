@@ -3,14 +3,13 @@ from functools import lru_cache
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.config import Settings, get_settings
-from ugen_ai_gateway.providers.cloud import CloudProvider
-from ugen_ai_gateway.providers.local import LocalProvider
 from ugen_ai_gateway.providers.openai_client import create_openai_client
+from ugen_ai_gateway.providers.openai_compatible import OpenAICompatibleProvider
 from ugen_ai_gateway.services.gateway import GatewayService
 
 
 @lru_cache
-def get_local_provider() -> LocalProvider:
+def get_local_provider() -> OpenAICompatibleProvider:
     settings = get_settings()
 
     client = create_openai_client(
@@ -20,11 +19,11 @@ def get_local_provider() -> LocalProvider:
         max_retries=settings.max_retries,
     )
 
-    return LocalProvider(client)
+    return OpenAICompatibleProvider(client, name="local", locality="local")
 
 
 @lru_cache
-def get_cloud_provider() -> CloudProvider:
+def get_cloud_provider() -> OpenAICompatibleProvider:
     settings = get_settings()
 
     if not settings.cloud_api_key:
@@ -37,7 +36,7 @@ def get_cloud_provider() -> CloudProvider:
         max_retries=settings.max_retries,
     )
 
-    return CloudProvider(client)
+    return OpenAICompatibleProvider(client, name="cloud", locality="cloud")
 
 
 @lru_cache

@@ -150,8 +150,11 @@ personal-data types, selected provider, and the reason for that decision.
 `local`, or `cloud`. It defaults to `auto`; explicit local or cloud selection
 overrides the automatic generation provider while keeping request analysis and
 personal-data checks on the local model. The `/v1/chat/completions/stream`
-endpoint emits newline-delimited progress events for analysis, routing, and
-generation.
+endpoint emits newline-delimited JSON events: `analysis_started`,
+`analysis_completed`, `routed`, `generation_started`, then one `delta` event per
+generated text chunk (`{"type":"delta","content":"..."}`), and finally `result`
+with the same body as the non-streaming response. A failure emits an `error`
+event instead of `result`, even after some deltas were sent.
 
 ## Personal-data handling
 

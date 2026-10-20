@@ -19,12 +19,40 @@ class FakeProvider:
         )
         self.error = error
         self.calls: list[dict[str, Any]] = []
+        self.chunks: list[Any] = []
 
     async def complete(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self.error:
             raise self.error
         return self.completion
+
+    async def stream(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        for chunk in self.chunks:
+            yield chunk
+
+
+def text_chunk(text: str) -> Any:
+    return SimpleNamespace(
+        model="streamed-model",
+        usage=None,
+        choices=[SimpleNamespace(delta=SimpleNamespace(content=text))],
+    )
+
+
+def usage_chunk(completion_tokens: int) -> Any:
+    return SimpleNamespace(
+        model="streamed-model",
+        usage=SimpleNamespace(
+            prompt_tokens=3,
+            completion_tokens=completion_tokens,
+            total_tokens=3 + completion_tokens,
+        ),
+        choices=[],
+    )
 
 
 class FakeAnalyzer:
@@ -347,3 +375,46 @@ def test_chat_propagates_provider_failure() -> None:
 def test_chat_request_rejects_invalid_payload(payload: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         ChatRequest.model_validate(payload)
+
+
+async def collect(service: GatewayService, request: ChatRequest) -> list[Any]:
+    return [event async for event in service.events(request, stream=True)]
+
+
+def test_events_stream_text_deltas_then_result() -> None:
+    local = FakeProvider()
+    local.chunks = [text_chunk("Hel"), text_chunk("lo"), usage_chunk(2)]
+    service, _, cloud, _ = make_service(local_provider=local)
+    request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
+
+    events = asyncio.run(collect(service, request))
+
+    assert [event.type for event in events] == [
+        "analysis_started",
+        "analysis_completed",
+        "routed",
+        "generation_started",
+        "delta",
+        "delta",
+        "result",
+    ]
+    assert [event.data["content"] for event in events if event.type == "delta"] == [
+        "Hel",
+        "lo",
+    ]
+    result = events[-1].response
+    assert result.content == "Hello"
+    assert result.model == "streamed-model"
+    assert result.usage.generation.completion_tokens == 2
+    assert events[-1].to_json()["data"]["content"] == "Hello"
+    assert cloud.calls == []
+
+
+def test_events_stream_wraps_provider_failure() -> None:
+    service, _, _, _ = make_service(
+        local_provider=FakeProvider(error=RuntimeError("offline"))
+    )
+    request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
+
+    with pytest.raises(RuntimeError, match="Model provider request failed: offline"):
+        asyncio.run(collect(service, request))
