@@ -1,6 +1,14 @@
 import pytest
 
-from ugen_ai_gateway.analysis.pii import detect_personal_data, redact_personal_data
+from ugen_ai_gateway.analysis.pii import (
+    PersonalDataMatch,
+    clear_registered_finders,
+    detect_personal_data,
+    find_personal_data,
+    redact_personal_data,
+    register_finder,
+    supported_types,
+)
 
 
 @pytest.mark.parametrize(
@@ -85,3 +93,121 @@ def test_does_not_match_identifiers_embedded_in_word_like_text(text: str) -> Non
 )
 def test_redacts_detected_personal_data(text: str, expected: str) -> None:
     assert redact_personal_data(text) == expected
+
+
+# --- Expanded detectors -------------------------------------------------------
+
+POSITIVE_CASES = [
+    ("電話0912345678", "taiwan_mobile", "0912345678"),
+    ("身分證A123456789。", "taiwan_id", "A123456789"),
+    ("辦公室 02-2345-6789", "taiwan_landline", "02-2345-6789"),
+    ("Office (02)2345-6789", "taiwan_landline", "(02)2345-6789"),
+    ("Call +886-2-2345-6789", "taiwan_landline", "+886-2-2345-6789"),
+    ("高雄 07-123-4567", "taiwan_landline", "07-123-4567"),
+    ("苗栗037-12-3456", "taiwan_landline", "037-12-3456"),
+    ("居留證 A800000005", "taiwan_resident_certificate", "A800000005"),
+    ("舊居留證AC00000003", "taiwan_resident_certificate", "AC00000003"),
+    ("統編：22099131", "taiwan_ubn", "22099131"),
+    ("公司統一編號 10458575", "taiwan_ubn", "10458575"),
+    ("VAT number 04595257", "taiwan_ubn", "04595257"),
+    ("護照號碼：312345678", "passport", "312345678"),
+    ("passport no. X1234567", "passport", "X1234567"),
+    ("健保卡號 0000-1234-5678", "nhi_card", "0000-1234-5678"),
+    ("卡號 4111 1111 1111 1111", "credit_card", "4111 1111 1111 1111"),
+    (
+        "key: sk-proj-abcdefghijklmnopqrstuvwx",
+        "api_key",
+        "sk-proj-abcdefghijklmnopqrstuvwx",
+    ),
+    ("AWS AKIAABCDEFGHIJKLMNOP", "api_key", "AKIAABCDEFGHIJKLMNOP"),
+    (
+        "token ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "api_key",
+        "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+    ),
+    (
+        "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N",
+        "jwt",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N",
+    ),
+    ("password=hunter22", "password", "hunter22"),
+    ("密碼：Abc12345，請保管", "password", "Abc12345"),
+]
+
+
+@pytest.mark.parametrize(("text", "data_type", "value"), POSITIVE_CASES)
+def test_expanded_detectors_find_the_exact_value(
+    text: str, data_type: str, value: str
+) -> None:
+    matches = find_personal_data(text)
+
+    assert [(match.type, match.value) for match in matches] == [(data_type, value)]
+
+
+def test_private_key_blocks_are_detected() -> None:
+    text = (
+        "here:\n-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n"
+        "-----END RSA PRIVATE KEY-----\nthanks"
+    )
+
+    assert detect_personal_data(text) == ["private_key"]
+    assert redact_personal_data(text) == "here:\n[PRIVATE_KEY]\nthanks"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "身分證A123456788",  # bad checksum
+        "日期 2024-01-31 結帳",
+        "訂單編號 20231231",  # 8 digits without a business-ID keyword
+        "統編：12345678",  # bad UBN checksum
+        "金額 1234-5678 元",
+        "版本 0.2.3，台北 101",
+        "居留證 A800000004",  # bad checksum
+        "the password is long",  # no assignment
+        "sk-short",
+        "卡號 4111 1111 1111 1112",  # bad Luhn
+    ],
+)
+def test_expanded_detectors_ignore_near_misses(text: str) -> None:
+    assert find_personal_data(text) == []
+
+
+def test_keyword_stays_readable_when_only_the_value_is_redacted() -> None:
+    assert redact_personal_data("統編：22099131，密碼: hunter22") == (
+        "統編：[TAIWAN_UBN]，密碼: [PASSWORD]"
+    )
+
+
+def test_additional_values_are_redacted_inside_chinese_text() -> None:
+    assert (
+        redact_personal_data("我叫王小明，住台北", additional_values=["王小明"])
+        == "我叫[PERSONAL_DATA]，住台北"
+    )
+
+
+def test_additional_ascii_values_still_respect_word_boundaries() -> None:
+    assert (
+        redact_personal_data("Al and Alice", additional_values=["Al"])
+        == "[PERSONAL_DATA] and Alice"
+    )
+
+
+def test_registered_finders_extend_detection() -> None:
+    def names(text: str) -> list[PersonalDataMatch]:
+        start = text.find("王小明")
+        if start == -1:
+            return []
+        return [PersonalDataMatch("person_name", "PERSON", start, start + 3, "王小明")]
+
+    register_finder(names, types=["person_name"])
+    try:
+        assert detect_personal_data("王小明 alex@example.com") == [
+            "email",
+            "person_name",
+        ]
+        assert "person_name" in supported_types()
+        assert redact_personal_data("我是王小明") == "我是[PERSON]"
+    finally:
+        clear_registered_finders()
+    assert "person_name" not in supported_types()

@@ -12,8 +12,15 @@ dependencies = [
     "fastapi[standard]>=0.143.0",
     "openai>=3.31.0",
     "pydantic-settings>=2.15.0",
+    "pyyaml>=6.0",
     "pytest>=9.1.1",
     "uvicorn[standard]>=0.54.0",
+]
+
+[project.optional-dependencies]
+# Name and location detection (PII_NER=presidio). Also needs a spaCy model.
+ner = [
+    "presidio-analyzer>=2.2",
 ]
 
 [project.scripts]

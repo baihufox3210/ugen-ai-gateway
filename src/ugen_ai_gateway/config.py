@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,11 +18,54 @@ class Settings(BaseSettings):
     cloud_base_url: str = ""
     cloud_model: str = ""
 
+    # Optional YAML file with providers, models and routing rules. When empty,
+    # LOCAL_* / CLOUD_* define a local and a cloud provider.
+    routing_config: str = ""
+
+    # Redact personal data even when the request stays on the local model.
+    redact_local: bool = True
+    # Put the original values back into the model's reply before returning it.
+    restore_redacted: bool = True
+
+    # Optional name/location detection: none or presidio (uv sync --extra ner).
+    pii_ner: Literal["none", "presidio"] = "none"
+    pii_ner_language: str = "zh"
+    pii_ner_spacy_model: str = "zh_core_web_sm"
+    pii_ner_score_threshold: float = Field(default=0.5, ge=0, le=1)
+
+    # llm: always ask the local model. rules: regular expressions only.
+    # hybrid: rules when the request stays local anyway, the local model otherwise.
+    analysis_mode: Literal["llm", "rules", "hybrid"] = "hybrid"
+    analysis_cache_size: int = Field(default=256, ge=0)
+    analysis_cache_ttl_seconds: float = Field(default=600, gt=0)
+
+    # Prompt-injection tripwire: off, flag (record only), local (never send to
+    # the cloud), or block (reject with HTTP 400).
+    injection_action: Literal["off", "flag", "local", "block"] = "flag"
+    # Personal data in model output that the user never provided: off, flag
+    # (record only), or redact (replace with a [LABEL] marker).
+    output_pii_action: Literal["off", "flag", "redact"] = "redact"
+    # Required for the audit endpoints when set; otherwise GATEWAY_API_KEY rules.
+    admin_api_key: str = ""
+
+    # SQLite file for request metadata and feedback (never message text).
+    # Empty disables usage tracking.
+    usage_db_path: str = "data/ugen.db"
+
     gateway_api_key: str = ""
     rate_limit_requests: int = Field(default=60, gt=0)
     rate_limit_window_seconds: int = Field(default=60, gt=0)
     request_timeout: float = Field(default=300.0, gt=0, le=600)
-    max_retries: int = Field(default=0, ge=0, le=10)
+    # Retries with exponential backoff on connection errors, 429 and 5xx.
+    max_retries: int = Field(default=2, ge=0, le=10)
+
+    # Automatic fallback when the routed provider is down (auto routing only).
+    # Cloud -> local is privacy-safe. Local -> cloud only happens for requests
+    # the local model analyzed and found free of personal data.
+    fallback_to_local: bool = True
+    fallback_to_cloud: bool = False
+    circuit_failure_threshold: int = Field(default=3, ge=1)
+    circuit_cooldown_seconds: float = Field(default=30, gt=0)
 
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":

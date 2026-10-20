@@ -1,33 +1,27 @@
-import asyncio
-import hmac
+"""Gateway-specific endpoints used by the dashboard: health, config, and chat
+with routing details and stage-by-stage progress."""
+
+import csv
+import io
 import json
 import logging
-import time
-from collections import defaultdict, deque
-from threading import Lock
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
+from ugen_ai_gateway.api.access import authenticate, check_admin_access
+from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.config import get_settings
-from ugen_ai_gateway.dependencies import get_gateway_service
-from ugen_ai_gateway.services.errors import (
-    GatewayConfigurationError,
-    InvalidChatRequest,
-    ProviderRequestError,
-    ProviderTimeout,
-    ProviderUnavailable,
-    RequestTooLarge,
-)
+from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.services.gateway import GatewayService
+from ugen_ai_gateway.services.usage import UsageStore
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-_requests_by_client: dict[str, deque[float]] = defaultdict(deque)
-_rate_lock = Lock()
 
 GatewayDependency = Annotated[
     GatewayService,
@@ -48,111 +42,239 @@ async def readiness(gateway: GatewayDependency, response: Response) -> dict[str,
     return {"status": "ready"}
 
 
-@router.get("/v1/models")
-async def configured_models() -> dict[str, str]:
-    """Expose configured model names for the local dashboard."""
+@router.get("/v1/ugen/config")
+async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
+    """Expose non-secret configuration for the dashboard."""
     settings = get_settings()
+    engine = gateway.engine
+    local = engine.default("local")
+    cloud = engine.default("cloud")
     return {
-        "local_model": settings.local_model.strip(),
-        "cloud_model": settings.cloud_model.strip(),
+        "local_model": local.model.id if local else "",
+        "cloud_model": cloud.model.id if cloud else "",
+        "cloud_enabled": cloud is not None,
+        "redact_local": settings.redact_local,
+        "restore_redacted": settings.restore_redacted,
+        "providers": [
+            {
+                "name": provider.name,
+                "locality": provider.locality,
+                "available": provider.name in engine.available,
+                "models": [model.id for model in provider.models],
+            }
+            for provider in engine.config.providers
+        ],
+        "rules": [rule.name for rule in engine.config.rules],
+        "never_cloud": engine.config.privacy.never_cloud,
     }
 
 
-def check_api_access(request: Request) -> None:
-    settings = get_settings()
-    if settings.gateway_api_key and not hmac.compare_digest(
-        request.headers.get("x-api-key", ""), settings.gateway_api_key
+@router.get("/v1/ugen/providers")
+async def provider_status(gateway: GatewayDependency) -> dict[str, str]:
+    """Circuit-breaker state per provider: closed, open, or half_open."""
+    return gateway.provider_status()
+
+
+UsageStoreDependency = Annotated[UsageStore | None, Depends(get_usage_store)]
+
+
+def _require_store(store: UsageStore | None) -> UsageStore:
+    if store is None:
+        raise HTTPException(status_code=404, detail="Usage tracking is disabled")
+    return store
+
+
+@router.get("/v1/ugen/stats")
+async def usage_stats(
+    store: UsageStoreDependency,
+    http_request: Request,
+    days: Annotated[int, Query(ge=1, le=366)] = 7,
+    tz_offset_minutes: Annotated[int, Query(ge=-840, le=840)] = 0,
+) -> dict[str, Any]:
+    """Totals, savings and daily counts. Daily buckets use the given UTC offset.
+
+    An API key sees only its own requests; the master key sees everything."""
+    principal = await authenticate(http_request, store)
+    return await _require_store(store).stats(
+        days=days,
+        tz_offset_minutes=tz_offset_minutes,
+        api_key_id=principal.api_key_id,
+    )
+
+
+@router.get("/v1/ugen/requests")
+async def recent_requests(
+    store: UsageStoreDependency,
+    http_request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    before: float | None = None,
+) -> dict[str, Any]:
+    """Recent request metadata, newest first; pass ``before`` to page back."""
+    principal = await authenticate(http_request, store)
+    items = await _require_store(store).recent(
+        limit=limit, before=before, api_key_id=principal.api_key_id
+    )
+    return {"data": items}
+
+
+class FeedbackRequest(BaseModel):
+    request_id: str = Field(min_length=1, max_length=64)
+    rating: Literal[-1, 1]
+
+
+@router.post("/v1/ugen/feedback", status_code=204)
+async def submit_feedback(
+    body: FeedbackRequest, store: UsageStoreDependency, http_request: Request
+) -> Response:
+    principal = await authenticate(http_request, store)
+    if not await _require_store(store).set_feedback(
+        body.request_id, body.rating, api_key_id=principal.api_key_id
     ):
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-    client = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    with _rate_lock:
-        timestamps = _requests_by_client[client]
-        cutoff = now - settings.rate_limit_window_seconds
-        while timestamps and timestamps[0] <= cutoff:
-            timestamps.popleft()
-        if len(timestamps) >= settings.rate_limit_requests:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        timestamps.append(now)
+        raise HTTPException(status_code=404, detail="Unknown request id")
+    return Response(status_code=204)
 
 
-@router.post("/v1/chat/completions", response_model=ChatResponse)
-async def create_chat_completion(
+@router.get("/v1/ugen/audit", response_model=None)
+async def audit_log(
+    store: UsageStoreDependency,
+    http_request: Request,
+    since: float | None = None,
+    limit: Annotated[int, Query(ge=1, le=10_000)] = 1000,
+    format: Literal["json", "csv"] = "json",
+) -> dict[str, Any] | Response:
+    """Export the hash-chained audit log (metadata only) as JSON or CSV."""
+    await check_admin_access(http_request, store)
+    entries = await _require_store(store).audit_entries(since=since, limit=limit)
+    if format == "json":
+        return {"data": entries}
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    columns = [
+        "seq",
+        "created_at",
+        "request_id",
+        "event",
+        "detail",
+        "prev_hash",
+        "hash",
+    ]
+    writer.writerow(columns)
+    for entry in entries:
+        writer.writerow(
+            [
+                json.dumps(entry[column], ensure_ascii=False, sort_keys=True)
+                if column == "detail"
+                else entry[column]
+                for column in columns
+            ]
+        )
+    return Response(
+        buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="ugen-audit.csv"'},
+    )
+
+
+@router.get("/v1/ugen/audit/verify")
+async def verify_audit_log(
+    store: UsageStoreDependency, http_request: Request
+) -> dict[str, Any]:
+    """Recompute the hash chain; ``ok`` is false from the first altered entry."""
+    await check_admin_access(http_request, store)
+    return await _require_store(store).verify_audit()
+
+
+class KeyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    allow_cloud: bool = True
+    monthly_budget_usd: float | None = Field(default=None, ge=0)
+    rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+
+
+@router.post("/v1/ugen/keys", status_code=201)
+async def create_api_key(
+    body: KeyRequest, store: UsageStoreDependency, http_request: Request
+) -> dict[str, Any]:
+    """Create an API key. The returned ``key`` is shown only this once."""
+    await check_admin_access(http_request, store)
+    view, secret = await _require_store(store).create_key(**body.model_dump())
+    return {**view, "key": secret}
+
+
+@router.get("/v1/ugen/keys")
+async def list_api_keys(
+    store: UsageStoreDependency, http_request: Request
+) -> dict[str, Any]:
+    """All keys with this month's request count and cost; secrets are never shown."""
+    await check_admin_access(http_request, store)
+    return {"data": await _require_store(store).list_keys()}
+
+
+@router.delete("/v1/ugen/keys/{key_id}", status_code=204)
+async def revoke_api_key(
+    key_id: str, store: UsageStoreDependency, http_request: Request
+) -> Response:
+    await check_admin_access(http_request, store)
+    if not await _require_store(store).revoke_key(key_id):
+        raise HTTPException(status_code=404, detail="Unknown or already revoked key")
+    return Response(status_code=204)
+
+
+@router.get("/v1/ugen/whoami")
+async def whoami(store: UsageStoreDependency, http_request: Request) -> dict[str, Any]:
+    """What the presented credential is allowed to do."""
+    principal = await authenticate(http_request, store)
+    spend = (
+        await store.month_spend(principal.api_key_id)
+        if store is not None and principal.api_key_id
+        else None
+    )
+    return {
+        "api_key_id": principal.api_key_id,
+        "allow_cloud": principal.allow_cloud,
+        "monthly_budget_usd": principal.monthly_budget_usd,
+        "month_cost_usd": spend,
+        "rate_limit_per_minute": principal.rate_limit_per_minute,
+    }
+
+
+@router.post("/v1/ugen/chat", response_model=ChatResponse)
+async def create_chat(
     request: ChatRequest,
     gateway: GatewayDependency,
+    store: UsageStoreDependency,
     http_request: Request,
 ) -> ChatResponse:
-    check_api_access(http_request)
+    principal = await authenticate(http_request, store)
     try:
-        return await gateway.chat(request)
-    except RequestTooLarge as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-    except InvalidChatRequest as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except GatewayConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ProviderUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ProviderTimeout as exc:
-        raise HTTPException(status_code=504, detail="Model provider timed out") from exc
-    except ProviderRequestError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Model provider request failed",
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except TimeoutError as exc:
-        raise HTTPException(status_code=504, detail="Model provider timed out") from exc
+        return await gateway.chat(request, principal=principal)
     except Exception as exc:
-        logger.exception("Unhandled chat completion error")
-        raise HTTPException(
-            status_code=502,
-            detail="Model provider request failed",
-        ) from exc
+        status_code, detail = http_error_for(exc)
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
-@router.post("/v1/chat/completions/stream")
-async def create_chat_completion_stream(
+@router.post("/v1/ugen/chat/stream")
+async def create_chat_stream(
     request: ChatRequest,
     gateway: GatewayDependency,
+    store: UsageStoreDependency,
     http_request: Request,
 ) -> StreamingResponse:
-    check_api_access(http_request)
+    principal = await authenticate(http_request, store)
 
     async def events():
-        queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
-
-        async def report(stage: str, data: dict) -> None:
-            await queue.put((stage, data))
-
-        task = asyncio.create_task(gateway.chat(request, progress=report))
         try:
-            while not task.done() or not queue.empty():
-                try:
-                    stage, data = await asyncio.wait_for(queue.get(), timeout=0.2)
-                    yield json.dumps(
-                        {"type": stage, **data}, ensure_ascii=False
-                    ) + "\n"
-                except TimeoutError:
-                    continue
-
-            try:
-                result = task.result()
-            except Exception as exc:
-                logger.exception("Streaming chat completion failed")
-                yield json.dumps(
-                    {"type": "error", "detail": str(exc)}, ensure_ascii=False
-                ) + "\n"
-            else:
-                yield json.dumps(
-                    {"type": "result", "data": result.model_dump(mode="json")},
-                    ensure_ascii=False,
-                ) + "\n"
-        finally:
-            if not task.done():
-                task.cancel()
+            async for event in gateway.events(
+                request, stream=True, principal=principal
+            ):
+                yield json.dumps(event.to_json(), ensure_ascii=False) + "\n"
+        except Exception as exc:
+            logger.exception("Streaming chat completion failed")
+            _, detail = http_error_for(exc)
+            yield (
+                json.dumps({"type": "error", "detail": detail}, ensure_ascii=False)
+                + "\n"
+            )
 
     return StreamingResponse(
         events(),

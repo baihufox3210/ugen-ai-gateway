@@ -1,6 +1,7 @@
 import uvicorn
 from fastapi import FastAPI
 
+from ugen_ai_gateway.api.openai_routes import router as openai_router
 from ugen_ai_gateway.api.routes import router
 from ugen_ai_gateway.config import get_settings
 
@@ -9,6 +10,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name)
     app.include_router(router)
+    app.include_router(openai_router)
     return app
 
 

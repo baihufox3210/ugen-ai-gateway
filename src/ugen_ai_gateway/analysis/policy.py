@@ -29,15 +29,21 @@ class RoutingPolicy:
     def __init__(self, *, cloud_enabled: bool = True) -> None:
         self._cloud_enabled = cloud_enabled
 
-    def classify_complexity(self, user_input: str, analysis: RequestAnalysis) -> RequestAnalysis:
+    @property
+    def cloud_enabled(self) -> bool:
+        return self._cloud_enabled
+
+    def classify_complexity(
+        self, user_input: str, analysis: RequestAnalysis
+    ) -> RequestAnalysis:
         """Promote complex prompts when the analyzer underestimates their scope."""
         if analysis.complexity != "simple":
             return analysis
 
         has_complex_cue = bool(_COMPLEXITY_CUES.search(user_input))
-        has_multiple_parts = len(
-            re.findall(r"(?:^|\n)\s*(?:\d+[.)、]|[-*])\s+", user_input)
-        ) >= 2
+        has_multiple_parts = (
+            len(re.findall(r"(?:^|\n)\s*(?:\d+[.)、]|[-*])\s+", user_input)) >= 2
+        )
         is_long = len(user_input) >= 700
         if not (has_complex_cue or has_multiple_parts or is_long):
             return analysis
