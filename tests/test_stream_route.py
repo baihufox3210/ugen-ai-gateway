@@ -60,7 +60,7 @@ def test_stream_route_emits_deltas_and_result(monkeypatch) -> None:
     client = client_for(StreamingProvider(["a", "b"]))
 
     response = client.post(
-        "/v1/chat/completions/stream",
+        "/v1/ugen/chat/stream",
         json={"messages": [{"role": "user", "content": "hi"}]},
     )
 
@@ -74,7 +74,7 @@ def test_stream_route_reports_errors_after_partial_output(monkeypatch) -> None:
     client = client_for(StreamingProvider(["a"], error=RuntimeError("boom")))
 
     response = client.post(
-        "/v1/chat/completions/stream",
+        "/v1/ugen/chat/stream",
         json={"messages": [{"role": "user", "content": "hi"}]},
     )
 

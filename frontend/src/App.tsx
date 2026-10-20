@@ -53,8 +53,8 @@ function App() {
     let active = true;
     const loadModels = async () => {
       const baseUrl = apiUrl.replace(/\/$/, '').replace(/\/v1$/, '');
-      const primary = `${baseUrl}/v1/models`;
-      const endpoints = [...new Set([primary, '/api/v1/models', '/v1/models'])];
+      const primary = `${baseUrl}/v1/ugen/config`;
+      const endpoints = [...new Set([primary, '/api/v1/ugen/config', '/v1/ugen/config'])];
       let data: { local_model: string; cloud_model: string } | undefined;
       for (const endpoint of endpoints) {
         try {
@@ -159,7 +159,7 @@ function App() {
     ]);
     setActiveId(conversationId); setPrompt(''); setStreamingText(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setError('');
     try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v1/chat/completions/stream`, {
+      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v1/ugen/chat/stream`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2 }),
       });

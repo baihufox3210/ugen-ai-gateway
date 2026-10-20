@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Any
 
 from openai import AsyncOpenAI
 from openai.types.chat import (
@@ -27,11 +28,13 @@ class OpenAICompatibleProvider:
         model: str,
         messages: list[ChatCompletionMessageParam],
         temperature: float = 0.2,
+        **options: Any,
     ) -> ChatCompletion:
         return await self._client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
+            **options,
         )
 
     async def stream(
@@ -40,11 +43,13 @@ class OpenAICompatibleProvider:
         model: str,
         messages: list[ChatCompletionMessageParam],
         temperature: float = 0.2,
+        **options: Any,
     ) -> AsyncIterator[ChatCompletionChunk]:
         response = await self._client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
+            **options,
             stream=True,
             stream_options={"include_usage": True},
         )

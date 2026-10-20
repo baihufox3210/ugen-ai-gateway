@@ -4,7 +4,7 @@ from importlib import import_module
 import pytest
 from fastapi import HTTPException, Request
 
-from ugen_ai_gateway.api.routes import create_chat_completion, health
+from ugen_ai_gateway.api.routes import create_chat, health
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse, RoutingInfo
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.services.gateway import GatewayService
@@ -15,7 +15,7 @@ def make_http_request() -> Request:
         {
             "type": "http",
             "method": "POST",
-            "path": "/v1/chat/completions",
+            "path": "/v1/ugen/chat",
             "headers": [],
             "client": ("handler-test", 1234),
             "server": ("test-server", 80),
@@ -30,7 +30,9 @@ class FakeGateway(GatewayService):
     def __init__(self, result: ChatResponse | Exception) -> None:
         self.result = result
 
-    async def chat(self, request: ChatRequest) -> ChatResponse:
+    async def chat(
+        self, request: ChatRequest, *_: object, **__: object
+    ) -> ChatResponse:
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -41,7 +43,7 @@ def test_health_returns_ok() -> None:
 
 
 def test_api_access_requires_key_and_applies_per_ip_rate_limit(monkeypatch) -> None:
-    routes_module = import_module("ugen_ai_gateway.api.routes")
+    routes_module = import_module("ugen_ai_gateway.api.access")
     settings = Settings(
         gateway_api_key="secret",
         rate_limit_requests=1,
@@ -56,7 +58,7 @@ def test_api_access_requires_key_and_applies_per_ip_rate_limit(monkeypatch) -> N
             {
                 "type": "http",
                 "method": "POST",
-                "path": "/v1/chat/completions",
+                "path": "/v1/ugen/chat",
                 "headers": headers,
                 "client": ("test-client", 1234),
                 "server": ("test-server", 80),
@@ -95,7 +97,7 @@ def test_chat_handler_returns_gateway_response(monkeypatch) -> None:
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     response = asyncio.run(
-        create_chat_completion(request, FakeGateway(expected), make_http_request())
+        create_chat(request, FakeGateway(expected), make_http_request())
     )
 
     assert response == expected
@@ -116,9 +118,7 @@ def test_chat_handler_maps_errors_to_http(
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
     with pytest.raises(HTTPException) as raised:
-        asyncio.run(
-            create_chat_completion(request, FakeGateway(error), make_http_request())
-        )
+        asyncio.run(create_chat(request, FakeGateway(error), make_http_request()))
 
     assert raised.value.status_code == status_code
     assert raised.value.detail == detail

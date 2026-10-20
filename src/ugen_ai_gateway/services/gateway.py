@@ -105,9 +105,11 @@ class GatewayService:
         self,
         request: ChatRequest,
         progress: ProgressCallback | None = None,
+        *,
+        options: dict[str, Any] | None = None,
     ) -> ChatResponse:
         """Run a request to completion, reporting stage events to ``progress``."""
-        async for event in self.events(request, stream=False):
+        async for event in self.events(request, stream=False, options=options):
             if event.response is not None:
                 return event.response
             if progress is not None:
@@ -115,9 +117,18 @@ class GatewayService:
         raise RuntimeError("Gateway finished without a response")
 
     async def events(
-        self, request: ChatRequest, *, stream: bool
+        self,
+        request: ChatRequest,
+        *,
+        stream: bool,
+        options: dict[str, Any] | None = None,
     ) -> AsyncIterator[GatewayEvent]:
-        """Yield stage events, text deltas (when streaming) and the final result."""
+        """Yield stage events, text deltas (when streaming) and the final result.
+
+        ``options`` are extra generation parameters (``max_tokens``, ``top_p``,
+        ...) passed through to the provider unchanged.
+        """
+        options = options or {}
         total_started_at = perf_counter()
         user_input = self._validated_user_input(request)
 
@@ -159,15 +170,20 @@ class GatewayService:
             parts: list[str] = []
             resolved_model = prepared.model
             usage: TokenUsage | None = None
+            finish_reason: str | None = None
             try:
                 async for chunk in prepared.provider.stream(
                     model=prepared.model,
                     messages=prepared.messages,
                     temperature=request.temperature,
+                    **options,
                 ):
                     resolved_model = getattr(chunk, "model", None) or resolved_model
                     usage = _token_usage(getattr(chunk, "usage", None)) or usage
                     for choice in chunk.choices or []:
+                        finish_reason = (
+                            getattr(choice, "finish_reason", None) or finish_reason
+                        )
                         text = getattr(choice.delta, "content", None)
                         if text and restorer is not None:
                             text = restorer.feed(text)
@@ -190,6 +206,7 @@ class GatewayService:
                     model=prepared.model,
                     messages=prepared.messages,
                     temperature=request.temperature,
+                    **options,
                 )
             except TimeoutError as exc:
                 raise ProviderTimeout("Model provider timed out") from exc
@@ -204,6 +221,7 @@ class GatewayService:
             if not isinstance(message_content, str):
                 raise TypeError("Model provider returned no text content")
             content = message_content
+            finish_reason = getattr(completion.choices[0], "finish_reason", None)
             if prepared.vault and self._settings.restore_redacted:
                 content = prepared.vault.restore(content)
             resolved_model = completion.model
@@ -213,6 +231,7 @@ class GatewayService:
         response = ChatResponse(
             model=resolved_model,
             content=content,
+            finish_reason=finish_reason,
             provider=prepared.decision.provider,
             routing=RoutingInfo(
                 complexity=analysis.complexity,

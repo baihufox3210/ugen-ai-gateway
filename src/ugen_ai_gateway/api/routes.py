@@ -1,32 +1,23 @@
-import hmac
+"""Gateway-specific endpoints used by the dashboard: health, config, and chat
+with routing details and stage-by-stage progress."""
+
 import json
 import logging
-import time
-from collections import defaultdict, deque
-from threading import Lock
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
+from ugen_ai_gateway.api.access import check_api_access
+from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.config import get_settings
 from ugen_ai_gateway.dependencies import get_gateway_service
-from ugen_ai_gateway.services.errors import (
-    GatewayConfigurationError,
-    InvalidChatRequest,
-    ProviderRequestError,
-    ProviderTimeout,
-    ProviderUnavailable,
-    RequestTooLarge,
-)
 from ugen_ai_gateway.services.gateway import GatewayService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-_requests_by_client: dict[str, deque[float]] = defaultdict(deque)
-_rate_lock = Lock()
 
 GatewayDependency = Annotated[
     GatewayService,
@@ -47,37 +38,21 @@ async def readiness(gateway: GatewayDependency, response: Response) -> dict[str,
     return {"status": "ready"}
 
 
-@router.get("/v1/models")
-async def configured_models() -> dict[str, str]:
-    """Expose configured model names for the local dashboard."""
+@router.get("/v1/ugen/config")
+async def gateway_config() -> dict[str, Any]:
+    """Expose non-secret configuration for the dashboard."""
     settings = get_settings()
     return {
         "local_model": settings.local_model.strip(),
         "cloud_model": settings.cloud_model.strip(),
+        "cloud_enabled": bool(settings.cloud_api_key and settings.cloud_model),
+        "redact_local": settings.redact_local,
+        "restore_redacted": settings.restore_redacted,
     }
 
 
-def check_api_access(request: Request) -> None:
-    settings = get_settings()
-    if settings.gateway_api_key and not hmac.compare_digest(
-        request.headers.get("x-api-key", ""), settings.gateway_api_key
-    ):
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-    client = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    with _rate_lock:
-        timestamps = _requests_by_client[client]
-        cutoff = now - settings.rate_limit_window_seconds
-        while timestamps and timestamps[0] <= cutoff:
-            timestamps.popleft()
-        if len(timestamps) >= settings.rate_limit_requests:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        timestamps.append(now)
-
-
-@router.post("/v1/chat/completions", response_model=ChatResponse)
-async def create_chat_completion(
+@router.post("/v1/ugen/chat", response_model=ChatResponse)
+async def create_chat(
     request: ChatRequest,
     gateway: GatewayDependency,
     http_request: Request,
@@ -85,35 +60,13 @@ async def create_chat_completion(
     check_api_access(http_request)
     try:
         return await gateway.chat(request)
-    except RequestTooLarge as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-    except InvalidChatRequest as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except GatewayConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ProviderUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ProviderTimeout as exc:
-        raise HTTPException(status_code=504, detail="Model provider timed out") from exc
-    except ProviderRequestError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Model provider request failed",
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except TimeoutError as exc:
-        raise HTTPException(status_code=504, detail="Model provider timed out") from exc
     except Exception as exc:
-        logger.exception("Unhandled chat completion error")
-        raise HTTPException(
-            status_code=502,
-            detail="Model provider request failed",
-        ) from exc
+        status_code, detail = http_error_for(exc)
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
-@router.post("/v1/chat/completions/stream")
-async def create_chat_completion_stream(
+@router.post("/v1/ugen/chat/stream")
+async def create_chat_stream(
     request: ChatRequest,
     gateway: GatewayDependency,
     http_request: Request,

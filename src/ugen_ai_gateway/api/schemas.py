@@ -90,6 +90,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     model: str
     content: str
+    finish_reason: str | None = None
     provider: str
     routing: RoutingInfo
     usage: UsageStats | None = None

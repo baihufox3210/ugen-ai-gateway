@@ -62,46 +62,81 @@ endpoint) can be reached.
 
 ## API
 
-### `GET /health`
+### OpenAI-compatible endpoints
 
-Returns `{"status":"ok"}` when the API process is running. This endpoint does
-not check whether model providers are reachable.
+Any OpenAI SDK or tool can use the gateway by pointing its base URL at
+`http://localhost:7632/v1`:
 
-### `POST /v1/chat/completions`
+```python
+from openai import OpenAI
 
-Example request:
-
-```sh
-curl http://localhost:7632/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: your-gateway-key' \
-  -d '{
-    "messages": [
-      {"role": "user", "content": "Explain what an API gateway does."}
-    ],
-    "temperature": 0.2
-  }'
+client = OpenAI(base_url="http://localhost:7632/v1", api_key="your-gateway-key")
+reply = client.chat.completions.create(
+    model="ugen-auto",
+    messages=[{"role": "user", "content": "Explain what an API gateway does."}],
+)
+print(reply.choices[0].message.content)
 ```
 
-The request accepts 1–64 OpenAI-compatible chat messages, a temperature from
-`0.0` to `2.0`, and an optional model override. Text across all messages is
-limited to 32,000 characters. The model override is limited to 128 characters.
+#### `POST /v1/chat/completions`
 
-When `GATEWAY_API_KEY` is set, every chat request must include it in
-`X-API-Key`; invalid or missing keys receive HTTP `401`. Requests are limited
-per client IP using `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_SECONDS`; an
-exceeded limit receives HTTP `429`. The built-in limiter is per process, so
-deployments with multiple workers or replicas should enforce a shared limit at
-the reverse proxy or API gateway as well.
+Accepts the standard Chat Completions request and returns the standard
+response. `stream: true` returns Server-Sent Events chunks ending with
+`data: [DONE]`; `stream_options: {"include_usage": true}` adds a final usage
+chunk. `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`,
+`presence_penalty`, `frequency_penalty`, and `seed` are forwarded to the
+selected model. Tool calling and `n > 1` are not supported yet and return HTTP
+`400`.
 
-The response includes the generated `content`, selected `provider` and `model`,
-`routing` analysis, token `usage` when reported by the model provider, and
-`performance` timings in milliseconds. For example:
+The `model` field picks the routing mode:
+
+| `model` | Behavior |
+| --- | --- |
+| `ugen-auto` (default) | Analyze the request and route automatically |
+| `ugen-local` | Always use the local model |
+| `ugen-cloud` | Always use the cloud model |
+| the configured `LOCAL_MODEL` / `CLOUD_MODEL` name | Same as `ugen-local` / `ugen-cloud` |
+
+Any other model name returns HTTP `404` with code `model_not_found`. Every
+request is still analyzed and redacted locally, whichever mode is chosen.
+
+The routing decision is reported in response headers (`X-UGen-Provider`,
+`X-UGen-Model`, `X-UGen-Route-Reason`, `X-UGen-Redacted-Values`) and in an extra
+`ugen` object on the response (or on the final stream chunk) with the full
+`routing` analysis and `performance` timings. Errors use the OpenAI error shape:
+`{"error": {"message": "...", "type": "...", "code": ...}}`.
+
+#### `GET /v1/models`
+
+Lists `ugen-auto`, `ugen-local`, `ugen-cloud` (when cloud routing is enabled),
+and the configured model names.
+
+### Authentication and limits
+
+When `GATEWAY_API_KEY` is set, chat requests must send it either as
+`Authorization: Bearer <key>` (what OpenAI SDKs send) or as `X-API-Key`;
+invalid or missing keys receive HTTP `401`. Requests are limited per client IP
+using `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_SECONDS`; an exceeded limit
+receives HTTP `429`. The built-in limiter is per process, so deployments with
+multiple workers or replicas should enforce a shared limit at the reverse proxy
+or API gateway as well.
+
+### Dashboard endpoints
+
+These power the bundled dashboard and expose more detail than the OpenAI API.
+
+- `GET /health` returns `{"status":"ok"}` when the process is running.
+- `GET /ready` checks that the configured model endpoints can be reached.
+- `GET /v1/ugen/config` returns the configured model names and privacy
+  settings (no secrets).
+- `POST /v1/ugen/chat` takes `messages`, `temperature`, and
+  `provider_selection` (`auto`, `local`, or `cloud`) and returns:
 
 ```json
 {
   "model": "qwen2.5:7b",
   "content": "An API gateway ...",
+  "finish_reason": "stop",
   "provider": "local",
   "routing": {
     "complexity": "simple",
@@ -109,32 +144,27 @@ The response includes the generated `content`, selected `provider` and `model`,
     "contains_personal_data": false,
     "personal_data_types": [],
     "provider": "local",
-    "reason": "Local model selected by the default routing policy."
+    "reason": "Local model selected by the default routing policy.",
+    "redacted_values": 0
   },
   "usage": {
-    "analysis": {
-      "prompt_tokens": 200,
-      "completion_tokens": 50,
-      "total_tokens": 250
-    },
-    "generation": {
-      "prompt_tokens": 20,
-      "completion_tokens": 10,
-      "total_tokens": 30
-    }
+    "analysis": {"prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250},
+    "generation": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
   },
-  "performance": {
-    "analysis_ms": 500.0,
-    "generation_ms": 800.0,
-    "total_ms": 1300.0
-  }
+  "performance": {"analysis_ms": 500.0, "generation_ms": 800.0, "total_ms": 1300.0}
 }
 ```
 
-Provider usage values depend on what the upstream model API reports. Missing
-usage data is represented as `null` for that stage. `analysis_ms` measures the
-local analysis request, `generation_ms` measures the selected generation
-provider request, and `total_ms` measures the complete gateway operation.
+- `POST /v1/ugen/chat/stream` takes the same body and emits newline-delimited
+  JSON events: `analysis_started`, `analysis_completed`, `routed`,
+  `generation_started`, one `delta` event per generated text chunk
+  (`{"type":"delta","content":"..."}`), and finally `result` with the body
+  above. A failure emits an `error` event instead of `result`, even after some
+  deltas were sent.
+
+Provider usage values depend on what the upstream model API reports; missing
+usage is `null`. `analysis_ms` measures the local analysis request,
+`generation_ms` the generation request, and `total_ms` the whole operation.
 
 ## Routing behavior
 
@@ -145,16 +175,6 @@ multi-step planning, promote an underestimated simple classification to complex.
 Simple tasks stay local. If cloud routing is disabled, requests stay local. The
 returned `routing` object reports the estimated complexity, task type, detected
 personal-data types, selected provider, and the reason for that decision.
-
-`POST /v1/chat/completions` also accepts `provider_selection` with `auto`,
-`local`, or `cloud`. It defaults to `auto`; explicit local or cloud selection
-overrides the automatic generation provider while keeping request analysis and
-personal-data checks on the local model. The `/v1/chat/completions/stream`
-endpoint emits newline-delimited JSON events: `analysis_started`,
-`analysis_completed`, `routed`, `generation_started`, then one `delta` event per
-generated text chunk (`{"type":"delta","content":"..."}`), and finally `result`
-with the same body as the non-streaming response. A failure emits an `error`
-event instead of `result`, even after some deltas were sent.
 
 ## Personal-data handling
 
