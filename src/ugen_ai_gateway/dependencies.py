@@ -11,6 +11,7 @@ from ugen_ai_gateway.providers.openai_compatible import OpenAICompatibleProvider
 from ugen_ai_gateway.routing.config import RoutingConfig, load_routing_config
 from ugen_ai_gateway.services.errors import GatewayConfigurationError
 from ugen_ai_gateway.services.gateway import GatewayService
+from ugen_ai_gateway.services.usage import UsageStore
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,9 @@ def get_gateway_service() -> GatewayService:
 
     if settings.routing_config:
         return _service_from_routing_config(
-            settings, load_routing_config(settings.routing_config)
+            settings,
+            load_routing_config(settings.routing_config),
+            usage_store=get_usage_store(),
         )
 
     local_provider = get_local_provider()
@@ -73,11 +76,21 @@ def get_gateway_service() -> GatewayService:
         policy=RoutingPolicy(
             cloud_enabled=bool(settings.cloud_api_key and settings.cloud_model)
         ),
+        usage_store=get_usage_store(),
     )
 
 
+@lru_cache
+def get_usage_store() -> UsageStore | None:
+    settings = get_settings()
+    return UsageStore(settings.usage_db_path) if settings.usage_db_path else None
+
+
 def _service_from_routing_config(
-    settings: Settings, routing: RoutingConfig
+    settings: Settings,
+    routing: RoutingConfig,
+    *,
+    usage_store: UsageStore | None = None,
 ) -> GatewayService:
     providers: dict[str, OpenAICompatibleProvider] = {}
     for config in routing.providers:
@@ -114,6 +127,7 @@ def _service_from_routing_config(
         policy=RoutingPolicy(),
         routing=routing,
         providers=dict(providers),
+        usage_store=usage_store,
     )
 
 

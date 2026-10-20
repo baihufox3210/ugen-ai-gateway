@@ -3,17 +3,19 @@ with routing details and stage-by-stage progress."""
 
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from ugen_ai_gateway.api.access import check_api_access
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.config import get_settings
-from ugen_ai_gateway.dependencies import get_gateway_service
+from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.services.gateway import GatewayService
+from ugen_ai_gateway.services.usage import UsageStore
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,57 @@ async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
 async def provider_status(gateway: GatewayDependency) -> dict[str, str]:
     """Circuit-breaker state per provider: closed, open, or half_open."""
     return gateway.provider_status()
+
+
+UsageStoreDependency = Annotated[UsageStore | None, Depends(get_usage_store)]
+
+
+def _require_store(store: UsageStore | None) -> UsageStore:
+    if store is None:
+        raise HTTPException(status_code=404, detail="Usage tracking is disabled")
+    return store
+
+
+@router.get("/v1/ugen/stats")
+async def usage_stats(
+    store: UsageStoreDependency,
+    http_request: Request,
+    days: Annotated[int, Query(ge=1, le=366)] = 7,
+    tz_offset_minutes: Annotated[int, Query(ge=-840, le=840)] = 0,
+) -> dict[str, Any]:
+    """Totals, savings and daily counts. Daily buckets use the given UTC offset."""
+    check_api_access(http_request)
+    return await _require_store(store).stats(
+        days=days, tz_offset_minutes=tz_offset_minutes
+    )
+
+
+@router.get("/v1/ugen/requests")
+async def recent_requests(
+    store: UsageStoreDependency,
+    http_request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    before: float | None = None,
+) -> dict[str, Any]:
+    """Recent request metadata, newest first; pass ``before`` to page back."""
+    check_api_access(http_request)
+    items = await _require_store(store).recent(limit=limit, before=before)
+    return {"data": items}
+
+
+class FeedbackRequest(BaseModel):
+    request_id: str = Field(min_length=1, max_length=64)
+    rating: Literal[-1, 1]
+
+
+@router.post("/v1/ugen/feedback", status_code=204)
+async def submit_feedback(
+    body: FeedbackRequest, store: UsageStoreDependency, http_request: Request
+) -> Response:
+    check_api_access(http_request)
+    if not await _require_store(store).set_feedback(body.request_id, body.rating):
+        raise HTTPException(status_code=404, detail="Unknown request id")
+    return Response(status_code=204)
 
 
 @router.post("/v1/ugen/chat", response_model=ChatResponse)

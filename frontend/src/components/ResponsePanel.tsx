@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ConversationTurn } from '../types';
 import Markdown from './Markdown';
 
-function ResponsePanel({ turns, busy, streamingText, onDeleteTurn }: { turns: ConversationTurn[]; busy: boolean; streamingText: string; onDeleteTurn: (turnId: string) => void }) {
+function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }: { turns: ConversationTurn[]; busy: boolean; streamingText: string; onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void }) {
   const threadRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
@@ -29,7 +29,10 @@ function ResponsePanel({ turns, busy, streamingText, onDeleteTurn }: { turns: Co
         {result ? <article className="chat-message assistant-message">
           <span className="message-avatar assistant-avatar">✳</span>
           <div className="message-body">
-            <div className="message-author"><b>UGen</b></div>
+            <div className="message-author"><b>UGen</b>{result.id && <span className="feedback" role="group" aria-label="評價這則回答">
+              <button className={turn.feedback === 1 ? 'selected' : ''} aria-pressed={turn.feedback === 1} onClick={() => onFeedback(turn.id, 1)} title="有幫助">👍</button>
+              <button className={turn.feedback === -1 ? 'selected' : ''} aria-pressed={turn.feedback === -1} onClick={() => onFeedback(turn.id, -1)} title="沒幫助">👎</button>
+            </span>}</div>
             <div className="markdown-wrap"><Markdown text={result.content}/></div>
             <div className="result-foot">
               <span>任務：{result.routing.task_type}</span><span>複雜度：{result.routing.complexity}</span>

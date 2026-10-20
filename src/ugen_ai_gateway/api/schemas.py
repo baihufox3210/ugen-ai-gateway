@@ -92,6 +92,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    id: str = ""
     model: str
     content: str
     finish_reason: str | None = None

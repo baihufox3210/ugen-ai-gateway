@@ -4,7 +4,6 @@ gateway by changing only their base URL."""
 import json
 import logging
 import time
-import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated, Any, Literal
 
@@ -192,7 +191,6 @@ async def create_chat_completion(
     except _RequestRejected as exc:
         return error_response(exc.status_code, str(exc), code=exc.code)
 
-    completion_id = f"chatcmpl-ugen-{uuid.uuid4().hex}"
     created = int(time.time())
 
     if not body.stream:
@@ -202,7 +200,7 @@ async def create_chat_completion(
             return error_response(*http_error_for(exc))
         return JSONResponse(
             {
-                "id": completion_id,
+                "id": f"chatcmpl-ugen-{response.id}",
                 "object": "chat.completion",
                 "created": created,
                 "model": response.model,
@@ -227,10 +225,13 @@ async def create_chat_completion(
     events = gateway.events(request, stream=True, options=options)
     routing: dict[str, Any] = {}
     model = ""
+    completion_id = "chatcmpl-ugen"
     first: GatewayEvent | None = None
     try:
         async for event in events:
-            if event.type == "routed":
+            if event.type == "analysis_started":
+                completion_id = f"chatcmpl-ugen-{event.data['request_id']}"
+            elif event.type == "routed":
                 routing = dict(event.data)
             elif event.type == "fallback":
                 routing["provider"] = event.data["to"]

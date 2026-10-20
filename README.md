@@ -162,6 +162,29 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
   above. A failure emits an `error` event instead of `result`, even after some
   deltas were sent.
 
+- `GET /v1/ugen/providers` reports each provider's circuit-breaker state.
+- `GET /v1/ugen/stats?days=7&tz_offset_minutes=480` returns totals for the
+  period: completed and failed requests, local/cloud split, tokens, generation
+  speed, cost, savings, personal-data and fallback counts, per-rule counts,
+  feedback, and daily counts bucketed in the given UTC offset.
+- `GET /v1/ugen/requests?limit=50&before=<created_at>` lists recent request
+  metadata, newest first.
+- `POST /v1/ugen/feedback` with `{"request_id": "...", "rating": 1}` (or `-1`)
+  records feedback on an answer; `request_id` is the `id` of the chat response.
+
+### Usage tracking
+
+Each request's metadata is stored in SQLite at `USAGE_DB_PATH` (default
+`data/ugen.db`; empty disables tracking): routing decision, provider and model,
+matched rule, task type, complexity, analysis source, which personal-data
+types were found and how many values were redacted, fallback, token counts,
+timings, and cost. Message text and personal-data values are never written.
+
+Cost uses the per-million-token prices in the routing configuration. Savings
+compare it with the same tokens on the default cloud model, so answers kept on
+the local model count as saved. The dashboard shows these totals, and its
+👍/👎 buttons send feedback.
+
 Provider usage values depend on what the upstream model API reports; missing
 usage is `null`. `analysis_ms` measures the local analysis request,
 `generation_ms` the generation request, and `total_ms` the whole operation.

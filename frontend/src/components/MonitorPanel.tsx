@@ -1,23 +1,47 @@
-import type { Conversation, Phase } from '../types';
+import { useEffect, useState } from 'react';
+import type { Conversation, Phase, UsageStats } from '../types';
 
-type Props = { conversations: Conversation[]; phase: Phase };
+type Props = { conversations: Conversation[]; phase: Phase; apiUrl: string; refreshKey: number };
 const PHASE_LABEL: Record<Phase, string> = {
   idle: '等待請求', sending: '正在送出', analyzing: '本機分析中', analyzed: '分析完成',
   routing: '模型分流中', generating: '生成回應中', complete: '請求完成', failed: '請求失敗',
 };
 
-function MonitorPanel({ conversations, phase }: Props) {
+const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const formatUsd = (value: number) => value >= 1 ? `$${value.toFixed(2)}` : value >= 0.0001 ? `$${value.toFixed(4)}` : value > 0 ? '<$0.0001' : '$0';
+
+/** Gateway-wide usage from the backend; falls back to this browser's history if unavailable. */
+function useUsageStats(apiUrl: string, refreshKey: number): UsageStats | null {
+  const [stats, setStats] = useState<UsageStats | null>(null);
+  useEffect(() => {
+    let active = true;
+    const offset = -new Date().getTimezoneOffset();
+    fetch(`${apiUrl.replace(/\/$/, '')}/v1/ugen/stats?days=7&tz_offset_minutes=${offset}`, { headers: { Accept: 'application/json' } })
+      .then(response => response.ok ? response.json() as Promise<UsageStats> : null)
+      .then(data => { if (active) setStats(data); })
+      .catch(() => { if (active) setStats(null); });
+    return () => { active = false; };
+  }, [apiUrl, refreshKey]);
+  return stats;
+}
+
+function MonitorPanel({ conversations, phase, apiUrl, refreshKey }: Props) {
+  const stats = useUsageStats(apiUrl, refreshKey);
   const turns = conversations.flatMap(conversation => conversation.turns.map(turn => ({ ...turn, updatedAt: conversation.updatedAt })));
   const results = turns.flatMap(turn => turn.result ? [turn.result] : []);
-  const localCount = results.filter(result => result.provider === 'local').length;
-  const cloudCount = results.filter(result => result.provider === 'cloud').length;
-  const generationTokens = results.reduce((sum, result) => sum + (result.usage?.generation?.completion_tokens ?? 0), 0);
+  const completed = stats?.completed ?? results.length;
+  const localCount = stats?.local ?? results.filter(result => result.provider === 'local').length;
+  const cloudCount = stats?.cloud ?? results.filter(result => result.provider === 'cloud').length;
+  const generationTokens = stats?.completion_tokens ?? results.reduce((sum, result) => sum + (result.usage?.generation?.completion_tokens ?? 0), 0);
   const generationSeconds = results.reduce((sum, result) => sum + (result.performance?.generation_ms ?? 0) / 1000, 0);
-  const averageSpeed = generationSeconds > 0 ? (generationTokens / generationSeconds).toFixed(1) : '—';
+  const averageSpeed = stats ? stats.tokens_per_second?.toFixed(1) ?? '—' : generationSeconds > 0 ? (generationTokens / generationSeconds).toFixed(1) : '—';
   const recent = [...turns].filter(turn => turn.result).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
+  const serverDaily = new Map((stats?.daily ?? []).map(day => [day.day, day.requests]));
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - (6 - index));
-    const count = turns.filter(turn => { const updated = new Date(turn.updatedAt); updated.setHours(0, 0, 0, 0); return updated.getTime() === date.getTime(); }).length;
+    const count = stats
+      ? serverDaily.get(dayKey(date)) ?? 0
+      : turns.filter(turn => { const updated = new Date(turn.updatedAt); updated.setHours(0, 0, 0, 0); return updated.getTime() === date.getTime(); }).length;
     return { label: new Intl.DateTimeFormat('zh-TW', { weekday: 'short' }).format(date), count };
   });
   const maxDay = Math.max(1, ...days.map(day => day.count));
@@ -26,8 +50,8 @@ function MonitorPanel({ conversations, phase }: Props) {
     <section className="monitor-stats" aria-label="請求統計">
       <article className="metric-card">
         <div className="metric-card-heading"><span>已完成請求</span><i className="metric-mark" aria-hidden="true">↗</i></div>
-        <b className="metric-card-value">{results.length}</b>
-        <small className="metric-card-caption">累計完成的對話回合</small>
+        <b className="metric-card-value">{completed}</b>
+        <small className="metric-card-caption">{stats ? `近 7 日 · 失敗 ${stats.failed} 則` : '此裝置的對話回合'}</small>
       </article>
       <article className="metric-card">
         <div className="metric-card-heading"><span>模型分流</span><i className="metric-mark local-mark" aria-hidden="true">⌂</i></div>
@@ -39,9 +63,14 @@ function MonitorPanel({ conversations, phase }: Props) {
         <b className="metric-card-value">{averageSpeed}<em>{averageSpeed === '—' ? '' : ' tok/s'}</em></b>
         <small className="metric-card-caption">共生成 {generationTokens.toLocaleString()} tokens</small>
       </article>
+      <article className="metric-card savings-card">
+        <div className="metric-card-heading"><span>已節省成本</span><i className="metric-mark savings-mark" aria-hidden="true">$</i></div>
+        <b className="metric-card-value">{stats ? formatUsd(stats.savings_usd) : '—'}</b>
+        <small className="metric-card-caption">{stats ? `實際 ${formatUsd(stats.cost_usd)} · 全走雲端 ${formatUsd(stats.baseline_cost_usd)}` : '需要 Gateway 的使用紀錄'}</small>
+      </article>
     </section>
     <section className="panel activity-panel">
-      <div className="monitor-panel-heading"><div><span className="eyebrow">ACTIVITY / 7 DAYS</span><h2>請求活動</h2></div><span className="activity-total">{turns.length} 則</span></div>
+      <div className="monitor-panel-heading"><div><span className="eyebrow">ACTIVITY / 7 DAYS</span><h2>請求活動</h2></div><span className="activity-total">{days.reduce((sum, day) => sum + day.count, 0)} 則</span></div>
       <div className="activity-chart" role="img" aria-label={`最近七日共 ${days.reduce((sum, day) => sum + day.count, 0)} 則請求`}>
         {days.map((day, index) => <div className="activity-day" key={`${day.label}-${index}`}><div className="activity-bar-track"><i style={{ height: `${Math.max(day.count ? 12 : 4, day.count / maxDay * 100)}%` }}/></div><small>{day.label}</small></div>)}
       </div>

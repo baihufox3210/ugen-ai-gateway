@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     analysis_cache_size: int = Field(default=256, ge=0)
     analysis_cache_ttl_seconds: float = Field(default=600, gt=0)
 
+    # SQLite file for request metadata and feedback (never message text).
+    # Empty disables usage tracking.
+    usage_db_path: str = "data/ugen.db"
+
     gateway_api_key: str = ""
     rate_limit_requests: int = Field(default=60, gt=0)
     rate_limit_window_seconds: int = Field(default=60, gt=0)

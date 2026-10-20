@@ -233,7 +233,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 }
 
 /* ── Monitor panels ────────────────────────────────────────────── */
-.monitor-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.monitor-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .metric-card{position:relative;display:grid;grid-template-rows:auto 1fr auto;gap:10px;min-width:0;min-height:116px;overflow:hidden;border:1px solid #d9e7e1;border-radius:14px;padding:13px 14px;background:linear-gradient(150deg,#fff,#f7fbf8);box-shadow:var(--shadow);animation:rise-in .4s var(--ease-out) both;transition:transform .22s,border-color .22s,box-shadow .22s}
 .metric-card:hover{transform:translateY(-2px);border-color:#c8ddd2;box-shadow:0 14px 28px #244d3b10}
 .metric-card-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
@@ -241,6 +241,8 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .metric-mark{display:grid;place-items:center;flex:none;width:27px;height:27px;border-radius:8px;background:#e8f4ee;color:#4c9a77;font-size:14px;font-style:normal}
 .local-mark{background:#f0edfa;color:#7669a8}
 .speed-mark{background:#e6f3eb;color:#4c9774}
+.savings-mark{background:#fdf3e2;color:#b07a2a;font-weight:700}
+@container workspace (max-width:760px){.monitor-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .metric-card-value{align-self:center;overflow:hidden;color:#21483a;font-size:clamp(22px,2.2vw,30px);font-weight:600;line-height:1;letter-spacing:-.6px;text-overflow:ellipsis;white-space:nowrap}
 .metric-card-value em{color:#7b968a;font-size:11px;font-style:normal;letter-spacing:0}
 .metric-card-caption{overflow:hidden;color:#83968d;font-size:8px;line-height:1.3;text-overflow:ellipsis;white-space:nowrap}
@@ -251,7 +253,6 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .metric-card-split>i{color:#b5c6be;font-size:13px;font-style:normal}
 @container workspace (max-width:520px){
   .monitor-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .metric-card:last-child{grid-column:1/-1}
   .metric-card{min-height:100px;padding:12px}
   .metric-card-value{font-size:24px}
   .metric-card-split b{font-size:21px}
@@ -430,3 +431,11 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .route-mode.fallback{background:#fdf1e3;color:#a4692a}
 .result-foot .fallback-note{border-color:#f0dcc2;background:#fff8ef;color:#a4692a;font-weight:600}
 .result-foot .policy-note{border-color:#cde5da;background:#f0f8f4;color:#2f7a5f;font-weight:600}
+
+/* Answer feedback */
+.feedback{display:inline-flex;gap:2px;margin-left:auto;opacity:0;transition:opacity .18s}
+.turn:hover .feedback,.turn:focus-within .feedback,.feedback:has(.selected){opacity:1}
+@media(hover:none){.feedback{opacity:1}}
+.feedback button{border:0;border-radius:6px;padding:2px 5px;background:transparent;font-size:11px;line-height:1.2;cursor:pointer;filter:grayscale(1);opacity:.55;transition:background .18s,opacity .18s,filter .18s}
+.feedback button:hover{background:#eef5f1;opacity:1}
+.feedback button.selected{background:#eaf4ef;filter:none;opacity:1}

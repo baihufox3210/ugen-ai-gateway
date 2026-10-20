@@ -1,3 +1,5 @@
+import logging
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from time import perf_counter
@@ -38,6 +40,9 @@ from ugen_ai_gateway.services.errors import (
     RequestTooLarge,
 )
 from ugen_ai_gateway.services.resilience import CircuitBreaker, is_outage
+from ugen_ai_gateway.services.usage import UsageRecord, UsageStore, token_cost
+
+logger = logging.getLogger(__name__)
 
 MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
 ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -122,11 +127,13 @@ class GatewayService:
         policy: RoutingPolicy,
         routing: RoutingConfig | None = None,
         providers: dict[str, ModelProvider] | None = None,
+        usage_store: UsageStore | None = None,
     ) -> None:
         """Without ``routing``, the LOCAL_* / CLOUD_* settings and the two given
         providers define it. With ``routing``, ``providers`` maps each configured
         provider name to its client."""
         self._settings = settings
+        self._usage_store = usage_store
         self._analyzer = analyzer
         self._policy = policy
         self._configured = routing is not None or bool(settings.local_model)
@@ -170,9 +177,12 @@ class GatewayService:
         progress: ProgressCallback | None = None,
         *,
         options: dict[str, Any] | None = None,
+        api_key_id: str | None = None,
     ) -> ChatResponse:
         """Run a request to completion, reporting stage events to ``progress``."""
-        async for event in self.events(request, stream=False, options=options):
+        async for event in self.events(
+            request, stream=False, options=options, api_key_id=api_key_id
+        ):
             if event.response is not None:
                 return event.response
             if progress is not None:
@@ -185,17 +195,43 @@ class GatewayService:
         *,
         stream: bool,
         options: dict[str, Any] | None = None,
+        api_key_id: str | None = None,
     ) -> AsyncIterator[GatewayEvent]:
         """Yield stage events, text deltas (when streaming) and the final result.
 
         ``options`` are extra generation parameters (``max_tokens``, ``top_p``,
-        ...) passed through to the provider unchanged.
+        ...) passed through to the provider unchanged. Every request, including
+        failed ones, is recorded in the usage store (metadata only).
         """
-        options = options or {}
+        record = UsageRecord(id=uuid.uuid4().hex, api_key_id=api_key_id)
+        try:
+            async for event in self._events(request, stream, options or {}, record):
+                yield event
+        except Exception as exc:
+            record.status = "error"
+            record.error = type(exc).__name__
+            await self._save(record)
+            raise
+
+    async def _save(self, record: UsageRecord) -> None:
+        if self._usage_store is None:
+            return
+        try:
+            await self._usage_store.record(record)
+        except Exception:
+            logger.exception("Could not record usage")
+
+    async def _events(
+        self,
+        request: ChatRequest,
+        stream: bool,
+        options: dict[str, Any],
+        record: UsageRecord,
+    ) -> AsyncIterator[GatewayEvent]:
         total_started_at = perf_counter()
         user_input = self._validated_user_input(request)
 
-        yield GatewayEvent("analysis_started")
+        yield GatewayEvent("analysis_started", {"request_id": record.id})
         analysis, analysis_ms, analysis_source = await self._analyze(
             request, user_input
         )
@@ -210,7 +246,14 @@ class GatewayService:
             },
         )
 
+        record.task_type = analysis.task_type
+        record.complexity = analysis.complexity
+        record.analysis_source = analysis_source
+        record.personal_data_types = list(analysis.personal_data_types)
+        record.analysis_ms = analysis_ms
+
         prepared = self._prepare(request, analysis, analysis_ms)
+        record.redacted_values = len(prepared.vault or ())
         yield GatewayEvent(
             "routed",
             {
@@ -282,6 +325,7 @@ class GatewayService:
         finish_reason = result.finish_reason
         generation_ms = (perf_counter() - generation_started_at) * 1000
         response = ChatResponse(
+            id=record.id,
             model=resolved_model,
             content=content,
             finish_reason=finish_reason,
@@ -306,7 +350,45 @@ class GatewayService:
                 total_ms=(perf_counter() - total_started_at) * 1000,
             ),
         )
+        self._fill_record(record, response, prepared)
+        await self._save(record)
         yield GatewayEvent("result", response=response)
+
+    def _fill_record(
+        self, record: UsageRecord, response: ChatResponse, prepared: _PreparedChat
+    ) -> None:
+        usage = response.usage.generation if response.usage else None
+        prompt_tokens = usage.prompt_tokens if usage else 0
+        completion_tokens = usage.completion_tokens if usage else 0
+        model = prepared.route.model
+        baseline = self._engine.config.defaults.cloud
+        baseline_model = self._engine.config.resolve(baseline)[1] if baseline else None
+        record.provider = prepared.locality
+        record.provider_name = prepared.route.provider.name
+        record.model = response.model
+        record.rule = prepared.route.rule
+        record.fallback_from = response.routing.fallback_from
+        record.prompt_tokens = prompt_tokens
+        record.completion_tokens = completion_tokens
+        if response.performance:
+            record.generation_ms = response.performance.generation_ms
+            record.total_ms = response.performance.total_ms
+        record.cost_usd = token_cost(
+            prompt_tokens,
+            completion_tokens,
+            model.input_cost_per_million,
+            model.output_cost_per_million,
+        )
+        record.baseline_cost_usd = (
+            token_cost(
+                prompt_tokens,
+                completion_tokens,
+                baseline_model.input_cost_per_million,
+                baseline_model.output_cost_per_million,
+            )
+            if baseline_model
+            else 0.0
+        )
 
     async def _generate(
         self,
