@@ -564,3 +564,4 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .crop-zoom input{flex:1;accent-color:var(--green-dark)}
 .cropper-modal .modal-actions{width:100%;margin-top:8px}
 .cropper-modal .error-box{width:100%;margin-top:4px;text-align:left}
+.markdown.plain{white-space:pre-wrap}

@@ -1,8 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import type { User } from '../api';
 import type { ConversationTurn } from '../types';
 import Avatar from './Avatar';
-import Markdown from './Markdown';
+
+// The Markdown and LaTeX renderer is large, so it loads with the first reply instead of the page.
+const LazyMarkdown = lazy(() => import('./Markdown'));
+const Markdown = ({ text }: { text: string }) => <Suspense fallback={<div className="markdown plain">{text}</div>}><LazyMarkdown text={text}/></Suspense>;
 
 // Built-in rules that keep a request local, with the reason in plain words.
 const POLICY_RULES: Record<string, string> = {
