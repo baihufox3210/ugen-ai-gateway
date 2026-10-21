@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, apiUrl, errorMessage, type User } from '../api';
 import Avatar from './Avatar';
+import AvatarCropper from './AvatarCropper';
 import NumberStepper from './NumberStepper';
 
 export type SettingsPage = 'account' | 'keys';
@@ -25,31 +26,11 @@ const date = (seconds: number | null) => seconds ? new Intl.DateTimeFormat('en-U
 const budgetStep = (current: number, direction: 1 | -1) => (direction === 1 ? current < 10 : current <= 10) ? 0.1 : 1;
 const AVATAR_SIZE = 160;
 
-/** Crop the picture to a centered square and shrink it, so uploads stay small. */
-async function avatarDataUrl(file: File): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const element = new Image();
-      element.onload = () => resolve(element);
-      element.onerror = () => reject(new Error('That file is not an image this browser can read.'));
-      element.src = url;
-    });
-    const side = Math.min(image.naturalWidth, image.naturalHeight);
-    const canvas = Object.assign(document.createElement('canvas'), { width: AVATAR_SIZE, height: AVATAR_SIZE });
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('This browser cannot resize images.');
-    context.drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
-    const webp = canvas.toDataURL('image/webp', 0.86);
-    // Browsers without WebP encoding return PNG; JPEG is much smaller then.
-    return webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/jpeg', 0.86);
-  } finally { URL.revokeObjectURL(url); }
-}
-
 function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user: User; onUserChange: (user: User) => void; onSignOut: () => void; onAccountDeleted: () => void }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [avatarError, setAvatarError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [cropping, setCropping] = useState<File | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -62,12 +43,8 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
       });
       if (!response.ok) { setAvatarError(await errorMessage(response)); return; }
       onUserChange(await response.json() as User);
+      setCropping(null);
     } catch { setAvatarError('Cannot reach the gateway'); } finally { setSaving(false); }
-  }
-
-  async function pickAvatar(file: File | undefined) {
-    if (!file) return;
-    try { await saveAvatar(await avatarDataUrl(file)); } catch (cause) { setAvatarError(cause instanceof Error ? cause.message : 'Could not read that image.'); }
   }
 
   async function deleteAccount(event: React.FormEvent) {
@@ -96,10 +73,11 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
             {user.avatar && <button type="button" className="text-action" onClick={() => void saveAvatar(null)} disabled={saving}>Remove</button>}
           </span>
         </span>
-        <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { void pickAvatar(event.target.files?.[0]); event.target.value = ''; }}/>
+        <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { const file = event.target.files?.[0]; if (file) { setAvatarError(''); setCropping(file); } event.target.value = ''; }}/>
       </div>
-      <small className="settings-hint">PNG, JPEG or WebP. It is cropped to a square and resized to {AVATAR_SIZE}×{AVATAR_SIZE}.</small>
-      {avatarError && <div className="error-box" role="alert"><span>{avatarError}</span></div>}
+      <small className="settings-hint">After choosing a picture you can move and zoom it to fit the circle.</small>
+      {avatarError && !cropping && <div className="error-box" role="alert"><span>{avatarError}</span></div>}
+      {cropping && <AvatarCropper file={cropping} outputSize={AVATAR_SIZE} saving={saving} saveError={avatarError} onCancel={() => { setCropping(null); setAvatarError(''); }} onSave={image => void saveAvatar(image)}/>}
     </div>
 
     <div className="settings-section">

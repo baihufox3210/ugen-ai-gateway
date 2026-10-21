@@ -63,12 +63,12 @@ The server listens on `0.0.0.0:7632` by default. `/health` reports process
 liveness. `/ready` checks that the local model endpoint (and configured cloud
 endpoint) can be reached.
 
-To run the gateway, use [Docker](#docker). `./start.sh` is for development: it
-runs the API and the dashboard's development server together, reloading the
-page as frontend code changes (API on `7632`, dashboard on
-`http://localhost:5173`; change them with `BACKEND_PORT` and `FRONTEND_PORT`). When `frontend/dist` exists (after
-`npm run build` in `frontend/`), the API server also serves the dashboard at
-`/`.
+To run the gateway, use [Docker](#docker). For dashboard development, run the
+API as above and `npm install && npm run dev` in `frontend/`: the dashboard is
+then on `http://localhost:5173`, reloads as its code changes, and proxies `/api`
+to the API on port `7632` (set `UGEN_BACKEND_PORT` for another port). When
+`frontend/dist` exists (after `npm run build` in `frontend/`), the API server
+also serves the dashboard at `/`.
 
 ### Docker
 
