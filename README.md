@@ -446,7 +446,8 @@ routing YAML) give a model a public name. The alias replaces the real model
 name everywhere clients look: the dashboard, `GET /v1/models`, the `model`
 field and `X-UGen-Model` header of responses, stream events and usage records.
 Requests may use either the alias or the real name as `model`; the provider is
-always called with the real name. Aliases and model ids must be unique.
+always called with the real name. When names overlap, the first matching
+model in the configuration wins.
 
 ## Resilience
 
