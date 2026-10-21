@@ -2,93 +2,155 @@
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.143%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![uv](https://img.shields.io/badge/uv-package%20manager-DE5FE9)](https://docs.astral.sh/uv/)
+[![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)](#deployment)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-UGen AI Gateway is a FastAPI service that analyzes incoming chat requests,
-redacts detected personal data, and routes the generation request to a local or
-cloud OpenAI-compatible model. The local model is also used to analyze requests
-for task type, complexity, and personal data.
+UGen AI Gateway sits between your apps and your language models. Every request
+is analyzed on your own machine first: personal data is detected and replaced
+with placeholders, and the request is routed to a local model or a cloud model
+depending on its complexity and your privacy rules. Replies come back with the
+original values restored, so users see a complete answer while the cloud model
+never saw the data.
 
-## Requirements
+- **Privacy first**: reversible redaction of emails, phone numbers, national
+  IDs, cards, keys and more; data types you choose never leave the machine.
+- **Smart routing**: simple requests stay on the local model, complex ones go
+  to the cloud; YAML rules for several providers and models; automatic
+  fallback when a provider is down.
+- **OpenAI-compatible API**: point any OpenAI SDK or tool at `/v1`.
+- **Dashboard**: chat with live routing, usage and cost savings, accounts with
+  an administrator, per-team API keys with budgets and rate limits, and a
+  tamper-evident audit log.
 
-- Python 3.13 or later
-- [uv](https://docs.astral.sh/uv/)
-- A running local model endpoint with an OpenAI-compatible Chat Completions API
+## Quick start
 
-Ollama is one option for a local endpoint. Its OpenAI-compatible API is commonly
-available at `http://localhost:11434/v1`.
-
-## Configuration
-
-Copy the example settings file and edit it for your model endpoint:
-
-```sh
-cp .env.example .env
-```
-
-| Variable | Purpose | Example / default |
-| --- | --- | --- |
-| `APP_NAME` | FastAPI application title | `UGen AI Gateway` |
-| `APP_ENV` | Environment label | `development` |
-| `GATEWAY_API_KEY` | API key required in the `X-API-Key` header; required when `APP_ENV=production` | blank in development |
-| `RATE_LIMIT_REQUESTS` | Requests allowed per client IP in the configured window | `60` |
-| `RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window in seconds | `60` |
-| `LOCAL_API_KEY` | API key passed to the local provider | `local` |
-| `LOCAL_BASE_URL` | Local OpenAI-compatible API base URL | `http://localhost:11434/v1` |
-| `LOCAL_MODEL` | Local model used for analysis and local generation | `qwen2.5:7b` |
-| `CLOUD_API_KEY` | Optional cloud provider API key; blank disables cloud routing | blank |
-| `CLOUD_BASE_URL` | Optional cloud-compatible API base URL; blank uses the SDK default | blank |
-| `CLOUD_MODEL` | Cloud model used for complex requests | blank |
-| `LOCAL_MODEL_ALIAS`, `CLOUD_MODEL_ALIAS` | Public names for the models (see [Model aliases](#model-aliases)) | blank |
-| `ALLOW_REGISTRATION` | Allow sign-ups after the first (administrator) account | `true` |
-| `SESSION_TTL_DAYS` | How long a dashboard sign-in lasts | `30` |
-| `REQUEST_TIMEOUT` | Provider request timeout in seconds | `300` |
-| `MAX_RETRIES` | Provider client retry count | `2` |
-
-Cloud routing is enabled only when both `CLOUD_API_KEY` and `CLOUD_MODEL` are
-configured. Use a cloud endpoint and model that support the OpenAI-compatible
-Chat Completions API.
-
-## Run the service
-
-Install the project dependencies and start the API:
+You need [Docker](https://docs.docker.com/engine/install/) with the Compose
+plugin, and an OpenAI-compatible model server for the local model, such as
+[Ollama](https://ollama.com):
 
 ```sh
-uv sync
-uv run ugen-ai-gateway
-```
+ollama pull qwen2.5:7b
 
-The server listens on `0.0.0.0:7632` by default. `/health` reports process
-liveness. `/ready` checks that the local model endpoint (and configured cloud
-endpoint) can be reached.
-
-To run the gateway, use [Docker](#docker). For dashboard development, run the
-API as above and `npm install && npm run dev` in `frontend/`: the dashboard is
-then on `http://localhost:5173`, reloads as its code changes, and proxies `/api`
-to the API on port `7632` (set `UGEN_BACKEND_PORT` for another port). When
-`frontend/dist` exists (after `npm run build` in `frontend/`), the API server
-also serves the dashboard at `/`.
-
-### Docker
-
-The image builds the dashboard and serves it together with the API on one
-port. Models and every other setting still come from `.env`:
-
-```sh
-cp .env.example .env   # set LOCAL_* (and CLOUD_*) as usual
+git clone https://github.com/baihufox3210/ugen-ai-gateway.git
+cd ugen-ai-gateway
+cp .env.example .env          # set LOCAL_MODEL (and CLOUD_* for a cloud model)
 docker compose up -d --build
 ```
 
-Open `http://<host>:7632` (or `GATEWAY_PORT`) and create the administrator
-account. Accounts, API keys and usage metadata are stored in the `ugen-data`
-volume, so they survive rebuilds; `docker compose down -v` deletes them.
+Open `http://<host>:7632`, create the administrator account, and start
+chatting. The first account manages the gateway; see [Accounts](#accounts).
 
-The compose file uses host networking so the container reaches a model server
-on the same machine at `localhost` (for example Ollama), with the same `.env`
-as a local run. On Docker Desktop, or to isolate the container, replace
-`network_mode: host` with the `ports`/`extra_hosts` lines in the file's
-comment and set `LOCAL_BASE_URL=http://host.docker.internal:11434/v1`.
+## Deployment
+
+The Docker image builds the dashboard and serves it together with the API on
+one port. Models and every other setting come from `.env`
+(see [Configuration](#configuration)).
+
+### On a Linux server
+
+1. Install Docker and your local model server (for example Ollama with
+   `ollama pull <model>`).
+2. Clone the repository, `cp .env.example .env`, and set at least
+   `LOCAL_MODEL` (plus `CLOUD_API_KEY`, `CLOUD_MODEL` and, for non-OpenAI
+   providers, `CLOUD_BASE_URL` to enable the cloud).
+3. `docker compose up -d --build`, then check `docker compose ps` shows the
+   container as `healthy`, and `curl http://localhost:7632/ready` returns
+   `{"status":"ready"}` once the model server is reachable.
+4. Open the dashboard and create the administrator account. To stop strangers
+   from signing up afterwards, set `ALLOW_REGISTRATION=false` and run
+   `docker compose up -d` again.
+5. For other apps that call the API, create API keys on the dashboard's
+   API keys page. Once any account or key exists, the API requires a key.
+
+The compose file uses host networking, so the container reaches a model
+server on the same machine at `localhost` (Ollama's default
+`http://localhost:11434/v1` works as is). On Docker Desktop (macOS, Windows),
+or to isolate the container, replace `network_mode: host` with the
+`ports`/`extra_hosts` lines in the file's comment and set
+`LOCAL_BASE_URL=http://host.docker.internal:11434/v1`.
+
+To use a routing YAML file (`ROUTING_CONFIG`), mount it into the container,
+for example add `- ./routing.yaml:/app/routing.yaml:ro` under `volumes` and
+set `ROUTING_CONFIG=/app/routing.yaml`. API keys it names with `api_key_env`
+can go in `.env`.
+
+### HTTPS
+
+Sign-in passwords and session tokens travel with every request, so serve the
+gateway over HTTPS whenever it is reachable beyond your own network.
+
+- **Tailscale** (private access): `tailscale serve --bg 7632` publishes the
+  gateway at `https://<machine>.<tailnet>.ts.net` to your tailnet only.
+- **A public domain**: run a reverse proxy such as [Caddy](https://caddyserver.com),
+  which obtains certificates automatically. With this `Caddyfile`:
+
+  ```
+  gateway.example.com {
+      reverse_proxy 127.0.0.1:7632
+  }
+  ```
+
+  set `GATEWAY_HOST=127.0.0.1` in `.env` so the gateway itself is only
+  reachable through the proxy, and allow ports 80 and 443 in your firewall.
+  The proxy's `X-Forwarded-For` header is honored, so rate limits still apply
+  per client.
+
+### Updating, backups and logs
+
+```sh
+git pull && docker compose up -d --build   # update; data is kept
+docker compose logs -f gateway             # follow the logs
+```
+
+Accounts, API keys, usage metadata and the audit log live in one SQLite file
+in the `ugen-data` volume, which survives rebuilds (`docker compose down -v`
+deletes it). Conversations are never stored on the server; they stay in each
+user's browser. To take a consistent backup while the gateway runs:
+
+```sh
+docker compose exec gateway python -c "import sqlite3; sqlite3.connect('/app/data/ugen.db').backup(sqlite3.connect('/app/data/backup.db'))"
+docker compose cp gateway:/app/data/backup.db ./ugen-backup.db
+```
+
+To restore a backup, copy it in and load it the same way, then restart:
+
+```sh
+docker compose cp ./ugen-backup.db gateway:/app/data/restore.db
+docker compose exec gateway python -c "import sqlite3; sqlite3.connect('/app/data/restore.db').backup(sqlite3.connect('/app/data/ugen.db'))"
+docker compose restart gateway
+```
+
+## Configuration
+
+Copy `.env.example` to `.env`; it documents every setting. The main ones:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `LOCAL_BASE_URL` | Local OpenAI-compatible API base URL | `http://localhost:11434/v1` |
+| `LOCAL_MODEL` | Local model, also used to analyze requests | `qwen2.5:7b` |
+| `LOCAL_API_KEY` | API key sent to the local server | `local` |
+| `CLOUD_API_KEY`, `CLOUD_MODEL` | Cloud provider key and model; blank disables the cloud | blank |
+| `CLOUD_BASE_URL` | Cloud OpenAI-compatible base URL; blank means OpenAI | blank |
+| `LOCAL_MODEL_ALIAS`, `CLOUD_MODEL_ALIAS` | Public names for the models ([Model aliases](#model-aliases)) | blank |
+| `ROUTING_CONFIG` | YAML with several providers, models and rules ([Routing rules](#routing-rules-and-multiple-models)) | blank |
+| `ALLOW_REGISTRATION` | Allow sign-ups after the first (administrator) account | `true` |
+| `SESSION_TTL_DAYS` | How long a dashboard sign-in lasts | `30` |
+| `GATEWAY_HOST`, `GATEWAY_PORT` | Docker only: listen address and port | `0.0.0.0`, `7632` |
+| `USAGE_DB_PATH` | SQLite database; empty turns off accounts and usage tracking | `data/ugen.db` (Docker: `/app/data/ugen.db`) |
+| `GATEWAY_API_KEY`, `ADMIN_API_KEY` | Optional fixed keys with full access (for scripts); `APP_ENV=production` requires `GATEWAY_API_KEY` | blank |
+| `ANALYSIS_MODE` | How requests are analyzed ([Routing behavior](#routing-behavior)) | `hybrid` |
+| `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `redact` |
+| `REDACT_LOCAL`, `RESTORE_REDACTED` | Redaction ([Personal-data handling](#personal-data-handling)) | `true`, `true` |
+| `FALLBACK_TO_LOCAL`, `FALLBACK_TO_CLOUD` | Fallback when a provider is down ([Resilience](#resilience)) | `true`, `false` |
+| `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS` | Requests per client IP per window | `60`, `60` |
+| `REQUEST_TIMEOUT`, `MAX_RETRIES` | Provider timeout (seconds) and retries | `300`, `2` |
+
+Cloud routing is enabled only when both `CLOUD_API_KEY` and `CLOUD_MODEL` are
+set. Use a cloud endpoint and model that support the OpenAI-compatible Chat
+Completions API. After changing `.env`, apply it with `docker compose up -d`.
+
+`/health` reports process liveness; `/ready` checks that the local model
+endpoint (and configured cloud endpoint) can be reached.
 
 ## API
 
@@ -484,14 +546,29 @@ not a guarantee that every sensitive value will be recognized.
 - Provider timeouts return HTTP `504`.
 - Other upstream provider errors return HTTP `502`.
 
-## Tests
+## Development
 
-Run the automated test suite and lint checks with:
+Requirements: Python 3.13 or later, [uv](https://docs.astral.sh/uv/) and
+Node.js 22.
+
+```sh
+uv sync
+uv run ugen-ai-gateway                     # API on http://localhost:7632
+cd frontend && npm install && npm run dev  # dashboard on http://localhost:5173
+```
+
+The development dashboard reloads as its code changes and proxies `/api` to
+the API on port `7632` (set `UGEN_BACKEND_PORT` for another port). When
+`frontend/dist` exists (after `npm run build`), the API server also serves the
+dashboard at `/`, as the Docker image does.
+
+Run the tests and checks with:
 
 ```sh
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
+cd frontend && npm run build
 ```
 
 ## Contributing

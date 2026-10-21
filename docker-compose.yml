@@ -6,6 +6,8 @@ services:
     image: ugen-ai-gateway
     env_file: .env
     environment:
+      # 127.0.0.1 keeps the gateway off the network, e.g. behind an HTTPS proxy.
+      HOST: ${GATEWAY_HOST:-0.0.0.0}
       PORT: ${GATEWAY_PORT:-7632}
       # Accounts, API keys and usage live here; the volume keeps them across rebuilds.
       USAGE_DB_PATH: /app/data/ugen.db

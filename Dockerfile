@@ -26,6 +26,7 @@ RUN useradd --system --uid 1000 --home-dir /app ugen \
 USER ugen
 
 ENV PATH=/app/.venv/bin:$PATH \
+    HOST=0.0.0.0 \
     PORT=7632 \
     USAGE_DB_PATH=/app/data/ugen.db \
     STATIC_DIR=/app/frontend/dist
@@ -33,4 +34,4 @@ VOLUME /app/data
 EXPOSE 7632
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/health', timeout=4)"
-CMD ["sh", "-c", "exec uvicorn ugen_ai_gateway.main:app --host 0.0.0.0 --port \"$PORT\""]
+CMD ["sh", "-c", "exec uvicorn ugen_ai_gateway.main:app --host \"$HOST\" --port \"$PORT\""]
