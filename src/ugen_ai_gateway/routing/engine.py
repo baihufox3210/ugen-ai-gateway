@@ -95,7 +95,11 @@ class RuleEngine:
         """Route a request. A ``model`` that is not configured anywhere is used
         as-is on whichever provider the other rules pick."""
         route = self._choose(analysis, selection, model, chars)
-        if model and route.model.id != model and self.config.find_model(model) is None:
+        if (
+            model
+            and not route.model.answers_to(model)
+            and self.config.find_model(model) is None
+        ):
             route = Route(
                 route.provider, ModelConfig(id=model), route.reason, route.rule
             )
@@ -155,9 +159,9 @@ class RuleEngine:
         )
 
     def models(self) -> list[str]:
-        """Ids of every model on an available provider."""
+        """Public ids (alias, else id) of every model on an available provider."""
         return [
-            model.id
+            model.public_id
             for provider in self.config.providers
             if provider.name in self.available
             for model in provider.models

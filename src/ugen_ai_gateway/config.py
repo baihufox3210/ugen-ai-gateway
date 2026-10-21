@@ -13,10 +13,14 @@ class Settings(BaseSettings):
     local_api_key: str = "local"
     local_base_url: str = ""
     local_model: str = ""
+    # Optional public names for the models: shown in the dashboard and API
+    # responses instead of the real model names, and accepted as `model`.
+    local_model_alias: str = ""
 
     cloud_api_key: str = ""
     cloud_base_url: str = ""
     cloud_model: str = ""
+    cloud_model_alias: str = ""
 
     # Optional YAML file with providers, models and routing rules. When empty,
     # LOCAL_* / CLOUD_* define a local and a cloud provider.
@@ -53,6 +57,13 @@ class Settings(BaseSettings):
     usage_db_path: str = "data/ugen.db"
 
     gateway_api_key: str = ""
+    # Dashboard accounts. The first account is always allowed and becomes the
+    # administrator; set ALLOW_REGISTRATION=false to stop further sign-ups.
+    allow_registration: bool = True
+    session_ttl_days: float = Field(default=30, gt=0)
+    # Built dashboard (frontend/dist) served at "/". Empty: use frontend/dist
+    # next to the source tree when it exists.
+    static_dir: str = ""
     rate_limit_requests: int = Field(default=60, gt=0)
     rate_limit_window_seconds: int = Field(default=60, gt=0)
     request_timeout: float = Field(default=300.0, gt=0, le=600)
@@ -76,6 +87,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
+        # .env also holds values for other tools (GATEWAY_PORT for Docker).
+        extra="ignore",
     )
 
 

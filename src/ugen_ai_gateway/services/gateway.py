@@ -84,6 +84,11 @@ class _PreparedChat:
     def model(self) -> str:
         return self.route.model.id
 
+    @property
+    def public_model(self) -> str:
+        """The model name clients see: its alias when one is configured."""
+        return self.route.model.public_id
+
 
 @dataclass
 class _Generated:
@@ -209,7 +214,11 @@ class GatewayService:
         failed ones, is recorded in the usage store (metadata only).
         """
         principal = principal or Principal(api_key_id=None)
-        record = UsageRecord(id=uuid.uuid4().hex, api_key_id=principal.api_key_id)
+        record = UsageRecord(
+            id=uuid.uuid4().hex,
+            api_key_id=principal.api_key_id,
+            user_id=principal.user_id,
+        )
         finished = False
         try:
             async for event in self._events(
@@ -328,7 +337,7 @@ class GatewayService:
             {
                 "provider": prepared.locality,
                 "provider_name": prepared.route.provider.name,
-                "model": prepared.model,
+                "model": prepared.public_model,
                 "rule": prepared.route.rule,
                 "reason": prepared.route.reason,
                 "complexity": analysis.complexity,
@@ -365,7 +374,7 @@ class GatewayService:
                 {
                     "provider": attempt.locality,
                     "provider_name": attempt.route.provider.name,
-                    "model": attempt.model,
+                    "model": attempt.public_model,
                 },
             )
             emitted_text = False
@@ -395,7 +404,8 @@ class GatewayService:
             break
         assert result is not None
         content = result.content
-        resolved_model = result.model
+        # An alias hides the real model name, including the one the provider reports.
+        resolved_model = prepared.route.model.alias or result.model
         usage = result.usage
         finish_reason = result.finish_reason
         generation_ms = (perf_counter() - generation_started_at) * 1000
@@ -794,7 +804,7 @@ class GatewayService:
 def _note_route(record: UsageRecord, prepared: _PreparedChat) -> None:
     record.provider = prepared.locality
     record.provider_name = prepared.route.provider.name
-    record.model = prepared.model
+    record.model = prepared.public_model
     record.rule = prepared.route.rule
 
 

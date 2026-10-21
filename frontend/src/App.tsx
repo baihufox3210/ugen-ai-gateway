@@ -5,7 +5,7 @@ import RequestFlow from './components/RequestFlow';
 import ResponsePanel from './components/ResponsePanel';
 import SettingsDialog from './components/SettingsDialog';
 import Sidebar from './components/Sidebar';
-import { apiFetch, errorMessage, loadApiKey, saveApiKey } from './api';
+import { apiFetch, errorMessage, type User } from './api';
 import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from './types';
 
 // crypto.randomUUID only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere.
@@ -15,9 +15,16 @@ const STORAGE_KEY = 'ugen-gateway-conversations-v1';
 const PROVIDER_SELECTION_KEY = 'ugen-gateway-provider-selection';
 type View = 'chat' | 'monitor';
 type DeleteAction = { type: 'conversation'; conversationId: string } | { type: 'turn'; conversationId: string; turnId: string } | { type: 'all' };
-function loadConversations(): Conversation[] {
+// Each account keeps its own history in this browser.
+const conversationsKey = (user: User | null) => user ? `${STORAGE_KEY}:${user.id}` : STORAGE_KEY;
+function loadConversations(key: string): Conversation[] {
   try {
-    const stored: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
+    // History saved before accounts existed goes to the first account that signs in here.
+    if (key !== STORAGE_KEY && localStorage.getItem(key) === null) {
+      const legacy = localStorage.getItem(STORAGE_KEY);
+      if (legacy !== null) { localStorage.setItem(key, legacy); localStorage.removeItem(STORAGE_KEY); }
+    }
+    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
     return Array.isArray(stored) ? stored as Conversation[] : [];
   } catch { return []; }
 }
@@ -34,8 +41,11 @@ function loadProviderSelection(): ProviderSelection {
   } catch { return 'auto'; }
 }
 
-function App() {
-  const [conversations, setConversations] = useState<Conversation[]>(loadConversations);
+type Props = { user: User | null; onSignOut: () => void; onAccountDeleted: () => void };
+
+function App({ user, onSignOut, onAccountDeleted }: Props) {
+  const storageKey = conversationsKey(user);
+  const [conversations, setConversations] = useState<Conversation[]>(() => loadConversations(storageKey));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -57,17 +67,16 @@ function App() {
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const activeConversation = conversations.find(item => item.id === activeId) ?? null;
   const turns = activeConversation?.turns ?? [];
-  const [apiKey, setApiKey] = useState(loadApiKey);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations)); }, [conversations]);
+  useEffect(() => { try { localStorage.setItem(storageKey, JSON.stringify(conversations)); } catch { /* history lasts for this page only */ } }, [storageKey, conversations]);
   useEffect(() => { try { localStorage.setItem(PROVIDER_SELECTION_KEY, providerSelection); } catch { /* selection simply resets next visit */ } }, [providerSelection]);
   useEffect(() => {
     let active = true;
     const loadModels = async () => {
       let data: { local_model: string; cloud_model: string } | undefined;
       try {
-        const response = await apiFetch('/v1/ugen/config', {}, apiKey);
+        const response = await apiFetch('/v1/ugen/config');
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
           const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown };
           if (typeof candidate.local_model === 'string' && typeof candidate.cloud_model === 'string') {
@@ -84,7 +93,7 @@ function App() {
     };
     void loadModels();
     return () => { active = false; };
-  }, [apiKey]);
+  }, []);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); newConversation(); }
@@ -187,7 +196,7 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2 }),
       });
-      if (!response.ok) throw new Error(response.status === 401 ? 'An API key is required. Enter one in Settings.' : await errorMessage(response));
+      if (!response.ok) throw new Error(response.status === 401 ? 'Your session has ended. Sign in again.' : await errorMessage(response));
       if (!response.body) throw new Error('The server did not return a progress stream.');
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       const received: { result: ChatResult | null } = { result: null }; let streamError = '';
@@ -229,15 +238,16 @@ function App() {
       <button className="icon-button new-chat-mini" onClick={newConversation} disabled={busy} aria-label="New conversation" title="New conversation">+</button>
     </header>
     <Sidebar conversations={conversations} activeId={activeId} busy={busy} onNew={newConversation} onSelect={selectConversation}
-      onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)} onSettings={() => { setSettingsOpen(true); setDrawerOpen(false); }}/>
+      onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)} user={user} onSettings={() => { setSettingsOpen(true); setDrawerOpen(false); }}/>
     <div className="drawer-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true"/>
     <nav className="view-tabs" role="tablist" aria-label="Switch view">
       <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>Chat{turns.length > 0 && <small>{turns.length}</small>}</button>
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
-    <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} apiKey={apiKey} refreshKey={statsVersion}/></section></main>
+    <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section></main>
     <section className="chat-column"><ResponsePanel turns={turns} busy={busy} streamingText={streamingText} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onClear={() => setPrompt('')}/></section>
-    {settingsOpen && <SettingsDialog apiKey={apiKey} onApiKeyChange={key => { saveApiKey(key); setApiKey(key); setStatsVersion(version => version + 1); }} onClose={() => setSettingsOpen(false)}/>}
+    {settingsOpen && <SettingsDialog user={user} onSignOut={onSignOut} onClose={() => setSettingsOpen(false)}
+      onAccountDeleted={() => { try { localStorage.removeItem(storageKey); } catch { /* nothing saved */ } onAccountDeleted(); }}/>}
     {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all' ? 'Every conversation saved on this device will be permanently deleted.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}
   </div>;
 }

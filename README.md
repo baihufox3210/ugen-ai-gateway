@@ -40,6 +40,9 @@ cp .env.example .env
 | `CLOUD_API_KEY` | Optional cloud provider API key; blank disables cloud routing | blank |
 | `CLOUD_BASE_URL` | Optional cloud-compatible API base URL; blank uses the SDK default | blank |
 | `CLOUD_MODEL` | Cloud model used for complex requests | blank |
+| `LOCAL_MODEL_ALIAS`, `CLOUD_MODEL_ALIAS` | Public names for the models (see [Model aliases](#model-aliases)) | blank |
+| `ALLOW_REGISTRATION` | Allow sign-ups after the first (administrator) account | `true` |
+| `SESSION_TTL_DAYS` | How long a dashboard sign-in lasts | `30` |
 | `REQUEST_TIMEOUT` | Provider request timeout in seconds | `300` |
 | `MAX_RETRIES` | Provider client retry count | `2` |
 
@@ -59,6 +62,32 @@ uv run ugen-ai-gateway
 The server listens on `0.0.0.0:7632` by default. `/health` reports process
 liveness. `/ready` checks that the local model endpoint (and configured cloud
 endpoint) can be reached.
+
+`./start.sh` runs the API and the dashboard's development server together
+(API on `7632`, dashboard on `http://localhost:5173`; change them with
+`BACKEND_PORT` and `FRONTEND_PORT`). When `frontend/dist` exists (after
+`npm run build` in `frontend/`), the API server also serves the dashboard at
+`/`.
+
+### Docker
+
+The image builds the dashboard and serves it together with the API on one
+port. Models and every other setting still come from `.env`:
+
+```sh
+cp .env.example .env   # set LOCAL_* (and CLOUD_*) as usual
+docker compose up -d --build
+```
+
+Open `http://<host>:7632` (or `GATEWAY_PORT`) and create the administrator
+account. Accounts, API keys and usage metadata are stored in the `ugen-data`
+volume, so they survive rebuilds; `docker compose down -v` deletes them.
+
+The compose file uses host networking so the container reaches a model server
+on the same machine at `localhost` (for example Ollama), with the same `.env`
+as a local run. On Docker Desktop, or to isolate the container, replace
+`network_mode: host` with the `ports`/`extra_hosts` lines in the file's
+comment and set `LOCAL_BASE_URL=http://host.docker.internal:11434/v1`.
 
 ## API
 
@@ -111,22 +140,51 @@ The routing decision is reported in response headers (`X-UGen-Provider`,
 Lists `ugen-auto`, `ugen-local`, `ugen-cloud` (when cloud routing is enabled),
 and the configured model names.
 
+### Accounts
+
+The dashboard requires signing in. The first account created becomes the
+administrator; later accounts are members. Administrators manage API keys,
+export the audit log and see every request's usage; members see only their own.
+`ALLOW_REGISTRATION=false` closes sign-up once the first account exists.
+
+- `GET /v1/ugen/auth/status` tells the sign-in screen whether accounts are
+  enabled, whether any exist and whether sign-up is open.
+- `POST /v1/ugen/auth/register` and `POST /v1/ugen/auth/login` take
+  `{"username": "...", "password": "..."}` and return
+  `{"token": "ugs_…", "expires_at": ..., "user": {...}}`. Usernames are 3–32
+  letters, digits, dots, dashes or underscores (case-insensitive); passwords
+  are at least 8 characters. Sign-in and sign-up are limited to 10 attempts
+  per minute per IP.
+- `GET /v1/ugen/auth/me` returns the signed-in user and
+  `POST /v1/ugen/auth/logout` ends the session.
+- `DELETE /v1/ugen/auth/me` with `{"password": "..."}` deletes the account,
+  its sessions, and its request metadata and feedback. Audit entries stay
+  (they never name the user, and removing them would break the hash chain).
+  If the last administrator leaves, the oldest remaining account is promoted.
+
+Passwords are stored as salted scrypt hashes and session tokens as SHA-256
+hashes, in the same SQLite database as usage (`USAGE_DB_PATH`). Without a
+database, accounts are off and the dashboard opens without sign-in.
+
 ### Authentication and API keys
 
 Requests authenticate with `Authorization: Bearer <key>` (what OpenAI SDKs
-send) or `X-API-Key`. Three kinds of key are accepted:
+send) or `X-API-Key`. Accepted credentials:
 
 - `GATEWAY_API_KEY` and `ADMIN_API_KEY`: no restrictions, and stats cover
   every request.
-- API keys created through the admin API: one per team or application, each
+- A dashboard session token (`ugs_…`) from signing in.
+- API keys created by an administrator: one per team or application, each
   with its own policy, and stats and feedback limited to its own requests.
 
 The gateway runs open (no key needed) only while there is no
-`GATEWAY_API_KEY`, no `ADMIN_API_KEY`, and no API key has ever been created.
-Creating the first key locks it, and revoking every key does not reopen it.
+`GATEWAY_API_KEY`, no `ADMIN_API_KEY`, no account and no API key has ever been
+created. Creating the first account or key locks it, and deleting every
+account or revoking every key does not reopen it.
 
-Manage keys with `ADMIN_API_KEY` (or `GATEWAY_API_KEY` when no admin key is
-set). Without either, the key endpoints work only until the first key exists:
+Manage keys from the dashboard settings as an administrator, or with
+`ADMIN_API_KEY` (or `GATEWAY_API_KEY` when no admin key is set). With none of
+those, the key endpoints work only until the first key or account exists:
 
 ```sh
 curl -X POST localhost:7632/v1/ugen/keys -H 'X-API-Key: <admin key>' \
@@ -148,8 +206,8 @@ limiter is in-memory and per process behind a small `RateLimiter` interface,
 so running several workers needs a shared store, such as Redis, behind that
 interface.
 
-The dashboard's settings dialog (gear icon in the sidebar) stores the key it
-uses in the browser, shows what the key allows, and lets an admin create,
+The dashboard's settings dialog (gear icon in the sidebar) shows the signed-in
+account, signs out, deletes the account, and lets an administrator create,
 list, and revoke keys and export the audit log.
 
 ### Dashboard endpoints
@@ -238,8 +296,8 @@ reordering an entry breaks verification from that point on.
 - `GET /v1/ugen/audit/verify` recomputes the chain and returns
   `{"ok": true, "entries": N, "first_invalid_seq": null}`.
 
-Both need `ADMIN_API_KEY` (or `GATEWAY_API_KEY` when no admin key is set),
-like key management.
+Both need an administrator account, or `ADMIN_API_KEY` (or `GATEWAY_API_KEY`
+when no admin key is set), like key management.
 
 ### Usage tracking
 
@@ -313,6 +371,15 @@ that model, still subject to `never_cloud`. `routing.provider_name` and
 
 Without `ROUTING_CONFIG`, the `LOCAL_*` and `CLOUD_*` variables define one local
 and one cloud provider, with moderate and complex requests going to the cloud.
+
+### Model aliases
+
+`LOCAL_MODEL_ALIAS` and `CLOUD_MODEL_ALIAS` (or `alias:` on a model in the
+routing YAML) give a model a public name. The alias replaces the real model
+name everywhere clients look: the dashboard, `GET /v1/models`, the `model`
+field and `X-UGen-Model` header of responses, stream events and usage records.
+Requests may use either the alias or the real name as `model`; the provider is
+always called with the real name. Aliases and model ids must be unique.
 
 ## Resilience
 

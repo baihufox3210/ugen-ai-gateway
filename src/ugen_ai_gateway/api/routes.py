@@ -50,8 +50,8 @@ async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
     local = engine.default("local")
     cloud = engine.default("cloud")
     return {
-        "local_model": local.model.id if local else "",
-        "cloud_model": cloud.model.id if cloud else "",
+        "local_model": local.model.public_id if local else "",
+        "cloud_model": cloud.model.public_id if cloud else "",
         "cloud_enabled": cloud is not None,
         "redact_local": settings.redact_local,
         "restore_redacted": settings.restore_redacted,
@@ -60,7 +60,7 @@ async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
                 "name": provider.name,
                 "locality": provider.locality,
                 "available": provider.name in engine.available,
-                "models": [model.id for model in provider.models],
+                "models": [model.public_id for model in provider.models],
             }
             for provider in engine.config.providers
         ],
@@ -96,9 +96,7 @@ async def usage_stats(
     An API key sees only its own requests; the master key sees everything."""
     principal = await authenticate(http_request, store)
     return await _require_store(store).stats(
-        days=days,
-        tz_offset_minutes=tz_offset_minutes,
-        api_key_id=principal.api_key_id,
+        days=days, tz_offset_minutes=tz_offset_minutes, **principal.usage_scope
     )
 
 
@@ -112,7 +110,7 @@ async def recent_requests(
     """Recent request metadata, newest first; pass ``before`` to page back."""
     principal = await authenticate(http_request, store)
     items = await _require_store(store).recent(
-        limit=limit, before=before, api_key_id=principal.api_key_id
+        limit=limit, before=before, **principal.usage_scope
     )
     return {"data": items}
 
@@ -128,7 +126,7 @@ async def submit_feedback(
 ) -> Response:
     principal = await authenticate(http_request, store)
     if not await _require_store(store).set_feedback(
-        body.request_id, body.rating, api_key_id=principal.api_key_id
+        body.request_id, body.rating, **principal.usage_scope
     ):
         raise HTTPException(status_code=404, detail="Unknown request id")
     return Response(status_code=204)

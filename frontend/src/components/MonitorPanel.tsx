@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '../api';
 import type { Conversation, Phase, UsageStats } from '../types';
 
-type Props = { conversations: Conversation[]; phase: Phase; apiKey: string; refreshKey: number };
+type Props = { conversations: Conversation[]; phase: Phase; refreshKey: number };
 const PHASE_LABEL: Record<Phase, string> = {
   idle: 'Waiting', sending: 'Sending', analyzing: 'Analyzing locally', analyzed: 'Analyzed',
   routing: 'Routing', generating: 'Generating', complete: 'Completed', failed: 'Failed',
@@ -12,22 +12,22 @@ const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() +
 const formatUsd = (value: number) => value >= 1 ? `$${value.toFixed(2)}` : value >= 0.0001 ? `$${value.toFixed(4)}` : value > 0 ? '<$0.0001' : '$0';
 
 /** Gateway-wide usage from the backend; falls back to this browser's history if unavailable. */
-function useUsageStats(apiKey: string, refreshKey: number): UsageStats | null {
+function useUsageStats(refreshKey: number): UsageStats | null {
   const [stats, setStats] = useState<UsageStats | null>(null);
   useEffect(() => {
     let active = true;
     const offset = -new Date().getTimezoneOffset();
-    apiFetch(`/v1/ugen/stats?days=7&tz_offset_minutes=${offset}`, {}, apiKey)
+    apiFetch(`/v1/ugen/stats?days=7&tz_offset_minutes=${offset}`)
       .then(response => response.ok ? response.json() as Promise<UsageStats> : null)
       .then(data => { if (active) setStats(data); })
       .catch(() => { if (active) setStats(null); });
     return () => { active = false; };
-  }, [apiKey, refreshKey]);
+  }, [refreshKey]);
   return stats;
 }
 
-function MonitorPanel({ conversations, phase, apiKey, refreshKey }: Props) {
-  const stats = useUsageStats(apiKey, refreshKey);
+function MonitorPanel({ conversations, phase, refreshKey }: Props) {
+  const stats = useUsageStats(refreshKey);
   const turns = conversations.flatMap(conversation => conversation.turns.map(turn => ({ ...turn, updatedAt: conversation.updatedAt })));
   const results = turns.flatMap(turn => turn.result ? [turn.result] : []);
   const completed = stats?.completed ?? results.length;

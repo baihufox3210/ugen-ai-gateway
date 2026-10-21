@@ -9,6 +9,7 @@ providers:
     api_key: local
     models:
       - id: qwen2.5:7b
+        alias: house-model     # optional public name shown instead of the id
 
   - name: gemini
     locality: cloud            # cloud: always receives redacted text only

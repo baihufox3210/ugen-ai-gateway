@@ -1,4 +1,4 @@
-"""Request metadata and feedback stored in SQLite.
+"""Request metadata, feedback, API keys and user accounts stored in SQLite.
 
 Only metadata is stored: routing, token counts, timings, cost, and which
 personal-data types were found. Message text and personal-data values are
@@ -6,7 +6,9 @@ never written.
 """
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import json
 import secrets
 import sqlite3
@@ -71,6 +73,21 @@ CREATE TABLE IF NOT EXISTS feedback (
     rating INTEGER NOT NULL CHECK (rating IN (-1, 1)),
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    last_login_at REAL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions (user_id);
 """
 
 
@@ -80,6 +97,7 @@ class UsageRecord:
     status: str = "ok"
     error: str | None = None
     api_key_id: str | None = None
+    user_id: str | None = None
     provider: str | None = None
     provider_name: str | None = None
     model: str | None = None
@@ -116,8 +134,18 @@ def token_cost(
 _ADDED_COLUMNS = {
     "injection_signals": "TEXT NOT NULL DEFAULT '[]'",
     "output_redactions": "INTEGER NOT NULL DEFAULT 0",
+    "user_id": "TEXT",
 }
 _GENESIS_HASH = "0" * 64
+
+# (api_key_id, user_id); None in either place means no restriction on it.
+_Scope = tuple[str | None, str | None]
+_SCOPE_SQL = "(? IS NULL OR api_key_id = ?) AND (? IS NULL OR user_id = ?)"
+
+
+def _scope_args(scope: _Scope) -> tuple[str | None, ...]:
+    api_key_id, user_id = scope
+    return (api_key_id, api_key_id, user_id, user_id)
 
 
 def _audit_hash(prev_hash: str, entry: dict[str, Any]) -> str:
@@ -138,6 +166,7 @@ class UsageStore:
             self._path, check_same_thread=False, timeout=30
         )
         self._connection.row_factory = sqlite3.Row
+        self._connection.execute("PRAGMA foreign_keys=ON")
         if self._path != ":memory:":
             self._connection.execute("PRAGMA journal_mode=WAL")
         self._lock = Lock()
@@ -156,6 +185,9 @@ class UsageStore:
                 self._connection.execute(
                     f"ALTER TABLE requests ADD COLUMN {name} {definition}"
                 )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS requests_user_id ON requests (user_id)"
+        )
         self._connection.commit()
 
     def close(self) -> None:
@@ -166,24 +198,44 @@ class UsageStore:
     async def record(self, record: UsageRecord) -> None:
         await asyncio.to_thread(self._record, record)
 
-    # ``api_key_id`` scopes reads and feedback to one tenant; None means all.
+    # ``api_key_id`` and ``user_id`` scope reads and feedback to one tenant or
+    # one user; None means no restriction.
 
     async def set_feedback(
-        self, request_id: str, rating: int, *, api_key_id: str | None = None
+        self,
+        request_id: str,
+        rating: int,
+        *,
+        api_key_id: str | None = None,
+        user_id: str | None = None,
     ) -> bool:
         return await asyncio.to_thread(
-            self._set_feedback, request_id, rating, api_key_id
+            self._set_feedback, request_id, rating, (api_key_id, user_id)
         )
 
     async def stats(
-        self, *, days: int, tz_offset_minutes: int = 0, api_key_id: str | None = None
+        self,
+        *,
+        days: int,
+        tz_offset_minutes: int = 0,
+        api_key_id: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
-        return await asyncio.to_thread(self._stats, days, tz_offset_minutes, api_key_id)
+        return await asyncio.to_thread(
+            self._stats, days, tz_offset_minutes, (api_key_id, user_id)
+        )
 
     async def recent(
-        self, *, limit: int, before: float | None = None, api_key_id: str | None = None
+        self,
+        *,
+        limit: int,
+        before: float | None = None,
+        api_key_id: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._recent, limit, before, api_key_id)
+        return await asyncio.to_thread(
+            self._recent, limit, before, (api_key_id, user_id)
+        )
 
     def _record(self, record: UsageRecord) -> None:
         row = asdict(record)
@@ -197,13 +249,11 @@ class UsageStore:
                 row,
             )
 
-    def _set_feedback(
-        self, request_id: str, rating: int, api_key_id: str | None
-    ) -> bool:
+    def _set_feedback(self, request_id: str, rating: int, scope: _Scope) -> bool:
         with self._lock, self._connection:
             exists = self._connection.execute(
-                "SELECT 1 FROM requests WHERE id = ? AND (? IS NULL OR api_key_id = ?)",
-                (request_id, api_key_id, api_key_id),
+                f"SELECT 1 FROM requests WHERE id = ? AND {_SCOPE_SQL}",
+                (request_id, *_scope_args(scope)),
             ).fetchone()
             if not exists:
                 return False
@@ -216,12 +266,12 @@ class UsageStore:
             return True
 
     def _stats(
-        self, days: int, tz_offset_minutes: int, api_key_id: str | None
+        self, days: int, tz_offset_minutes: int, scope_ids: _Scope
     ) -> dict[str, Any]:
         since = time.time() - days * 86400
         offset = tz_offset_minutes * 60
-        scope = "(? IS NULL OR api_key_id = ?)"
-        key = (api_key_id, api_key_id)
+        scope = _SCOPE_SQL
+        key = _scope_args(scope_ids)
         with self._lock:
             totals = self._connection.execute(
                 """
@@ -273,7 +323,10 @@ class UsageStore:
                 FROM feedback JOIN requests ON requests.id = feedback.request_id
                 WHERE requests.created_at >= ? AND {scope}
                 """.replace(
-                    "{scope}", scope.replace("api_key_id", "requests.api_key_id")
+                    "{scope}",
+                    scope.replace("api_key_id", "requests.api_key_id").replace(
+                        "user_id", "requests.user_id"
+                    ),
                 ),
                 (since, *key),
             ).fetchone()
@@ -293,14 +346,17 @@ class UsageStore:
         return result
 
     def _recent(
-        self, limit: int, before: float | None, api_key_id: str | None
+        self, limit: int, before: float | None, scope: _Scope
     ) -> list[dict[str, Any]]:
         query = (
             "SELECT requests.*, feedback.rating FROM requests "
             "LEFT JOIN feedback ON feedback.request_id = requests.id "
-            "WHERE (? IS NULL OR requests.api_key_id = ?)"
+            "WHERE "
+            + _SCOPE_SQL.replace("api_key_id", "requests.api_key_id").replace(
+                "user_id", "requests.user_id"
+            )
         )
-        parameters: tuple[Any, ...] = (api_key_id, api_key_id)
+        parameters: tuple[Any, ...] = _scope_args(scope)
         if before is not None:
             query += " AND requests.created_at < ?"
             parameters = (*parameters, before)
@@ -516,6 +572,152 @@ class UsageStore:
         row["allow_cloud"] = bool(row["allow_cloud"])
         return row
 
+    # User accounts. Passwords are stored as salted scrypt hashes and session
+    # tokens as SHA-256 hashes; neither secret is ever written in plain text.
+
+    async def has_users(self) -> bool:
+        return await asyncio.to_thread(self._has_users)
+
+    async def create_user(self, username: str, password: str) -> dict[str, Any]:
+        """Create an account; the first account becomes the administrator.
+
+        Raises ``UsernameTaken`` when the name is in use (case-insensitive).
+        """
+        password_hash = await asyncio.to_thread(hash_password, password)
+        return await asyncio.to_thread(self._create_user, username, password_hash)
+
+    async def verify_login(self, username: str, password: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._verify_login, username, password)
+
+    async def create_session(
+        self, user_id: str, *, ttl_seconds: float
+    ) -> tuple[str, float]:
+        """Return a new session token and its expiry time."""
+        return await asyncio.to_thread(self._create_session, user_id, ttl_seconds)
+
+    async def find_session(self, token: str) -> dict[str, Any] | None:
+        """The user behind a live session token, or None."""
+        return await asyncio.to_thread(self._find_session, token)
+
+    async def delete_session(self, token: str) -> None:
+        await asyncio.to_thread(self._delete_session, token)
+
+    async def delete_user(self, user_id: str) -> bool:
+        """Delete an account with its sessions, request metadata and feedback.
+
+        Audit entries stay: they never name the user, and removing them would
+        break the hash chain. When the last administrator leaves, the oldest
+        remaining account is promoted so the gateway stays manageable.
+        """
+        return await asyncio.to_thread(self._delete_user, user_id)
+
+    def _has_users(self) -> bool:
+        with self._lock:
+            return (
+                self._connection.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+                is not None
+            )
+
+    def _create_user(self, username: str, password_hash: str) -> dict[str, Any]:
+        with self._lock, self._connection:
+            # Take the write lock first so two simultaneous sign-ups cannot
+            # both become the first (administrator) account.
+            self._connection.execute("BEGIN IMMEDIATE")
+            first = (
+                self._connection.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+                is None
+            )
+            row = {
+                "id": "usr_" + secrets.token_hex(8),
+                "username": username,
+                "password_hash": password_hash,
+                "is_admin": int(first),
+                "created_at": time.time(),
+            }
+            try:
+                self._connection.execute(
+                    "INSERT INTO users (id, username, password_hash, is_admin, created_at) "
+                    "VALUES (:id, :username, :password_hash, :is_admin, :created_at)",
+                    row,
+                )
+            except sqlite3.IntegrityError as exc:
+                raise UsernameTaken(username) from exc
+        return _user_view(row | {"last_login_at": None})
+
+    def _verify_login(self, username: str, password: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            ).fetchone()
+        if row is None:
+            # Spend the same time as a real check so timing does not reveal
+            # which usernames exist.
+            verify_password(password, _DUMMY_HASH)
+            return None
+        if not verify_password(password, row["password_hash"]):
+            return None
+        now = time.time()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET last_login_at = ? WHERE id = ?", (now, row["id"])
+            )
+        return _user_view(dict(row) | {"last_login_at": now})
+
+    def _create_session(self, user_id: str, ttl_seconds: float) -> tuple[str, float]:
+        token = "ugs_" + secrets.token_urlsafe(32)
+        now = time.time()
+        expires_at = now + ttl_seconds
+        with self._lock, self._connection:
+            self._connection.execute(
+                "DELETE FROM sessions WHERE expires_at <= ?", (now,)
+            )
+            self._connection.execute(
+                "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) "
+                "VALUES (?, ?, ?, ?)",
+                (_key_hash(token), user_id, now, expires_at),
+            )
+        return token, expires_at
+
+    def _find_session(self, token: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id "
+                "WHERE sessions.token_hash = ? AND sessions.expires_at > ?",
+                (_key_hash(token), time.time()),
+            ).fetchone()
+        return _user_view(dict(row)) if row else None
+
+    def _delete_session(self, token: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "DELETE FROM sessions WHERE token_hash = ?", (_key_hash(token),)
+            )
+
+    def _delete_user(self, user_id: str) -> bool:
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                "DELETE FROM feedback WHERE request_id IN "
+                "(SELECT id FROM requests WHERE user_id = ?)",
+                (user_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM requests WHERE user_id = ?", (user_id,)
+            )
+            self._connection.execute(
+                "DELETE FROM sessions WHERE user_id = ?", (user_id,)
+            )
+            deleted = self._connection.execute(
+                "DELETE FROM users WHERE id = ?", (user_id,)
+            ).rowcount
+            if deleted:
+                self._connection.execute(
+                    "UPDATE users SET is_admin = 1 WHERE id = "
+                    "(SELECT id FROM users ORDER BY created_at LIMIT 1) "
+                    "AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)"
+                )
+            return deleted > 0
+
 
 def _key_hash(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
@@ -525,3 +727,56 @@ def _month_start() -> float:
     """Start of the current calendar month, UTC."""
     now = datetime.now(UTC)
     return datetime(now.year, now.month, 1, tzinfo=UTC).timestamp()
+
+
+class UsernameTaken(ValueError):
+    pass
+
+
+def _user_view(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "is_admin": bool(row["is_admin"]),
+        "created_at": row["created_at"],
+        "last_login_at": row.get("last_login_at"),
+    }
+
+
+# scrypt parameters (RFC 7914 interactive settings): about 16 MB and tens of
+# milliseconds per hash. They are stored with each hash so they can change.
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(
+        password.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P
+    )
+    encode = base64.b64encode
+    return (
+        f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}$"
+        f"{encode(salt).decode()}${encode(digest).decode()}"
+    )
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        scheme, n, r, p, salt, digest = stored.split("$")
+        if scheme != "scrypt":
+            return False
+        expected = base64.b64decode(digest)
+        actual = hashlib.scrypt(
+            password.encode(),
+            salt=base64.b64decode(salt),
+            n=int(n),
+            r=int(r),
+            p=int(p),
+            dklen=len(expected),
+        )
+    except ValueError:
+        return False
+    return hmac.compare_digest(actual, expected)
+
+
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(16))

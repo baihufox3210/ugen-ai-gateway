@@ -103,7 +103,8 @@ def resolve_model(
     """
     if name in _ALIASES:
         return _ALIASES[name], None
-    if name in engine.models():
+    found = engine.config.find_model(name)
+    if found and found[0].name in engine.available:
         return "auto", name
     raise _RequestRejected(404, f"The model '{name}' does not exist", "model_not_found")
 

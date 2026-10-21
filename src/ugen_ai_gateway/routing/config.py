@@ -19,9 +19,18 @@ Complexity = Literal["simple", "moderate", "complex"]
 
 class ModelConfig(BaseModel):
     id: str = Field(min_length=1)
+    # Public name shown to clients instead of ``id``; also accepted in requests.
+    alias: str | None = Field(default=None, min_length=1)
     # USD per million tokens; used for cost and savings reporting.
     input_cost_per_million: float = Field(default=0.0, ge=0)
     output_cost_per_million: float = Field(default=0.0, ge=0)
+
+    @property
+    def public_id(self) -> str:
+        return self.alias or self.id
+
+    def answers_to(self, name: str) -> bool:
+        return name in (self.id, self.alias)
 
 
 class ProviderConfig(BaseModel):
@@ -38,7 +47,9 @@ class ProviderConfig(BaseModel):
         return self.api_key or ("local" if self.locality == "local" else "")
 
     def model(self, model_id: str) -> ModelConfig | None:
-        return next((model for model in self.models if model.id == model_id), None)
+        return next(
+            (model for model in self.models if model.answers_to(model_id)), None
+        )
 
 
 class Target(BaseModel):
@@ -103,6 +114,10 @@ class RoutingConfig(BaseModel):
                     f"{where}: provider '{provider.name}' has no model '{target.model}'"
                 )
 
+        public = [m.public_id for p in self.providers for m in p.models]
+        if len(public) != len(set(public)):
+            raise ValueError("Model ids and aliases must be unique")
+
         for where, target, locality in (
             ("defaults.local", self.defaults.local, "local"),
             ("defaults.cloud", self.defaults.cloud, "cloud"),
@@ -146,7 +161,12 @@ def config_from_settings(settings: Settings, *, cloud_enabled: bool) -> RoutingC
             locality="local",
             base_url=settings.local_base_url or None,
             api_key=settings.local_api_key,
-            models=[ModelConfig(id=settings.local_model or "unconfigured")],
+            models=[
+                ModelConfig(
+                    id=settings.local_model or "unconfigured",
+                    alias=settings.local_model_alias or None,
+                )
+            ],
         )
     ]
     rules: list[Rule] = []
@@ -158,7 +178,12 @@ def config_from_settings(settings: Settings, *, cloud_enabled: bool) -> RoutingC
                 locality="cloud",
                 base_url=settings.cloud_base_url or None,
                 api_key=settings.cloud_api_key,
-                models=[ModelConfig(id=settings.cloud_model)],
+                models=[
+                    ModelConfig(
+                        id=settings.cloud_model,
+                        alias=settings.cloud_model_alias or None,
+                    )
+                ],
             )
         )
         cloud = Target(provider="cloud")

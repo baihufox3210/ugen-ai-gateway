@@ -1,0 +1,27 @@
+# docker compose up -d --build
+# Models, keys and other settings come from .env (copy .env.example).
+services:
+  gateway:
+    build: .
+    image: ugen-ai-gateway
+    env_file: .env
+    environment:
+      PORT: ${GATEWAY_PORT:-7632}
+      # Accounts, API keys and usage live here; the volume keeps them across rebuilds.
+      USAGE_DB_PATH: /app/data/ugen.db
+    volumes:
+      - ugen-data:/app/data
+    # Host networking lets the gateway reach a model server on this machine at
+    # localhost (for example Ollama on localhost:11434) with the same .env as
+    # start.sh. The dashboard is then on http://<host>:${GATEWAY_PORT:-7632}.
+    # On Docker Desktop (macOS, Windows), or to isolate the container, remove
+    # network_mode and use instead:
+    #   ports: ["${GATEWAY_PORT:-7632}:${GATEWAY_PORT:-7632}"]
+    #   extra_hosts: ["host.docker.internal:host-gateway"]
+    # and point LOCAL_BASE_URL at http://host.docker.internal:11434/v1.
+    network_mode: host
+    restart: unless-stopped
+
+volumes:
+  # Named volume: survives rebuilds and is writable by the container's user.
+  ugen-data:
