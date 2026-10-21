@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
+import type { User } from '../api';
 import type { ConversationTurn } from '../types';
+import Avatar from './Avatar';
 import Markdown from './Markdown';
 
 // Built-in rules that keep a request local, with the reason in plain words.
@@ -11,7 +13,7 @@ const POLICY_RULES: Record<string, string> = {
   'guard.injection': 'Possible injection: kept local',
 };
 
-function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }: { turns: ConversationTurn[]; busy: boolean; streamingText: string; onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void }) {
+function ResponsePanel({ user, turns, busy, streamingText, onFeedback, onDeleteTurn }: { user: User | null; turns: ConversationTurn[]; busy: boolean; streamingText: string; onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void }) {
   const threadRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
@@ -32,7 +34,7 @@ function ResponsePanel({ turns, busy, streamingText, onFeedback, onDeleteTurn }:
         : null;
       return <section className="turn" key={turn.id}>
         <article className="chat-message user-message">
-          <span className="message-avatar user-avatar">You</span>
+          {user ? <Avatar user={user} className="message-avatar user-avatar"/> : <span className="message-avatar user-avatar">You</span>}
           <div className="message-body"><div className="message-author"><b>You</b><button className="turn-delete" onClick={() => onDeleteTurn(turn.id)} disabled={busy} aria-label="Delete this message" title="Delete this exchange">Delete</button></div><p>{turn.user}</p></div>
         </article>
         {result ? <article className="chat-message assistant-message">

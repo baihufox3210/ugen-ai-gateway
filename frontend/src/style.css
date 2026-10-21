@@ -352,7 +352,6 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
   .chat-message{gap:9px}
   .message-avatar{width:28px;height:28px;font-size:10px}
   .user-message p,.markdown-wrap{font-size:12px}
-  .result-foot .provider-model{margin-left:0}
 }
 
 /* ── Composer ──────────────────────────────────────────────────── */
