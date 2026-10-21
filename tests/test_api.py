@@ -3,10 +3,14 @@ from importlib import import_module
 
 import pytest
 from fastapi import HTTPException, Request
+from fastapi.testclient import TestClient
 
+from tests.test_gateway import make_service
 from ugen_ai_gateway.api.routes import create_chat, health
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse, RoutingInfo
 from ugen_ai_gateway.config import Settings
+from ugen_ai_gateway.dependencies import get_gateway_service
+from ugen_ai_gateway.main import create_app
 from ugen_ai_gateway.services.gateway import GatewayService
 from ugen_ai_gateway.services.keys import Principal
 
@@ -129,3 +133,31 @@ def test_chat_handler_maps_errors_to_http(
 
     assert raised.value.status_code == status_code
     assert raised.value.detail == detail
+
+
+def test_ready_explains_an_invalid_configuration() -> None:
+    def broken() -> None:
+        raise ValueError("Model ids and aliases must be unique")
+
+    app = create_app()
+    app.dependency_overrides[get_gateway_service] = broken
+    response = TestClient(app).get("/ready")
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert "configuration" in response.json()["reason"]
+
+
+def test_ready_names_the_unreachable_provider() -> None:
+    class Down:
+        async def health_check(self) -> None:
+            raise ConnectionError("connection refused")
+
+    service, *_ = make_service(local_provider=Down())  # type: ignore[arg-type]
+    app = create_app()
+    app.dependency_overrides[get_gateway_service] = lambda: service
+    response = TestClient(app).get("/ready")
+    assert response.status_code == 503
+    assert (
+        response.json()["reason"]
+        == "Provider 'local' is not reachable; see the server logs"
+    )

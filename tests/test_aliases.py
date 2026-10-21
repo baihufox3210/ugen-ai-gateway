@@ -16,6 +16,7 @@ from ugen_ai_gateway.routing.config import (
     ProviderConfig,
     RoutingConfig,
     Target,
+    config_from_settings,
 )
 from ugen_ai_gateway.services.gateway import GatewayService
 
@@ -91,7 +92,7 @@ def test_streamed_events_use_the_alias(aliased: Any) -> None:
 
 
 def test_aliases_must_not_collide() -> None:
-    with pytest.raises(ValueError, match="unique"):
+    with pytest.raises(ValueError, match="another model"):
         RoutingConfig(
             providers=[
                 ProviderConfig(
@@ -103,3 +104,26 @@ def test_aliases_must_not_collide() -> None:
             defaults=Defaults(local=Target(provider="local")),
             analysis=Target(provider="local"),
         )
+
+
+def test_local_and_cloud_may_share_a_model_name() -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_model="gemma3:4b",
+        cloud_model="gemma3:4b",
+        cloud_api_key="key",
+    )
+    config = config_from_settings(settings, cloud_enabled=True)
+    assert [p.models[0].id for p in config.providers] == ["gemma3:4b", "gemma3:4b"]
+
+
+def test_an_alias_may_not_be_another_models_id() -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        local_model="small",
+        cloud_model="big",
+        cloud_model_alias="small",
+        cloud_api_key="key",
+    )
+    with pytest.raises(ValueError, match="another model"):
+        config_from_settings(settings, cloud_enabled=True)

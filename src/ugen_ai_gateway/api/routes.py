@@ -35,10 +35,23 @@ async def health() -> dict[str, str]:
 
 
 @router.get("/ready")
-async def readiness(gateway: GatewayDependency, response: Response) -> dict[str, str]:
-    if not await gateway.readiness():
+async def readiness(request: Request, response: Response) -> dict[str, str]:
+    """Whether requests can be served, with the reason when they cannot."""
+    factory = request.app.dependency_overrides.get(
+        get_gateway_service, get_gateway_service
+    )
+    try:
+        gateway = factory()
+    except Exception:
+        logger.exception("The gateway configuration is invalid")
         response.status_code = 503
-        return {"status": "not_ready"}
+        return {
+            "status": "not_ready",
+            "reason": "The configuration in .env is invalid; see the server logs",
+        }
+    if problem := await gateway.readiness_problem():
+        response.status_code = 503
+        return {"status": "not_ready", "reason": problem}
     return {"status": "ready"}
 
 

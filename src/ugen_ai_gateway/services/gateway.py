@@ -172,14 +172,19 @@ class GatewayService:
         return self._engine
 
     async def readiness(self) -> bool:
+        return await self.readiness_problem() is None
+
+    async def readiness_problem(self) -> str | None:
+        """Why the gateway cannot serve requests, or None when it can."""
         if not self._configured:
-            return False
-        try:
-            for provider in self._providers.values():
+            return "No local model is configured; set LOCAL_MODEL"
+        for name, provider in self._providers.items():
+            try:
                 await provider.health_check()  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 - readiness reports any provider failure
-            return False
-        return True
+            except Exception as exc:  # noqa: BLE001 - readiness reports any provider failure
+                logger.warning("Provider %s is not reachable: %s", name, exc)
+                return f"Provider '{name}' is not reachable; see the server logs"
+        return None
 
     async def chat(
         self,

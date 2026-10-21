@@ -1,3 +1,6 @@
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -9,8 +12,21 @@ from ugen_ai_gateway.api.auth_routes import router as auth_router
 from ugen_ai_gateway.api.openai_routes import router as openai_router
 from ugen_ai_gateway.api.routes import router
 from ugen_ai_gateway.config import get_settings
+from ugen_ai_gateway.dependencies import get_gateway_service
 
 API_PREFIX = "/api"
+logger = logging.getLogger("uvicorn.error")
+
+
+@asynccontextmanager
+async def report_configuration(app: FastAPI) -> AsyncIterator[None]:
+    """Name a broken model configuration at startup instead of on the first
+    request; the server still starts so /health and /ready can report it."""
+    try:
+        get_gateway_service()
+    except Exception:
+        logger.exception("The model configuration is invalid; requests will fail")
+    yield
 
 
 class StripApiPrefix:
@@ -40,7 +56,7 @@ def _static_dir() -> Path | None:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(title=settings.app_name, lifespan=report_configuration)
     app.include_router(router)
     app.include_router(auth_router)
     app.include_router(openai_router)

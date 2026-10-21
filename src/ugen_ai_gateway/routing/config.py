@@ -114,9 +114,17 @@ class RoutingConfig(BaseModel):
                     f"{where}: provider '{provider.name}' has no model '{target.model}'"
                 )
 
-        public = [m.public_id for p in self.providers for m in p.models]
-        if len(public) != len(set(public)):
-            raise ValueError("Model ids and aliases must be unique")
+        # The same model id may be served by several providers (the first one
+        # wins), but an alias must name exactly one model.
+        models = [m for p in self.providers for m in p.models]
+        aliases = [m.alias for m in models if m.alias]
+        if len(aliases) != len(set(aliases)):
+            raise ValueError("Model aliases must be unique")
+        for model in models:
+            if model.alias and any(
+                other.id == model.alias for other in models if other is not model
+            ):
+                raise ValueError(f"Alias '{model.alias}' is another model's id")
 
         for where, target, locality in (
             ("defaults.local", self.defaults.local, "local"),
