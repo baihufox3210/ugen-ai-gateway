@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import sqlite3
 from typing import Any
 
 import pytest
@@ -202,3 +204,73 @@ def test_passwords_are_salted_hashes() -> None:
 def test_api_is_also_served_under_the_api_prefix(monkeypatch, path: str) -> None:
     env = AccountEnv(monkeypatch)
     assert env.client.get(path).json() == {"status": "ok"}
+
+
+PNG = (
+    "data:image/png;base64,"
+    + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\0" * 32).decode()
+)
+
+
+def test_avatar_can_be_set_and_removed(monkeypatch) -> None:
+    env = AccountEnv(monkeypatch)
+    token = env.token("alice")
+
+    saved = env.client.put(
+        "/v1/ugen/auth/me/avatar", json={"image": PNG}, headers=bearer(token)
+    )
+    assert saved.status_code == 200 and saved.json()["avatar"] == PNG
+    assert (
+        env.client.get("/v1/ugen/auth/me", headers=bearer(token)).json()["avatar"]
+        == PNG
+    )
+    assert env.login("alice").json()["user"]["avatar"] == PNG
+
+    removed = env.client.put(
+        "/v1/ugen/auth/me/avatar", json={"image": None}, headers=bearer(token)
+    )
+    assert removed.json()["avatar"] is None
+    assert (
+        env.client.put("/v1/ugen/auth/me/avatar", json={"image": PNG}).status_code
+        == 401
+    )
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "data:image/svg+xml;base64,"
+        + base64.b64encode(b"<svg onload=alert(1)>").decode(),
+        "data:image/png;base64," + base64.b64encode(b"<html>not a png</html>").decode(),
+        "data:image/png;base64,***",
+        "https://example.com/me.png",
+        "data:image/png;base64,"
+        + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\0" * 210_000).decode()[:299_000],
+    ],
+)
+def test_avatar_rejects_anything_but_a_small_image(monkeypatch, image: str) -> None:
+    env = AccountEnv(monkeypatch)
+    token = env.token("alice")
+    response = env.client.put(
+        "/v1/ugen/auth/me/avatar", json={"image": image}, headers=bearer(token)
+    )
+    assert response.status_code == 422
+
+
+def test_existing_database_gains_the_avatar_column(tmp_path) -> None:
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, "
+        "password_hash TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, "
+        "created_at REAL NOT NULL, last_login_at REAL)"
+    )
+    old.commit()
+    old.close()
+
+    async def scenario() -> None:
+        store = UsageStore(path)
+        user = await store.create_user("alice", PASSWORD)
+        assert (await store.set_avatar(user["id"], PNG))["avatar"] == PNG  # type: ignore[index]
+
+    asyncio.run(scenario())

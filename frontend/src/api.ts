@@ -4,7 +4,7 @@ export const SIGNED_OUT_EVENT = 'ugen:signed-out';
 
 export const apiUrl = (import.meta.env.VITE_GATEWAY_URL || '/api').replace(/\/$/, '');
 
-export type User = { id: string; username: string; is_admin: boolean };
+export type User = { id: string; username: string; is_admin: boolean; avatar?: string | null };
 export type Session = { token: string; user: User };
 export type AuthStatus = { accounts_enabled: boolean; has_users: boolean; registration_open: boolean };
 

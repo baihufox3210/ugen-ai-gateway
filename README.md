@@ -63,9 +63,10 @@ The server listens on `0.0.0.0:7632` by default. `/health` reports process
 liveness. `/ready` checks that the local model endpoint (and configured cloud
 endpoint) can be reached.
 
-`./start.sh` runs the API and the dashboard's development server together
-(API on `7632`, dashboard on `http://localhost:5173`; change them with
-`BACKEND_PORT` and `FRONTEND_PORT`). When `frontend/dist` exists (after
+To run the gateway, use [Docker](#docker). `./start.sh` is for development: it
+runs the API and the dashboard's development server together, reloading the
+page as frontend code changes (API on `7632`, dashboard on
+`http://localhost:5173`; change them with `BACKEND_PORT` and `FRONTEND_PORT`). When `frontend/dist` exists (after
 `npm run build` in `frontend/`), the API server also serves the dashboard at
 `/`.
 
@@ -157,6 +158,9 @@ export the audit log and see every request's usage; members see only their own.
   per minute per IP.
 - `GET /v1/ugen/auth/me` returns the signed-in user and
   `POST /v1/ugen/auth/logout` ends the session.
+- `PUT /v1/ugen/auth/me/avatar` with `{"image": "data:image/webp;base64,..."}`
+  sets the profile picture (PNG, JPEG or WebP, at most 200 KB; the dashboard
+  crops and resizes it to 160×160 first) and `{"image": null}` removes it.
 - `DELETE /v1/ugen/auth/me` with `{"password": "..."}` deletes the account,
   its sessions, and its request metadata and feedback. Audit entries stay
   (they never name the user, and removing them would break the hash chain).
@@ -206,9 +210,10 @@ limiter is in-memory and per process behind a small `RateLimiter` interface,
 so running several workers needs a shared store, such as Redis, behind that
 interface.
 
-The dashboard's settings dialog (gear icon in the sidebar) shows the signed-in
-account, signs out, deletes the account, and lets an administrator create,
-list, and revoke keys and export the audit log.
+In the dashboard, the account button in the sidebar opens the Account page
+(profile picture, sign out, delete account) and the key icon opens the API
+keys page, where an administrator creates, lists and revokes keys and exports
+the audit log.
 
 ### Dashboard endpoints
 

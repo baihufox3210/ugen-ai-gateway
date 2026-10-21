@@ -35,7 +35,7 @@ function Root() {
         if (!active) return;
         if (response.ok) {
           const user = await response.json() as User;
-          if (user.is_admin !== session.user.is_admin || user.username !== session.user.username) updateSession({ ...session, user });
+          if (user.is_admin !== session.user.is_admin || user.username !== session.user.username || user.avatar !== session.user.avatar) updateSession({ ...session, user });
         }
       })
       .catch(() => { /* Offline: keep the saved session and let requests report it. */ });
@@ -65,7 +65,9 @@ function Root() {
   }
   if (status.accounts_enabled && !session) return <AuthScreen key={String(status.has_users)} status={status} onSignedIn={updateSession}/>;
   // key: each account gets a fresh dashboard with its own saved history.
-  return <App key={session?.user.id ?? 'open'} user={session?.user ?? null} onSignOut={signOut} onAccountDeleted={() => { updateSession(null); void loadStatus(); }}/>;
+  return <App key={session?.user.id ?? 'open'} user={session?.user ?? null} onSignOut={signOut}
+    onUserChange={user => session && updateSession({ ...session, user })}
+    onAccountDeleted={() => { updateSession(null); void loadStatus(); }}/>;
 }
 
 export default Root;

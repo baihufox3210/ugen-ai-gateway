@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
-    last_login_at REAL
+    last_login_at REAL,
+    avatar TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -132,9 +133,12 @@ def token_cost(
 
 
 _ADDED_COLUMNS = {
-    "injection_signals": "TEXT NOT NULL DEFAULT '[]'",
-    "output_redactions": "INTEGER NOT NULL DEFAULT 0",
-    "user_id": "TEXT",
+    "requests": {
+        "injection_signals": "TEXT NOT NULL DEFAULT '[]'",
+        "output_redactions": "INTEGER NOT NULL DEFAULT 0",
+        "user_id": "TEXT",
+    },
+    "users": {"avatar": "TEXT"},
 }
 _GENESIS_HASH = "0" * 64
 
@@ -176,15 +180,16 @@ class UsageStore:
 
     def _migrate(self) -> None:
         """Add columns introduced after a database was first created."""
-        existing = {
-            row["name"]
-            for row in self._connection.execute("PRAGMA table_info(requests)")
-        }
-        for name, definition in _ADDED_COLUMNS.items():
-            if name not in existing:
-                self._connection.execute(
-                    f"ALTER TABLE requests ADD COLUMN {name} {definition}"
-                )
+        for table, columns in _ADDED_COLUMNS.items():
+            existing = {
+                row["name"]
+                for row in self._connection.execute(f"PRAGMA table_info({table})")
+            }
+            for name, definition in columns.items():
+                if name not in existing:
+                    self._connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
+                    )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS requests_user_id ON requests (user_id)"
         )
@@ -602,6 +607,12 @@ class UsageStore:
     async def delete_session(self, token: str) -> None:
         await asyncio.to_thread(self._delete_session, token)
 
+    async def set_avatar(
+        self, user_id: str, avatar: str | None
+    ) -> dict[str, Any] | None:
+        """Store (or with None, remove) a user's avatar image as a data URL."""
+        return await asyncio.to_thread(self._set_avatar, user_id, avatar)
+
     async def delete_user(self, user_id: str) -> bool:
         """Delete an account with its sessions, request metadata and feedback.
 
@@ -693,6 +704,16 @@ class UsageStore:
                 "DELETE FROM sessions WHERE token_hash = ?", (_key_hash(token),)
             )
 
+    def _set_avatar(self, user_id: str, avatar: str | None) -> dict[str, Any] | None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET avatar = ? WHERE id = ?", (avatar, user_id)
+            )
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        return _user_view(dict(row)) if row else None
+
     def _delete_user(self, user_id: str) -> bool:
         with self._lock, self._connection:
             self._connection.execute("BEGIN IMMEDIATE")
@@ -740,6 +761,7 @@ def _user_view(row: dict[str, Any]) -> dict[str, Any]:
         "is_admin": bool(row["is_admin"]),
         "created_at": row["created_at"],
         "last_login_at": row.get("last_login_at"),
+        "avatar": row.get("avatar"),
     }
 
 

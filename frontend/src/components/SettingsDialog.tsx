@@ -1,7 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, apiUrl, errorMessage, type User } from '../api';
+import Avatar from './Avatar';
+import NumberStepper from './NumberStepper';
 
-type Props = { user: User | null; onSignOut: () => void; onAccountDeleted: () => void; onClose: () => void };
+export type SettingsPage = 'account' | 'keys';
+type Props = {
+  user: User | null;
+  page: SettingsPage;
+  onPageChange: (page: SettingsPage) => void;
+  onUserChange: (user: User) => void;
+  onSignOut: () => void;
+  onAccountDeleted: () => void;
+  onClose: () => void;
+};
 type ApiKey = {
   id: string; name: string; prefix: string; created_at: number; revoked_at: number | null; last_used_at: number | null;
   allow_cloud: boolean; monthly_budget_usd: number | null; rate_limit_per_minute: number | null;
@@ -10,28 +21,120 @@ type ApiKey = {
 
 const usd = (value: number) => `$${value < 1 ? value.toFixed(4) : value.toFixed(2)}`;
 const date = (seconds: number | null) => seconds ? new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'short' }).format(seconds * 1000) : '—';
+// Budget arrows move in cents-scale steps for small budgets and whole dollars from $10 up.
+const budgetStep = (current: number, direction: 1 | -1) => (direction === 1 ? current < 10 : current <= 10) ? 0.1 : 1;
+const AVATAR_SIZE = 160;
 
-function SettingsDialog({ user, onSignOut, onAccountDeleted, onClose }: Props) {
-  // Without accounts (no database) the gateway runs open and key management is open too.
-  const canManageKeys = user ? user.is_admin : true;
+/** Crop the picture to a centered square and shrink it, so uploads stay small. */
+async function avatarDataUrl(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error('That file is not an image this browser can read.'));
+      element.src = url;
+    });
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    const canvas = Object.assign(document.createElement('canvas'), { width: AVATAR_SIZE, height: AVATAR_SIZE });
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This browser cannot resize images.');
+    context.drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
+    const webp = canvas.toDataURL('image/webp', 0.86);
+    // Browsers without WebP encoding return PNG; JPEG is much smaller then.
+    return webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/jpeg', 0.86);
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user: User; onUserChange: (user: User) => void; onSignOut: () => void; onAccountDeleted: () => void }) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [avatarError, setAvatarError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+
+  async function saveAvatar(image: string | null) {
+    setSaving(true); setAvatarError('');
+    try {
+      const response = await apiFetch('/v1/ugen/auth/me/avatar', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }),
+      });
+      if (!response.ok) { setAvatarError(await errorMessage(response)); return; }
+      onUserChange(await response.json() as User);
+    } catch { setAvatarError('Cannot reach the gateway'); } finally { setSaving(false); }
+  }
+
+  async function pickAvatar(file: File | undefined) {
+    if (!file) return;
+    try { await saveAvatar(await avatarDataUrl(file)); } catch (cause) { setAvatarError(cause instanceof Error ? cause.message : 'Could not read that image.'); }
+  }
+
+  async function deleteAccount(event: React.FormEvent) {
+    event.preventDefault();
+    if (!deletePassword || saving) return;
+    setSaving(true); setDeleteError('');
+    try {
+      const response = await apiFetch('/v1/ugen/auth/me', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: deletePassword }),
+      });
+      if (response.status === 204) { onAccountDeleted(); return; }
+      setDeleteError(await errorMessage(response));
+    } catch { setDeleteError('Cannot reach the gateway'); } finally { setSaving(false); }
+  }
+
+  return <>
+    <div className="settings-section first">
+      <h3>Profile</h3>
+      <div className="profile-row">
+        <button type="button" className="avatar-picker" onClick={() => fileInput.current?.click()} disabled={saving} aria-label="Change profile picture" title="Change profile picture">
+          <Avatar user={user} className="large"/><span className="avatar-edit" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8.5h3l1.6-2.5h6.8L17 8.5h3V18H4z"/><circle cx="12" cy="13" r="3.2"/></svg></span>
+        </button>
+        <span className="account-copy"><b>{user.username}</b><small>{user.is_admin ? 'Administrator · manages API keys and sees all usage' : 'Member · sees only your own usage'}</small>
+          <span className="profile-actions">
+            <button type="button" className="cancel-button" onClick={() => fileInput.current?.click()} disabled={saving}>{saving ? 'Saving…' : user.avatar ? 'Change picture' : 'Upload picture'}</button>
+            {user.avatar && <button type="button" className="text-action" onClick={() => void saveAvatar(null)} disabled={saving}>Remove</button>}
+          </span>
+        </span>
+        <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { void pickAvatar(event.target.files?.[0]); event.target.value = ''; }}/>
+      </div>
+      <small className="settings-hint">PNG, JPEG or WebP. It is cropped to a square and resized to {AVATAR_SIZE}×{AVATAR_SIZE}.</small>
+      {avatarError && <div className="error-box" role="alert"><span>{avatarError}</span></div>}
+    </div>
+
+    <div className="settings-section">
+      <h3>Session</h3>
+      <div className="settings-line"><p>Signed in on this browser. Signing out keeps your saved conversations here.</p><button className="cancel-button" type="button" onClick={onSignOut}>Sign out</button></div>
+    </div>
+
+    <div className="settings-section danger-zone">
+      <h3>Delete account</h3>
+      <p>Permanently deletes your account, your sign-in sessions and your usage records, plus the conversations saved in this browser. This cannot be undone.{user.is_admin ? ' If you are the last administrator, the oldest remaining account becomes administrator.' : ''}</p>
+      {deleting ? <form className="settings-row" onSubmit={deleteAccount}>
+        <input type="password" value={deletePassword} onChange={event => { setDeletePassword(event.target.value); setDeleteError(''); }} placeholder="Enter your password to confirm" aria-label="Password" autoComplete="current-password" autoFocus/>
+        <button className="danger-button" type="submit" disabled={saving || !deletePassword}>Delete permanently</button>
+        <button className="cancel-button" type="button" onClick={() => { setDeleting(false); setDeletePassword(''); setDeleteError(''); }}>Cancel</button>
+      </form> : <button className="danger-outline-button" type="button" onClick={() => setDeleting(true)}>Delete my account…</button>}
+      {deleteError && <div className="error-box" role="alert"><span>{deleteError}</span></div>}
+    </div>
+  </>;
+}
+
+function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [keysError, setKeysError] = useState('');
   const [form, setForm] = useState({ name: '', allowCloud: true, budget: '', rateLimit: '' });
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [working, setWorking] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deletePassword, setDeletePassword] = useState('');
-  const [deleteError, setDeleteError] = useState('');
 
   const load = useCallback(async () => {
-    if (!canManageKeys) return;
     try {
       const response = await apiFetch('/v1/ugen/keys');
       if (response.ok) { setKeys((await response.json() as { data: ApiKey[] }).data); setKeysError(''); }
       else { setKeys(null); setKeysError(await errorMessage(response)); }
     } catch { setKeys(null); setKeysError('Cannot reach the gateway'); }
-  }, [canManageKeys]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -67,84 +170,64 @@ function SettingsDialog({ user, onSignOut, onAccountDeleted, onClose }: Props) {
     try { await navigator.clipboard.writeText(text); setCopied(true); } catch { setCopied(false); }
   }
 
-  async function deleteAccount(event: React.FormEvent) {
-    event.preventDefault();
-    if (!deletePassword || working) return;
-    setWorking(true); setDeleteError('');
-    try {
-      const response = await apiFetch('/v1/ugen/auth/me', {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: deletePassword }),
-      });
-      if (response.status === 204) { onAccountDeleted(); return; }
-      setDeleteError(await errorMessage(response));
-    } catch {
-      setDeleteError('Cannot reach the gateway');
-    } finally { setWorking(false); }
-  }
+  return <>
+    <div className="settings-section first">
+      <h3>Create a key</h3>
+      <p>Keys let other apps call the OpenAI-compatible API. Create one per team or app, each with its own cloud access, monthly budget and rate limit. Once the budget is used up, local models answer instead.</p>
+      {created && <div className="created-key" role="status">
+        <b>The key for "{created.name}" is shown only once:</b>
+        <code>{created.key}</code>
+        <button className="cancel-button" type="button" onClick={() => copy(created.key)}>{copied ? 'Copied' : 'Copy'}</button>
+      </div>}
+      {keysError && <div className="error-box" role="alert"><span>{keysError}</span></div>}
+      {keys && <form className="key-form" onSubmit={createKey}>
+        <input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Name, e.g. Marketing team" aria-label="Key name" maxLength={80} required/>
+        <NumberStepper value={form.budget} onChange={budget => setForm(current => ({ ...current, budget }))} step={budgetStep} min={0} decimals={2} placeholder="Budget USD/mo" label="Monthly cloud budget"/>
+        <NumberStepper value={form.rateLimit} onChange={rateLimit => setForm(current => ({ ...current, rateLimit }))} step={() => 1} min={1} decimals={0} placeholder="Max req/min" label="Requests per minute limit"/>
+        <label className="key-check"><input type="checkbox" checked={form.allowCloud} onChange={event => setForm({ ...form, allowCloud: event.target.checked })}/> Allow cloud models</label>
+        <button className="send-button" type="submit" disabled={working || !form.name.trim()}>Create key</button>
+      </form>}
+      {keys && <small className="settings-hint">Leave budget or rate limit empty for no limit. Budget arrows step $0.10 below $10 and $1 from $10 up.</small>}
+    </div>
+    {keys && <div className="settings-section">
+      <h3>Keys</h3>
+      {keys.length ? <ul className="key-list">{keys.map(key => <li key={key.id} className={key.revoked_at ? 'revoked' : ''}>
+        <div className="key-main"><b>{key.name}</b><small><code>{key.prefix}…</code> · {key.allow_cloud ? 'Cloud allowed' : 'Local only'}{key.monthly_budget_usd !== null ? ` · budget ${usd(key.monthly_budget_usd)}` : ''}{key.rate_limit_per_minute !== null ? ` · ${key.rate_limit_per_minute}/min` : ''}</small></div>
+        <div className="key-usage"><b>{key.month_requests} req · {usd(key.month_cost_usd)}</b><small>{key.revoked_at ? `Revoked ${date(key.revoked_at)}` : `Last used ${date(key.last_used_at)}`}</small></div>
+        {!key.revoked_at && <button className="text-action" onClick={() => revoke(key)}>Revoke</button>}
+      </li>)}</ul> : <p className="key-empty">No API keys yet.</p>}
+      <a className="audit-link" href={`${apiUrl}/v1/ugen/audit?format=csv`} onClick={async event => {
+        event.preventDefault();
+        const response = await apiFetch('/v1/ugen/audit?format=csv');
+        if (!response.ok) { setKeysError(await errorMessage(response)); return; }
+        const url = URL.createObjectURL(await response.blob());
+        const link = Object.assign(document.createElement('a'), { href: url, download: 'ugen-audit.csv' });
+        link.click(); URL.revokeObjectURL(url);
+      }}>Export audit log (CSV)</a>
+    </div>}
+  </>;
+}
+
+function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onAccountDeleted, onClose }: Props) {
+  // Without accounts (no database) the gateway runs open and key management is open too.
+  const canManageKeys = user ? user.is_admin : true;
+  const pages: { id: SettingsPage; label: string }[] = [
+    ...(user ? [{ id: 'account' as const, label: 'Account' }] : []),
+    ...(canManageKeys ? [{ id: 'keys' as const, label: 'API keys' }] : []),
+  ];
+  const current = pages.some(item => item.id === page) ? page : pages[0]?.id;
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="confirm-modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div className="settings-head">
-        <div><span className="eyebrow">SETTINGS</span><h2 id="settings-title">{user ? 'Account & settings' : 'Settings'}</h2></div>
+        <div><span className="eyebrow">SETTINGS</span><h2 id="settings-title">{current === 'keys' ? 'API keys' : 'Account'}</h2></div>
         <button className="icon-button" onClick={onClose} aria-label="Close settings">×</button>
       </div>
-
-      {user ? <div className="settings-section">
-        <h3>Account</h3>
-        <div className="account-row">
-          <span className="account-avatar" aria-hidden="true">{user.username.slice(0, 1).toUpperCase()}</span>
-          <span className="account-copy"><b>{user.username}</b><small>{user.is_admin ? 'Administrator · manages API keys and sees all usage' : 'Member · sees only your own usage'}</small></span>
-          <button className="cancel-button" type="button" onClick={onSignOut}>Sign out</button>
-        </div>
-      </div> : <div className="settings-section">
-        <h3>Accounts are off</h3>
-        <p>Set USAGE_DB_PATH so the gateway has a database; then sign-in is required and the first account becomes the administrator.</p>
+      {pages.length > 1 && <div className="settings-tabs" role="tablist" aria-label="Settings pages">
+        {pages.map(item => <button key={item.id} type="button" role="tab" aria-selected={current === item.id} className={current === item.id ? 'selected' : ''} onClick={() => onPageChange(item.id)}>{item.label}</button>)}
       </div>}
-
-      {canManageKeys && <div className="settings-section">
-        <h3>API keys</h3>
-        <p>Keys let other apps call the OpenAI-compatible API. Create one per team or app, each with its own cloud access, monthly budget and rate limit. Once the budget is used up, local models answer instead.</p>
-        {created && <div className="created-key" role="status">
-          <b>The key for "{created.name}" is shown only once:</b>
-          <code>{created.key}</code>
-          <button className="cancel-button" type="button" onClick={() => copy(created.key)}>{copied ? 'Copied' : 'Copy'}</button>
-        </div>}
-        {keysError && <div className="error-box" role="alert"><span>{keysError}</span></div>}
-        {keys && <>
-          <form className="key-form" onSubmit={createKey}>
-            <input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Name, e.g. Marketing team" aria-label="Key name" maxLength={80} required/>
-            <input value={form.budget} onChange={event => setForm({ ...form, budget: event.target.value })} placeholder="Budget USD/mo" aria-label="Monthly cloud budget" type="number" min="0" step="0.01"/>
-            <input value={form.rateLimit} onChange={event => setForm({ ...form, rateLimit: event.target.value })} placeholder="Max req/min" aria-label="Requests per minute limit" type="number" min="1" step="1"/>
-            <label className="key-check"><input type="checkbox" checked={form.allowCloud} onChange={event => setForm({ ...form, allowCloud: event.target.checked })}/> Allow cloud models</label>
-            <button className="send-button" type="submit" disabled={working || !form.name.trim()}>Create key</button>
-          </form>
-          {keys.length ? <ul className="key-list">{keys.map(key => <li key={key.id} className={key.revoked_at ? 'revoked' : ''}>
-            <div className="key-main"><b>{key.name}</b><small><code>{key.prefix}…</code> · {key.allow_cloud ? 'Cloud allowed' : 'Local only'}{key.monthly_budget_usd !== null ? ` · budget ${usd(key.monthly_budget_usd)}` : ''}{key.rate_limit_per_minute !== null ? ` · ${key.rate_limit_per_minute}/min` : ''}</small></div>
-            <div className="key-usage"><b>{key.month_requests} req · {usd(key.month_cost_usd)}</b><small>{key.revoked_at ? `Revoked ${date(key.revoked_at)}` : `Last used ${date(key.last_used_at)}`}</small></div>
-            {!key.revoked_at && <button className="text-action" onClick={() => revoke(key)}>Revoke</button>}
-          </li>)}</ul> : <p className="key-empty">No API keys yet.</p>}
-          <a className="audit-link" href={`${apiUrl}/v1/ugen/audit?format=csv`} onClick={async event => {
-            event.preventDefault();
-            const response = await apiFetch('/v1/ugen/audit?format=csv');
-            if (!response.ok) { setKeysError(await errorMessage(response)); return; }
-            const url = URL.createObjectURL(await response.blob());
-            const link = Object.assign(document.createElement('a'), { href: url, download: 'ugen-audit.csv' });
-            link.click(); URL.revokeObjectURL(url);
-          }}>Export audit log (CSV)</a>
-        </>}
-      </div>}
-
-      {user && <div className="settings-section danger-zone">
-        <h3>Delete account</h3>
-        <p>Permanently deletes your account, your sign-in sessions and your usage records, plus the conversations saved in this browser. This cannot be undone.{user.is_admin ? ' If you are the last administrator, the oldest remaining account becomes administrator.' : ''}</p>
-        {deleting ? <form className="settings-row" onSubmit={deleteAccount}>
-          <input type="password" value={deletePassword} onChange={event => { setDeletePassword(event.target.value); setDeleteError(''); }} placeholder="Enter your password to confirm" aria-label="Password" autoComplete="current-password" autoFocus/>
-          <button className="danger-button" type="submit" disabled={working || !deletePassword}>Delete permanently</button>
-          <button className="cancel-button" type="button" onClick={() => { setDeleting(false); setDeletePassword(''); setDeleteError(''); }}>Cancel</button>
-        </form> : <button className="danger-outline-button" type="button" onClick={() => setDeleting(true)}>Delete my account…</button>}
-        {deleteError && <div className="error-box" role="alert"><span>{deleteError}</span></div>}
-      </div>}
+      {current === 'account' && user && <AccountPage user={user} onUserChange={onUserChange} onSignOut={onSignOut} onAccountDeleted={onAccountDeleted}/>}
+      {current === 'keys' && <ApiKeysPage/>}
     </section>
   </div>;
 }

@@ -4,6 +4,8 @@ Sessions are bearer tokens (``ugs_…``) sent like API keys. The first account
 becomes the administrator; others are members who see only their own usage.
 """
 
+import base64
+import binascii
 import re
 from typing import Annotated, Any
 
@@ -37,6 +39,44 @@ class Credentials(BaseModel):
     def check_username(cls, value: str) -> str:
         if not _USERNAME.match(value):
             raise ValueError("Use 3-32 letters, digits, dots, dashes or underscores")
+        return value
+
+
+# The dashboard resizes avatars to a small square before uploading.
+_AVATAR_MAX_BYTES = 200_000
+_AVATAR_TYPES = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/webp": (b"RIFF",),
+}
+
+
+class AvatarUpdate(BaseModel):
+    # A data URL (data:image/png;base64,...); null removes the avatar.
+    image: str | None = Field(default=None, max_length=300_000)
+
+    @field_validator("image")
+    @classmethod
+    def check_image(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        header, _, payload = value.partition(",")
+        mime = header.removeprefix("data:").removesuffix(";base64")
+        if not header.startswith("data:") or not header.endswith(";base64"):
+            raise ValueError("Send the image as a base64 data URL")
+        if mime not in _AVATAR_TYPES:
+            raise ValueError("Use a PNG, JPEG or WebP image")
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("The image data is not valid base64") from exc
+        if len(data) > _AVATAR_MAX_BYTES:
+            raise ValueError("The image is too large")
+        # Check the bytes really are that image type, never e.g. SVG or HTML.
+        if not data.startswith(_AVATAR_TYPES[mime]) or (
+            mime == "image/webp" and data[8:12] != b"WEBP"
+        ):
+            raise ValueError("The file is not a valid image")
         return value
 
 
@@ -135,6 +175,18 @@ async def logout(store: UsageStoreDependency, request: Request) -> Response:
 async def current_user(store: UsageStoreDependency, request: Request) -> dict[str, Any]:
     _, user = await _session_user(request, _require_store(store))
     return user
+
+
+@router.put("/me/avatar")
+async def update_avatar(
+    body: AvatarUpdate, store: UsageStoreDependency, request: Request
+) -> dict[str, Any]:
+    store = _require_store(store)
+    _, user = await _session_user(request, store)
+    updated = await store.set_avatar(user["id"], body.image)
+    if updated is None:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    return updated
 
 
 @router.delete("/me", status_code=204)

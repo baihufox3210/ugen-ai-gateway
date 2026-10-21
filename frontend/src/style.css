@@ -111,11 +111,14 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .new-chat:disabled{opacity:.55;cursor:not-allowed}
 .new-chat>span{display:grid;place-items:center;width:22px;height:22px;border-radius:7px;background:#edf6f1;color:#36866a;font-size:18px;line-height:1}
 .new-chat kbd{margin-left:auto;border:1px solid #e5ece8;border-radius:5px;padding:2px 5px;color:#91a49b;font:9px 'DM Sans',sans-serif}
-.sidebar-footer{display:flex;align-items:center;gap:9px;padding:1px 6px 2px;color:#879990}
-.sidebar-footer>span:nth-child(2){display:grid;gap:3px}
-.sidebar-footer .settings-button{margin-left:auto}
-.sidebar-footer b{color:#647d72;font-size:9px;font-weight:600}
-.sidebar-footer small{font-size:8px}
+.sidebar-footer{display:flex;align-items:center;gap:4px;padding:1px 0 2px;color:#879990}
+.account-button{display:flex;flex:1;align-items:center;gap:9px;min-width:0;border:0;border-radius:9px;padding:5px 6px;background:transparent;color:inherit;text-align:left;cursor:pointer;transition:background .18s}
+.account-button:hover{background:#eef5f1}
+.account-button.static{cursor:default}
+.account-button.static:hover{background:transparent}
+.account-button>span:last-child{display:grid;gap:3px;min-width:0}
+.account-button b{overflow:hidden;color:#647d72;font-size:9px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
+.account-button small{overflow:hidden;font-size:8px;text-overflow:ellipsis;white-space:nowrap}
 .sidebar-status-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#51aa83;box-shadow:0 0 0 3px #51aa8318}
 .lock-icon{margin-left:auto;color:#89a395;font-size:17px}
 @media(hover:none),(max-width:899px){.new-chat kbd{display:none}}
@@ -496,12 +499,6 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .auth-loading{justify-items:center;text-align:center}
 .auth-loading p{margin:0;color:#788c83;font-size:11px}
 .spinner.dark{width:20px;height:20px;border-color:#cfe1d9;border-top-color:#36866a}
-.sidebar-avatar,.account-avatar{display:grid;place-items:center;flex:none;border-radius:50%;background:#e7f3ed;color:#2f7a5f;font-weight:700}
-.sidebar-avatar{width:22px;height:22px;font-size:10px}
-.sidebar-footer>span:nth-child(2){min-width:0}
-.sidebar-footer b,.sidebar-footer small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.account-row{display:flex;align-items:center;gap:11px;margin-top:10px}
-.account-avatar{width:34px;height:34px;font-size:14px}
 .account-copy{display:grid;flex:1;gap:3px;min-width:0}
 .account-copy b{color:#203c34;font-size:12px}
 .account-copy small{color:#8a9c95;font-size:9.5px}
@@ -510,3 +507,32 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .danger-outline-button:hover{border-color:#d9a39b;background:#fff7f5}
 .danger-zone .settings-row .danger-button:disabled{opacity:.55;cursor:default}
 @media(max-width:560px){.danger-zone .settings-row{flex-wrap:wrap}.danger-zone .settings-row input{flex-basis:100%}}
+
+.avatar{display:grid;place-items:center;flex:none;overflow:hidden;border-radius:50%;background:#e7f3ed;color:#2f7a5f;font-weight:700}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.avatar.small{width:24px;height:24px;font-size:10px}
+.avatar.large{width:60px;height:60px;font-size:23px}
+.settings-tabs{display:grid;grid-template-columns:repeat(2,1fr);gap:4px;margin-top:14px;border:1px solid #e3ebe7;border-radius:10px;padding:3px;background:#f6faf8}
+.settings-tabs button{border:0;border-radius:7px;padding:8px;background:transparent;color:#6c8279;font-size:11px;font-weight:600;cursor:pointer;transition:background .2s,color .2s}
+.settings-tabs button.selected{background:#fff;color:#20594b;box-shadow:0 2px 6px #1c3f3412}
+.settings-section.first{border-top:0;padding-top:0}
+.settings-hint{display:block;margin-top:8px;color:#8a9c95;font-size:9.5px;line-height:1.6}
+.settings-line{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.settings-line p{margin:5px 0 0;color:#788c83;font-size:10px;line-height:1.7}
+.profile-row{display:flex;align-items:center;gap:14px;margin-top:12px}
+.avatar-picker{position:relative;flex:none;border:0;border-radius:50%;padding:0;background:none;cursor:pointer}
+.avatar-picker:disabled{cursor:wait;opacity:.7}
+.avatar-edit{position:absolute;right:-2px;bottom:-2px;display:grid;place-items:center;width:22px;height:22px;border:2px solid #fff;border-radius:50%;background:var(--green-dark);color:#fff}
+.avatar-edit svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round}
+.avatar-picker:hover .avatar{box-shadow:0 0 0 3px #64a88e30}
+.profile-actions{display:flex;align-items:center;gap:6px;margin-top:6px}
+.profile-actions .text-action{margin-left:0}
+.stepper{position:relative;display:flex;min-width:0}
+.settings-section .stepper input{width:100%;padding-right:28px}
+.stepper-arrows{position:absolute;top:3px;right:3px;bottom:3px;display:grid;grid-template-rows:1fr 1fr;width:20px;overflow:hidden;border-left:1px solid #e6eeea;border-radius:0 7px 7px 0}
+.stepper-arrows button{display:grid;place-items:center;border:0;padding:0;background:#f4f8f6;color:#5f7c70;cursor:pointer;transition:background .15s,color .15s}
+.stepper-arrows button+button{border-top:1px solid #e6eeea}
+.stepper-arrows button:hover:not(:disabled){background:#e4f1ea;color:#20594b}
+.stepper-arrows button:disabled{color:#c3d0ca;cursor:default}
+.stepper-arrows svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+@media(max-width:560px){.settings-line{flex-wrap:wrap}.profile-row{align-items:flex-start}}
