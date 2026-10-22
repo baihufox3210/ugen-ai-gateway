@@ -6,6 +6,8 @@ const backendPort = process.env.UGEN_BACKEND_PORT ?? "7632";
 
 export default defineConfig({
   plugins: [react()],
+  // The Markdown/KaTeX/highlight chunk is large but loads only with the first reply.
+  build: { chunkSizeWarningLimit: 700 },
   server: {
     host: "0.0.0.0",
     port: 5173,
