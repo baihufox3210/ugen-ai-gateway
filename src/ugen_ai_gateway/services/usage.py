@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS users (
     disabled INTEGER NOT NULL DEFAULT 0,
     monthly_budget_usd REAL,
     oidc_subject TEXT,
-    email TEXT
+    email TEXT,
+    instructions TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -196,6 +197,7 @@ _ADDED_COLUMNS = {
         "monthly_budget_usd": "REAL",
         "oidc_subject": "TEXT",
         "email": "TEXT",
+        "instructions": "TEXT",
     },
 }
 _GENESIS_HASH = "0" * 64
@@ -700,6 +702,13 @@ class UsageStore:
     ) -> dict[str, Any] | None:
         """Store (or with None, remove) a user's avatar image as a data URL."""
         return await asyncio.to_thread(self._set_avatar, user_id, avatar)
+
+    async def get_instructions(self, user_id: str) -> str:
+        """A user's custom instructions, as stored (sealed by the caller)."""
+        return await asyncio.to_thread(self._get_instructions, user_id)
+
+    async def set_instructions(self, user_id: str, instructions: str) -> None:
+        await asyncio.to_thread(self._set_instructions, user_id, instructions)
 
     async def change_password(
         self, user_id: str, password: str, *, keep_session: str | None = None
@@ -1352,6 +1361,20 @@ class UsageStore:
         with self._lock, self._connection:
             self._connection.execute(
                 "DELETE FROM sessions WHERE token_hash = ?", (_key_hash(token),)
+            )
+
+    def _get_instructions(self, user_id: str) -> str:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT instructions FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        return (row["instructions"] or "") if row else ""
+
+    def _set_instructions(self, user_id: str, instructions: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET instructions = ? WHERE id = ?",
+                (instructions or None, user_id),
             )
 
     def _set_avatar(self, user_id: str, avatar: str | None) -> dict[str, Any] | None:

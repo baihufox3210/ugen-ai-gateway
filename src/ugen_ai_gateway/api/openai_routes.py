@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ugen_ai_gateway.api.access import authenticate
 from ugen_ai_gateway.api.errors import http_error_for
+from ugen_ai_gateway.api.prompt_routes import with_prompts
 from ugen_ai_gateway.api.schemas import MAX_CHAT_MESSAGES, ChatRequest, ChatResponse
 from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.routing.engine import RuleEngine
@@ -208,6 +209,7 @@ async def create_chat_completion(
         request, options = to_gateway_request(body, gateway.engine)
     except _RequestRejected as exc:
         return error_response(exc.status_code, str(exc), code=exc.code)
+    request = await with_prompts(request, store, principal)
 
     created = int(time.time())
 

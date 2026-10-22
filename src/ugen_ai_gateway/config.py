@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     injection_action: Literal["off", "flag", "local", "block"] = "flag"
     # Personal data in model output that the user never provided: off, flag
     # (record only), or redact (replace with a [LABEL] marker).
-    output_pii_action: Literal["off", "flag", "redact"] = "redact"
+    output_pii_action: Literal["off", "flag", "redact"] = "off"
     # Required for the audit endpoints when set; otherwise GATEWAY_API_KEY rules.
     admin_api_key: str = ""
 

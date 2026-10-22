@@ -335,9 +335,10 @@ def test_chat_analyzes_user_text_from_strings_and_text_parts() -> None:
 
     asyncio.run(service.chat(request))
 
-    # The latest message on its own; older ones together in one call.
+    # The latest message (a short follow-up, so together with the message
+    # before it) in one call; older ones together in another.
     assert analyzer.inputs == [
-        "second",
+        "from a part\n\nsecond",
         ANALYSIS_BATCH_SEPARATOR.join(["system prompt", "first", "from a part"]),
     ]
 
@@ -388,7 +389,7 @@ def test_long_conversations_need_at_most_two_analysis_calls() -> None:
             )
         )
     )
-    assert analyzer.inputs[2:] == ["one more"]
+    assert analyzer.inputs[2:] == ["and now?\n\none more"]
 
 
 def test_personal_data_without_values_in_a_batch_keeps_requests_local() -> None:
@@ -450,7 +451,7 @@ def test_earlier_messages_are_not_analyzed_again() -> None:
     ]
     asyncio.run(service.chat(ChatRequest(messages=later)))
 
-    assert analyzer.inputs == ["first question", "follow-up"]
+    assert analyzer.inputs == ["first question", "first question\n\nfollow-up"]
 
 
 def test_personal_data_in_earlier_messages_is_still_redacted() -> None:
@@ -811,9 +812,11 @@ def test_memory_is_summarized_by_the_local_model_only() -> None:
     )
 
 
-def test_slow_detection_does_not_block_other_requests() -> None:
+def test_output_keeps_names_and_places_the_model_mentions() -> None:
+    """Named-entity recognition checks what is sent, not the answer: answers
+    name people and places all the time, and NER mistakes there (a verb read
+    as a name) used to blank out words."""
     import re
-    import time
 
     from ugen_ai_gateway.analysis.pii import (
         PersonalDataMatch,
@@ -823,9 +826,8 @@ def test_slow_detection_does_not_block_other_requests() -> None:
 
     scans: list[str] = []
 
-    def slow_names(text: str) -> list[PersonalDataMatch]:
+    def names(text: str) -> list[PersonalDataMatch]:
         scans.append(text)
-        time.sleep(0.02)  # like a spaCy model
         return [
             PersonalDataMatch(
                 "person_name", "PERSON_NAME", m.start(), m.end(), m.group()
@@ -833,37 +835,73 @@ def test_slow_detection_does_not_block_other_requests() -> None:
             for m in re.finditer("Bob Lee", text)
         ]
 
-    register_finder(slow_names, types=["person_name"])
+    register_finder(names, types=["person_name"])
     try:
-        words = "Ask Bob Lee about it. Then write the report and send it today. " * 4
+        words = "Ask Bob Lee about it, or call 0912-345-678 today. "
         local = FakeProvider()
         local.chunks = [text_chunk(word + " ") for word in words.split(" ")]
-        service, _, _, _ = make_service(local_provider=local)
+        service, _, _, _ = make_service(
+            local_provider=local, output_pii_action="redact"
+        )
         request = ChatRequest(messages=[{"role": "user", "content": "plan my day"}])
-
-        async def run() -> tuple[list, int]:
-            ticks = 0
-            done = False
-
-            async def heartbeat() -> None:
-                nonlocal ticks
-                while not done:
-                    ticks += 1
-                    await asyncio.sleep(0.005)
-
-            beat = asyncio.create_task(heartbeat())
-            events = await collect(service, request)
-            done = True
-            await beat
-            return events, ticks
-
-        events, ticks = asyncio.run(run())
+        events = asyncio.run(collect(service, request))
     finally:
         clear_registered_finders()
 
     text = events[-1].response.content
-    # Names the user never gave are still redacted.
-    assert "Bob Lee" not in text and "[PERSON_NAME]" in text
-    # Scanned per sentence, not per token, and the loop kept running meanwhile.
-    assert len(scans) < len(local.chunks) / 2
-    assert ticks >= len(scans)
+    assert "Bob Lee" in text and "[PERSON_NAME]" not in text
+    # Structured data the user never gave is still redacted.
+    assert "0912-345-678" not in text and "[TAIWAN_MOBILE]" in text
+    assert not any("Bob Lee" in scanned for scanned in scans)
+
+
+def test_untraceable_findings_are_not_cached_for_shared_messages() -> None:
+    """A batch that reports personal data without values marks every message
+    in it; that must not stick to a message other requests share, such as
+    the gateway's system prompt."""
+
+    class NameSpotter(FakeAnalyzer):
+        async def analyze(self, user_input: str) -> RequestAnalysis:
+            self.inputs.append(user_input)
+            found = "Lin" in user_input
+            return RequestAnalysis(
+                contains_personal_data=found,
+                personal_data_types=["name"] if found else [],
+                complexity="complex",
+                task_type="general",
+                reason="Test analysis.",
+            )
+
+    service, _, _, _ = make_service(
+        analyzer=NameSpotter(), analysis_mode="llm", analysis_cache_size=16
+    )
+    shared = {"role": "system", "content": "House rules: be brief."}
+
+    def ask(*messages: dict) -> Any:
+        request = ChatRequest(
+            messages=[*messages, {"role": "user", "content": "design a system"}]
+        )
+        return asyncio.run(service.chat(request))
+
+    ask(shared, {"role": "system", "content": "Call me Lin."})
+    other = ask(shared)
+
+    assert other.provider == "cloud"
+    assert other.routing.personal_data_types == []
+
+
+def test_system_messages_given_as_text_parts_are_merged_too() -> None:
+    service, local, _, _ = make_service()
+    request = ChatRequest(
+        messages=[
+            {"role": "system", "content": "House rules."},
+            {"role": "system", "content": [{"type": "text", "text": "You are a bot."}]},
+            {"role": "user", "content": "hi"},
+        ]
+    )
+
+    asyncio.run(service.chat(request))
+
+    sent = local.calls[0]["messages"]
+    assert sent[0] == {"role": "system", "content": "House rules.\n\nYou are a bot."}
+    assert [message["role"] for message in sent] == ["system", "user"]

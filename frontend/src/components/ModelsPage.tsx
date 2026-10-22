@@ -243,7 +243,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     <div className="settings-section">
       <h3>Difficulty check</h3>
       <div className="mode-options" role="radiogroup" aria-label="How requests are judged">
-        <label className={analysisMode === 'hybrid' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'hybrid'} onChange={() => setAnalysisMode('hybrid')}/><span><b>Fast</b><small>Rules spot complex requests (length, keywords such as “compare” or “design”, lists). Short plain questions stay local without an extra model call.</small></span></label>
+        <label className={analysisMode === 'hybrid' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'hybrid'} onChange={() => setAnalysisMode('hybrid')}/><span><b>Fast</b><small>Rules settle clear cases on their own, such as small talk, definitions, short rewrites or explicit design and debugging work. The local model judges everything else, so a word like “design” alone never decides.</small></span></label>
         <label className={analysisMode === 'llm' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'llm'} onChange={() => setAnalysisMode('llm')}/><span><b>Thorough</b><small>The local model judges every request’s difficulty and task first. Catches short hard questions and makes task-based rules reliable, at the cost of one extra local call each time.</small></span></label>
       </div>
     </div>

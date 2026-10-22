@@ -174,8 +174,9 @@ changes apply to the next request, without a restart.
   requests, so routing is faster; the local model is used otherwise.
 - **Embedding model** (optional): a local model that serves
   [`/v1/embeddings`](#post-v1embeddings).
-- **Routing**: *Fast* (rules decide, `hybrid`) or *Thorough* (the local model
-  judges every request, `llm`); see [Routing behavior](#routing-behavior).
+- **Routing**: *Fast* (rules settle clear cases, the local model the rest,
+  `hybrid`) or *Thorough* (the local model judges every request, `llm`); see
+  [Routing behavior](#routing-behavior).
 - **More models**: add further local or cloud connections, then **routing
   rules** that send matching requests to them. Rules match on complexity, task
   type, personal data (any, or specific types) and request length; they are
@@ -204,7 +205,7 @@ advanced settings; it documents every one. The main ones:
 | `UGEN_IMAGE` | Docker only: image to run, e.g. `ghcr.io/baihufox3210/ugen-ai-gateway:latest` | built locally |
 | `USAGE_DB_PATH` | SQLite database; empty turns off accounts and usage tracking | `data/ugen.db` (Docker: `/app/data/ugen.db`) |
 | `GATEWAY_API_KEY`, `ADMIN_API_KEY` | Optional fixed keys with full access (for scripts); `APP_ENV=production` requires `GATEWAY_API_KEY` | blank |
-| `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `redact` |
+| `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `off` |
 | `FALLBACK_TO_LOCAL`, `FALLBACK_TO_CLOUD` | Fallback when a provider is down ([Resilience](#resilience)) | `true`, `false` |
 | `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS` | Requests per client IP per window | `60`, `60` |
 | `REQUEST_TIMEOUT`, `MAX_RETRIES` | Provider timeout (seconds) and retries | `300`, `2` |
@@ -305,6 +306,9 @@ Everyone can change their password, profile picture and theme on the
 - `PUT /v1/ugen/auth/me/avatar` with `{"image": "data:image/webp;base64,..."}`
   sets the profile picture (PNG, JPEG or WebP, at most 200 KB; the dashboard
   crops and resizes it to 160×160 first) and `{"image": null}` removes it.
+- `GET`/`PUT /v1/ugen/auth/me/instructions` with `{"text": "..."}` (at most
+  4,000 characters; empty removes them) reads or sets the account's custom
+  instructions. See [System prompts](#system-prompts).
 - `PUT /v1/ugen/auth/me/password` with `{"current_password": "...",
   "new_password": "..."}` changes the password and signs out other browsers.
 - `DELETE /v1/ugen/auth/me` with `{"password": "..."}` (or `{"username":
@@ -487,6 +491,9 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
   are highlighted and have a copy button; Markdown tables and LaTeX math
   (`$…$`, `$$…$$`) are rendered.
 - **Theme**: System, Light or Dark, on the Account page.
+- **Custom instructions** on the Account page are added to all your
+  conversations; administrators set a **system prompt** for everyone at the
+  top of the Models page. See [System prompts](#system-prompts).
 - **Share** a conversation as a link or chat in it together; see
   [Sharing](#sharing).
 
@@ -559,6 +566,26 @@ any other text. It never leaves the local model while it is written, and is
 saved with the conversation. The full history stays visible in the
 conversation; a marker shows how many earlier messages the memory covers.
 
+### System prompts
+
+Two optional prompts go ahead of every conversation, as one system message:
+
+1. The **system prompt** an administrator sets at the top of the Models page
+   (`GET`/`PUT /v1/ugen/system-prompt` with `{"text": "..."}`, at most 8,000
+   characters). It applies to every request, from the dashboard and the
+   OpenAI-compatible API alike, for house rules such as language, tone or
+   topics to decline. The audit log records each change with its length only.
+2. Each account's **custom instructions**, set on the Account page: who they
+   are or how they like answers. They apply to that account's requests while
+   it is signed in, never to API keys (an app writes its own prompts). They
+   are stored encrypted like saved conversations.
+
+Then come the conversation memory and the client's own system messages. All
+of it is analyzed and redacted like any other text, so keep personal data out
+of the system prompt: a phone number there would be replaced by a placeholder
+on its way to a cloud model, and could keep requests local under privacy
+rules.
+
 ### Guards
 
 **Prompt injection.** User messages are checked for common injection
@@ -576,9 +603,13 @@ sending keys to a URL). This is a heuristic tripwire, not a guarantee.
 
 **Personal data in answers.** The reply is scanned for personal data that the
 user did not provide, such as a phone number or key the model produced on its
-own. `OUTPUT_PII_ACTION=redact` (default) replaces it with a `[LABEL]` marker,
-`flag` only records it, `off` skips the check. Values from the request are left
-alone. When streaming, text is released only at points no value can span (the
+own. It is off by default (`OUTPUT_PII_ACTION=off`): personal data is hidden
+from models, not from the person reading the answer, and placeholders are
+restored in replies. `redact` replaces such data with a `[LABEL]` marker and
+`flag` only records it. Values from the request are left
+alone. Names and places are not checked in answers (answers mention them
+all the time, and the model cannot leak one it was never given); only
+structured data such as numbers, keys and cards is. When streaming, text is released only at points no value can span (the
 last 24 characters are held until the next safe break), so a value is never
 sent in pieces before it can be checked. Findings appear in
 `routing.output_findings`.
@@ -626,9 +657,28 @@ is saved) controls how:
 
 | Mode | Behavior |
 | --- | --- |
-| `hybrid` (default) | Fast rule-based analysis when the request would stay on the local model anyway; the local model analyzes anything that could go to the cloud |
+| `hybrid` (default) | The rules decide when they are sure and the request stays local; the local model analyzes everything else |
 | `llm` | Always ask the local model |
-| `rules` | Regular expressions only, never call the model |
+| `rules` | Rules only, never call the model |
+
+**How difficulty is judged.** Rules settle a request only when the signal is
+unambiguous: small talk and thanks, "what is X" with nothing more asked, short
+rewrites, translations and wishes (simple), or explicit design, proof,
+algorithm or debugging work (complex). Words like "design" or 比較 alone
+decide nothing ("幫我設計一句生日祝福" is simple, "幫我設計一個會員系統"
+complex). Everything else is left to the local model, whose prompt defines the
+levels by what a 7-9B model answers well, with examples. When the rules are
+sure, the model's opinion does not override them. A short follow-up
+("第二點再詳細一點", "continue") is judged together with the request before it.
+`src/ugen_ai_gateway/analysis/complexity_cases.json` holds 600 labeled
+Chinese and English requests from two separately written batches, many
+deliberately tricky; the tests require that the rules are never wrong about
+local versus cloud on the ones they settle (about a third). To measure the
+whole judgement with your own analysis model, run
+`python -m ugen_ai_gateway.cli check-routing` (with Docker:
+`docker compose exec gateway python -m ugen_ai_gateway.cli check-routing`); it
+prints the share judged right and lists the misses. It calls the analysis
+model for about two thirds of the requests, so it takes a few minutes.
 
 Rule-based analysis only detects the structured personal data listed under
 [Personal-data handling](#personal-data-handling); names and addresses need the

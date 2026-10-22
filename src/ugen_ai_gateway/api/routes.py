@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from ugen_ai_gateway.api.access import audit_admin, authenticate, check_admin_access
 from ugen_ai_gateway.api.errors import http_error_for
+from ugen_ai_gateway.api.prompt_routes import with_prompts
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.services.gateway import GatewayService
@@ -313,6 +314,7 @@ async def create_chat(
     http_request: Request,
 ) -> ChatResponse:
     principal = await authenticate(http_request, store)
+    request = await with_prompts(request, store, principal)
     try:
         return await gateway.chat(request, principal=principal)
     except Exception as exc:
@@ -328,6 +330,7 @@ async def create_chat_stream(
     http_request: Request,
 ) -> StreamingResponse:
     principal = await authenticate(http_request, store)
+    request = await with_prompts(request, store, principal)
 
     async def events():
         try:

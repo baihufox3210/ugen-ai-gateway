@@ -4,8 +4,9 @@ this process."""
 
 import re
 from collections.abc import Iterable
+from typing import Any
 
-from ugen_ai_gateway.analysis.pii import find_personal_data, value_pattern
+from ugen_ai_gateway.analysis.pii import _INSTALLED, find_personal_data, value_pattern
 
 PLACEHOLDER_PATTERN = re.compile(r"\[([A-Z][A-Z_]*)_(\d+)\]")
 # A trailing fragment that could still grow into a placeholder, e.g. "[EMA" or "[EMAIL_1".
@@ -27,7 +28,11 @@ class RedactionVault:
     two mentions refer to one thing. The mapping lives only in memory.
     """
 
-    def __init__(self, additional_values: Iterable[str] = ()) -> None:
+    def __init__(
+        self, additional_values: Iterable[str] = (), *, custom_finder: Any = _INSTALLED
+    ) -> None:
+        # Custom terms to use instead of the installed ones (previews only).
+        self._custom_finder = custom_finder
         self._additional_values = sorted(
             {value for value in additional_values if len(value) >= 2},
             key=len,
@@ -53,7 +58,9 @@ class RedactionVault:
 
     def redact(self, text: str) -> str:
         redacted = text
-        for match in reversed(find_personal_data(text)):
+        for match in reversed(
+            find_personal_data(text, custom_finder=self._custom_finder)
+        ):
             placeholder = self._placeholder(match.value, match.label)
             redacted = redacted[: match.start] + placeholder + redacted[match.end :]
 

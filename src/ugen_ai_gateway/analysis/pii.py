@@ -1,6 +1,7 @@
 import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from typing import Any
 
 # Boundaries are ASCII-only on purpose: in Python, \w also matches CJK
 # characters, so "(?<!\w)" would miss "電話0912345678".
@@ -26,10 +27,18 @@ TAIWAN_LANDLINE_PATTERN = re.compile(
 TAIWAN_ID_PATTERN = re.compile(
     _NOT_AFTER_WORD + r"[A-Z][12]\d{8}" + _NOT_BEFORE_WORD, re.IGNORECASE
 )
-# Resident certificate: new format (letter + 8/9 + 8 digits) and old format
-# (two letters + 8 digits).
+# Resident certificate, new format: letter + 8/9 + 8 digits.
 TAIWAN_ARC_PATTERN = re.compile(
-    _NOT_AFTER_WORD + r"[A-Z][A-D89]\d{8}" + _NOT_BEFORE_WORD, re.IGNORECASE
+    _NOT_AFTER_WORD + r"[A-Z][89]\d{8}" + _NOT_BEFORE_WORD, re.IGNORECASE
+)
+# Old format (two letters + 8 digits) looks exactly like a 統一發票 number, so
+# it only counts right after a keyword naming it.
+# The keyword may be followed by a few words first: "居留證號碼是",
+# "ARC number is", "Alien Resident Certificate (ARC) No.:".
+TAIWAN_OLD_ARC_PATTERN = re.compile(
+    r"(?:居留證|居留|統一證號|\bARC\b|\bUI No\b|resident (?:permit|certificate))"
+    r"[^\n]{0,24}?(?<![A-Za-z0-9])(?P<value>[A-Z][A-D]\d{8})" + _NOT_BEFORE_WORD,
+    re.IGNORECASE,
 )
 CREDIT_CARD_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 # Short numeric identifiers only count right after a keyword naming them.
@@ -123,9 +132,19 @@ def _is_valid_resident_certificate(value: str) -> bool:
     return checksum % 10 == 0
 
 
+# A Luhn check alone passes 1 in 10 random numbers, such as tracking or order
+# numbers. Payment cards start with 2 (Mastercard 2221-2720), 3 (Amex, Diners,
+# JCB), 4 (Visa), 5 (Mastercard, Maestro) or 6 (Discover, UnionPay, Maestro).
+_CARD_PREFIXES = re.compile(
+    r"(?:222[1-9]|22[3-9]\d|2[3-6]\d{2}|27[01]\d|2720|[3-6]\d{3})\d+"
+)
+
+
 def _is_valid_credit_card(value: str) -> bool:
     digits = [int(digit) for digit in value if digit.isdigit()]
     if not 13 <= len(digits) <= 19:
+        return False
+    if not _CARD_PREFIXES.fullmatch("".join(map(str, digits))):
         return False
 
     checksum = 0
@@ -199,6 +218,12 @@ DETECTORS: tuple[Detector, ...] = (
         TAIWAN_ARC_PATTERN,
         _is_valid_resident_certificate,
     ),
+    Detector(
+        "taiwan_resident_certificate",
+        "TAIWAN_ARC",
+        TAIWAN_OLD_ARC_PATTERN,
+        _is_valid_resident_certificate,
+    ),
     Detector("taiwan_ubn", "TAIWAN_UBN", TAIWAN_UBN_PATTERN, _is_valid_ubn),
     Detector("passport", "PASSPORT", PASSPORT_PATTERN),
     Detector("nhi_card", "NHI_CARD", NHI_CARD_PATTERN),
@@ -262,11 +287,19 @@ def has_slow_finders() -> bool:
     return bool(_extra_finders)
 
 
-def find_personal_data(text: str) -> list[PersonalDataMatch]:
+# Marks "use the installed custom terms" in find_personal_data.
+_INSTALLED = object()
+
+
+def find_personal_data(
+    text: str, *, custom_finder: Any = _INSTALLED, entities: bool = True
+) -> list[PersonalDataMatch]:
     """Return non-overlapping personal-data matches in text order.
 
     Detectors earlier in ``DETECTORS`` win when two matches overlap; registered
-    finders (NER) come last.
+    finders (NER) come last. ``custom_finder`` replaces the installed custom
+    terms for this call only (None for none), so previewing unsaved rules
+    never changes what concurrent requests detect.
     """
     found: list[PersonalDataMatch] = []
 
@@ -280,8 +313,9 @@ def find_personal_data(text: str) -> list[PersonalDataMatch]:
     for detector in DETECTORS:
         for start, end, value in detector.matches(text):
             add(PersonalDataMatch(detector.type, detector.label, start, end, value))
-    finders = [_custom_finder] if _custom_finder is not None else []
-    for finder in [*finders, *_extra_finders]:
+    custom = _custom_finder if custom_finder is _INSTALLED else custom_finder
+    finders = [custom] if custom is not None else []
+    for finder in [*finders, *(_extra_finders if entities else [])]:
         for candidate in finder(text):
             add(candidate)
     return sorted(found, key=lambda item: item.start)

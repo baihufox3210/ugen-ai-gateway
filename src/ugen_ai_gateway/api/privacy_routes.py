@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ugen_ai_gateway.analysis.custom_rules import PrivacySettings
+from ugen_ai_gateway.analysis.custom_rules import PrivacySettings, rules_finder
 from ugen_ai_gateway.analysis.pii import find_personal_data
 from ugen_ai_gateway.analysis.redaction import RedactionVault
 from ugen_ai_gateway.api.access import audit_admin, check_admin_access
@@ -15,7 +15,6 @@ from ugen_ai_gateway.dependencies import (
     current_privacy,
     get_gateway_service,
     get_usage_store,
-    install_rules,
     models_changed,
 )
 from ugen_ai_gateway.services.usage import UsageStore
@@ -71,15 +70,14 @@ async def test_privacy(
 ) -> dict[str, Any]:
     """Show what the cloud would receive for this text under these rules."""
     await check_admin_access(request, store)
-    saved = current_privacy(store)
-    install_rules(body.settings)
-    try:
-        matches = find_personal_data(body.text)
-        vault = RedactionVault()
-        vault.reserve([body.text])
-        redacted = vault.redact(body.text)
-    finally:
-        install_rules(saved)
+    # The rules on screen are used for this preview only; requests running at
+    # the same time keep using the saved ones.
+    rules = body.settings.rules
+    finder = rules_finder(rules) if rules else None
+    matches = find_personal_data(body.text, custom_finder=finder)
+    vault = RedactionVault(custom_finder=finder)
+    vault.reserve([body.text])
+    redacted = vault.redact(body.text)
     keep_local = set(body.settings.never_cloud_types())
     return {
         "redacted": redacted,

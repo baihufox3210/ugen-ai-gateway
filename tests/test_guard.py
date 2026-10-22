@@ -179,10 +179,24 @@ def test_output_guard_releases_text_while_streaming() -> None:
     assert guard.feed(long_sentence * 2) != ""
 
 
+def test_answers_are_not_redacted_by_default() -> None:
+    """Personal data is hidden from the model, not from the person reading
+    the answer."""
+    local = FakeProvider(completion=reply("Call 0912-345-678 or ask Bob Lee"))
+    service, _, _, _ = make_service(local_provider=local)
+
+    response = asyncio.run(
+        service.chat(ChatRequest(messages=[{"role": "user", "content": "who?"}]))
+    )
+
+    assert response.content == "Call 0912-345-678 or ask Bob Lee"
+    assert response.routing.output_findings == []
+
+
 def test_gateway_redacts_personal_data_the_model_invented() -> None:
     usage = UsageStore(":memory:")
     local = FakeProvider(completion=reply("Call 0912-345-678 or mail alex@example.com"))
-    service, _, _, _ = make_service(local_provider=local)
+    service, _, _, _ = make_service(local_provider=local, output_pii_action="redact")
     service._usage_store = usage
 
     response = asyncio.run(
@@ -201,7 +215,7 @@ def test_gateway_redacts_personal_data_the_model_invented() -> None:
 def test_gateway_output_guard_applies_to_streams() -> None:
     local = FakeProvider()
     local.chunks = [text_chunk("Try 0912-3"), text_chunk("45-678 today, it works.")]
-    service, _, _, _ = make_service(local_provider=local)
+    service, _, _, _ = make_service(local_provider=local, output_pii_action="redact")
 
     events = asyncio.run(
         collect(service, ChatRequest(messages=[{"role": "user", "content": "hi"}]))
@@ -335,7 +349,7 @@ def test_reformatted_user_values_are_not_treated_as_new(
 
 def test_gateway_keeps_the_users_own_number_when_the_model_reformats_it() -> None:
     local = FakeProvider(completion=reply("好的，我會打 0912-345-678 給你"))
-    service, _, _, _ = make_service(local_provider=local)
+    service, _, _, _ = make_service(local_provider=local, output_pii_action="redact")
 
     response = asyncio.run(
         service.chat(

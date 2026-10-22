@@ -34,8 +34,8 @@ _MODERATE_LENGTH = 280
 def rule_analysis(user_input: str) -> RequestAnalysis:
     """Classify a request with regular expressions only.
 
-    Complexity starts at simple or moderate here; RoutingPolicy.classify_complexity
-    promotes it to complex when the text carries strong complexity cues.
+    Complexity here is only by length; the gateway replaces it with
+    ``complexity.assess_complexity``, which reads the request's wording.
     """
     personal_data_types = detect_personal_data(user_input)
     task_type: TaskType = next(

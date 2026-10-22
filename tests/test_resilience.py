@@ -252,6 +252,7 @@ def test_text_held_back_by_the_output_guard_is_dropped_on_fallback() -> None:
         analyzer=analyzer,
         local_provider=local,
         cloud_provider=FailsMidStream("partial "),  # type: ignore[arg-type]
+        output_pii_action="redact",
     )
 
     events = asyncio.run(collect(service, complex_request()))
