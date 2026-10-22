@@ -3,7 +3,7 @@
 /* ── Tokens & base ─────────────────────────────────────────────── */
 :root{--ink:#19352d;--muted:#71877e;--green:#36866a;--green-dark:#20594b;--line:#dce7e3;--paper:#fff;--wash:#f7faf8;--shadow:0 12px 34px #244d3b0a;--ease:cubic-bezier(.2,.75,.25,1);--ease-out:cubic-bezier(.22,.72,.2,1);--mono:ui-monospace,SFMono-Regular,Menlo,monospace;font-family:'DM Sans','Noto Sans TC',sans-serif;font-size:14px;color:var(--ink);background:#f3f7f5;font-synthesis:none;text-rendering:optimizeLegibility}
 *{box-sizing:border-box}
-body{margin:0;min-width:320px;background:radial-gradient(ellipse at 76% -12%,#e0f0e9 0,transparent 32%),#f3f7f5}
+body{margin:0;min-width:320px;background:#f3f7f5}
 button,textarea{font:inherit;color:inherit}
 button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #78b99a66;outline-offset:2px}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -16,7 +16,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .app-layout{--sidebar-w:264px;--chat-w:clamp(380px,34vw,620px);display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr) var(--chat-w);grid-template-areas:"side work chat";height:100dvh;overflow:hidden}
 .mobile-bar,.view-tabs,.drawer-scrim,.drawer-close{display:none}
 .workspace-area{grid-area:work;min-width:0;min-height:0;overflow-y:auto;padding:clamp(42px,8vh,96px) clamp(20px,4vw,64px) 40px;scrollbar-gutter:stable}
-.chat-column{grid-area:chat;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:12px;min-width:0;min-height:0;padding:clamp(14px,1.6vw,28px);background:linear-gradient(115deg,#eef2ef 0%,#e8eeea 48%,#e5ebe7 100%)}
+.chat-column{grid-area:chat;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:12px;min-width:0;min-height:0;padding:clamp(14px,1.6vw,28px);background:#eef2ef}
 
 /* Medium: keep the history rail, switch dashboard / conversation with tabs. */
 @media(max-width:1199px){
@@ -158,7 +158,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .flow-v4-copy b{overflow-wrap:break-word;color:#1f4035;font-size:11px;line-height:1.3;letter-spacing:-.15px}
 .flow-v4-card.done{border-color:#b9ddd1;background:#f4faf7}
 .flow-v4-card.done .flow-v4-icon{background:#dff1e7;color:#338268}
-.flow-v4-card.analysis{background:linear-gradient(135deg,#fff,#f5fbf8)}
+.flow-v4-card.analysis{background:#fff}
 .flow-v4-card.analysis .flow-v4-icon{background:#e9f0fc;color:#537eb7}
 .flow-v4-card.analysis.done{border-color:#b9ddd1}
 .flow-v4-card.analysis.working{border-color:#9ab9e4;background:#f4f8ff;box-shadow:0 0 0 4px #668dd612}
@@ -234,7 +234,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 
 /* ── Monitor panels ────────────────────────────────────────────── */
 .monitor-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-.metric-card{position:relative;display:grid;grid-template-rows:auto 1fr auto;gap:10px;min-width:0;min-height:116px;overflow:hidden;border:1px solid #d9e7e1;border-radius:14px;padding:13px 14px;background:linear-gradient(150deg,#fff,#f7fbf8);box-shadow:var(--shadow);animation:rise-in .4s var(--ease-out) both;transition:transform .22s,border-color .22s,box-shadow .22s}
+.metric-card{position:relative;display:grid;grid-template-rows:auto 1fr auto;gap:10px;min-width:0;min-height:116px;overflow:hidden;border:1px solid #d9e7e1;border-radius:14px;padding:13px 14px;background:#fff;box-shadow:var(--shadow);animation:rise-in .4s var(--ease-out) both;transition:transform .22s,border-color .22s,box-shadow .22s}
 .metric-card:hover{transform:translateY(-2px);border-color:#c8ddd2;box-shadow:0 14px 28px #244d3b10}
 .metric-card-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
 .metric-card-heading>span{overflow:hidden;color:#718b80;font-size:9px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}

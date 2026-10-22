@@ -203,7 +203,6 @@ advanced settings; it documents every one. The main ones:
 | `USAGE_DB_PATH` | SQLite database; empty turns off accounts and usage tracking | `data/ugen.db` (Docker: `/app/data/ugen.db`) |
 | `GATEWAY_API_KEY`, `ADMIN_API_KEY` | Optional fixed keys with full access (for scripts); `APP_ENV=production` requires `GATEWAY_API_KEY` | blank |
 | `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `redact` |
-| `REDACT_LOCAL`, `RESTORE_REDACTED` | Redaction ([Personal-data handling](#personal-data-handling)) | `true`, `true` |
 | `FALLBACK_TO_LOCAL`, `FALLBACK_TO_CLOUD` | Fallback when a provider is down ([Resilience](#resilience)) | `true`, `false` |
 | `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS` | Requests per client IP per window | `60`, `60` |
 | `REQUEST_TIMEOUT`, `MAX_RETRIES` | Provider timeout (seconds) and retries | `300`, `2` |
@@ -668,11 +667,8 @@ request. When the reply comes back, placeholders are replaced with the original
 values (also in streamed deltas, even when a placeholder is split across
 chunks), so the user sees a complete answer while the model never saw the data.
 The response's `routing.redacted_values` reports how many values were replaced.
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `REDACT_LOCAL` | Also redact requests routed to the local model | `true` |
-| `RESTORE_REDACTED` | Put original values back into the reply | `true` |
+Redaction and restoring are always on, for the local model as well as the
+cloud; there is nothing to switch on.
 
 ### Privacy page
 
@@ -690,7 +686,7 @@ Administrators can extend detection on the dashboard's **Privacy** page:
 - **Try it** shows what the cloud would receive for sample text, using the
   rules on screen before they are saved.
 
-Requests routed to the cloud are always redacted. Common
+Every request is redacted automatically. Common
 patterns are detected locally as a backstop if the analysis model misses them.
 The current analysis and redaction flow applies to text; image or other
 non-textual content is not inspected for personal data.

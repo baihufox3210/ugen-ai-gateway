@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from ugen_ai_gateway.api.access import audit_admin, authenticate, check_admin_access
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
-from ugen_ai_gateway.config import get_settings
 from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.services.gateway import GatewayService
 from ugen_ai_gateway.services.usage import UsageStore
@@ -58,7 +57,6 @@ async def readiness(request: Request, response: Response) -> dict[str, str]:
 @router.get("/v1/ugen/config")
 async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
     """Expose non-secret configuration for the dashboard."""
-    settings = get_settings()
     engine = gateway.engine
     local = engine.default("local")
     cloud = engine.default("cloud")
@@ -67,8 +65,9 @@ async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
         "local_model": local.model.public_id if local else "",
         "cloud_model": cloud.model.public_id if cloud else "",
         "cloud_enabled": cloud is not None,
-        "redact_local": settings.redact_local,
-        "restore_redacted": settings.restore_redacted,
+        # Redaction is always on; kept for clients that read these fields.
+        "redact_local": True,
+        "restore_redacted": True,
         "providers": [
             {
                 "name": provider.name,

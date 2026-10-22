@@ -629,7 +629,7 @@ class GatewayService:
 
         Text passes through placeholder restoration, then the output guard.
         """
-        restore = prepared.vault is not None and self._settings.restore_redacted
+        restore = prepared.vault is not None
         try:
             if stream:
                 restorer = StreamRestorer(prepared.vault) if restore else None  # type: ignore[arg-type]
@@ -896,12 +896,9 @@ class GatewayService:
             )
         provider = self._provider_for(route)
 
-        if route.locality == "local" and not self._settings.redact_local:
-            vault = None
-            messages = list(request.messages)
-        else:
-            vault = RedactionVault(analysis.personal_data_values)
-            messages = self._redacted_messages(request, vault)
+        # Personal data is always redacted, whichever model answers.
+        vault = RedactionVault(analysis.personal_data_values)
+        messages = self._redacted_messages(request, vault)
 
         return _PreparedChat(
             analysis=analysis,

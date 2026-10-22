@@ -27,7 +27,7 @@ def aliased(monkeypatch) -> Any:
         cloud_model_alias="smart",
         cloud_api_key="cloud-key",
     )
-    for module in ("access", "routes"):
+    for module in ("access",):
         monkeypatch.setattr(
             f"ugen_ai_gateway.api.{module}.get_settings", lambda: settings
         )

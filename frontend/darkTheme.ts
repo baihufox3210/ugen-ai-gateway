@@ -15,6 +15,7 @@ const OVERRIDES: Record<string, string> = {
   '#f3f7f5': '#0d1513',
   '#fafcfb': '#101a17',
   '#f6faf8': '#101a17',
+  '#eef2ef': '#111b18',
 };
 
 type Rgba = [number, number, number, number];

@@ -47,7 +47,7 @@ def make(monkeypatch, embedding_model: str = "nomic-embed-text") -> Any:
         cloud_api_key="cloud-key",
         embedding_model=embedding_model,
     )
-    for module in ("access", "routes"):
+    for module in ("access",):
         monkeypatch.setattr(
             f"ugen_ai_gateway.api.{module}.get_settings", lambda: settings
         )

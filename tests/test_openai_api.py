@@ -87,10 +87,7 @@ def gateway(monkeypatch) -> Any:
         cloud_api_key="cloud-key",
         gateway_api_key="",
     )
-    for module in ("access", "routes"):
-        monkeypatch.setattr(
-            f"ugen_ai_gateway.api.{module}.get_settings", lambda: settings
-        )
+    monkeypatch.setattr("ugen_ai_gateway.api.access.get_settings", lambda: settings)
     access.rate_limiter.clear()
     local, cloud = EchoProvider("local"), EchoProvider("cloud")
     service = GatewayService(

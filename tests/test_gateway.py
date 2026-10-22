@@ -542,34 +542,14 @@ def test_chat_restores_placeholders_in_the_reply() -> None:
     assert "alex@example.com" not in str(local.calls[0]["messages"])
 
 
-def test_chat_keeps_placeholders_when_restore_is_disabled() -> None:
-    local = FakeProvider(completion=reply("Mail [EMAIL_1]"))
-    service, _, _, _ = make_service(local_provider=local, restore_redacted=False)
-    request = ChatRequest(messages=[{"role": "user", "content": "alex@example.com"}])
-
-    assert asyncio.run(service.chat(request)).content == "Mail [EMAIL_1]"
-
-
-def test_chat_sends_raw_text_to_local_model_when_local_redaction_is_off() -> None:
-    service, local, _, _ = make_service(redact_local=False)
+def test_requests_to_the_local_model_are_redacted_too() -> None:
+    service, local, _, _ = make_service()
     request = ChatRequest(messages=[{"role": "user", "content": "Call 0912-345-678"}])
 
     response = asyncio.run(service.chat(request))
 
-    assert local.calls[0]["messages"] == [
-        {"role": "user", "content": "Call 0912-345-678"}
-    ]
-    assert response.routing.redacted_values == 0
-
-
-def test_cloud_requests_are_redacted_even_when_local_redaction_is_off() -> None:
-    analyzer = FakeAnalyzer(analysis(contains_personal_data=True, complexity="complex"))
-    service, _, cloud, _ = make_service(analyzer=analyzer, redact_local=False)
-    request = ChatRequest(messages=[{"role": "user", "content": "alex@example.com"}])
-
-    asyncio.run(service.chat(request))
-
-    assert cloud.calls[0]["messages"][-1]["content"] == "[EMAIL_1]"
+    assert "0912-345-678" not in str(local.calls[0]["messages"])
+    assert response.routing.redacted_values == 1
 
 
 def test_same_value_gets_the_same_placeholder_across_turns() -> None:

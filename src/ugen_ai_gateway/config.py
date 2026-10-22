@@ -28,11 +28,6 @@ class Settings(BaseSettings):
     # LOCAL_* / CLOUD_* define a local and a cloud provider.
     routing_config: str = ""
 
-    # Redact personal data even when the request stays on the local model.
-    redact_local: bool = True
-    # Put the original values back into the model's reply before returning it.
-    restore_redacted: bool = True
-
     # Optional name/location detection: none or presidio (uv sync --extra ner).
     pii_ner: Literal["none", "presidio"] = "none"
     pii_ner_language: str = "zh"
