@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { apiFetch, errorMessage } from '../api';
+import Footer from './Footer';
 import type { Conversation } from '../types';
 
 const Markdown = lazy(() => import('./Markdown'));
@@ -74,6 +75,7 @@ function SharedView({ id, signedIn, onSignIn, onOpenApp }: { id: string; signedI
             </section>)}</div>
           </>}
     </article>
+    <Footer/>
   </main>;
 }
 

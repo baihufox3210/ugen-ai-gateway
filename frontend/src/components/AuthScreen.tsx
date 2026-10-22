@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Footer from './Footer';
 import { apiFetch, errorMessage, startSso, type AuthStatus, type Session } from '../api';
 
 type Mode = 'login' | 'register';
@@ -63,6 +64,7 @@ function AuthScreen({ status, onSignedIn, initialError = '' }: { status: AuthSta
       </form>
       {!status.registration_open && <small className="auth-hint">Sign-up is closed. Ask an administrator for an account.</small>}
     </section>
+    <Footer/>
   </main>;
 }
 

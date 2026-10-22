@@ -736,3 +736,6 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .shared-answer{border:1px solid #e3ebe7}
 .shared-question b,.shared-answer b{color:#4f6a60;font-size:10.5px}
 .shared-empty{display:grid;justify-items:center;gap:14px;padding:40px 0;color:#4f6a60;text-align:center}
+.site-footer{padding:22px 0 6px;color:#8a9c95;font-size:10.5px;text-align:center}
+.auth-page .site-footer{align-self:end}
+.auth-page{grid-template-rows:1fr auto}
