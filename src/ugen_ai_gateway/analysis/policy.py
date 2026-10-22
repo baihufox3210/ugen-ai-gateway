@@ -9,17 +9,21 @@ ProviderName = Literal["local", "cloud"]
 # Words that on their own mark a demanding technical task.
 _STRONG_CUES = re.compile(
     r"architecture|architectural|system design|trade[ -]?offs?|step[ -]?by[ -]?step|"
-    r"comprehensive|multi[ -]?step|refactor|debug|"
-    r"design (?:a|an) (?:[\w-]+ )?(?:system|service|api|database|schema|architecture|"
-    r"pipeline|protocol|limiter|cache|queue|platform)|"
-    r"架構|取捨|逐步|多步驟|重構|除錯|完整方案|全面分析|"
-    r"設計.{0,8}?(?:系統|資料庫|API|架構|演算法|平台)",
+    r"comprehensive|multi[ -]?step|refactor|debug|distributed|scalab|"
+    r"high[ -]availability|concurren|"
+    r"\b(?:design|build|implement) (?:a|an|the) (?:[\w-]+ ){0,3}(?:system|service|api|"
+    r"database|schema|architecture|pipeline|protocol|limiter|cache|queue|platform|"
+    r"tree|graph|algorithm|compiler|interpreter|engine)|"
+    r"架構|取捨|逐步|多步驟|重構|除錯|完整方案|全面分析|分散式|高可用|高併發|"
+    r"設計[^，。、；：！？,.;:!?\n]{0,24}?(?:系統|資料庫|API|架構|演算法|平台)",
     re.IGNORECASE,
 )
 # Everyday words that also appear in simple requests ("設計一句祝福語",
 # "比較一下兩種水果"): they only count with more signal, see below.
 _COMMON_CUES = re.compile(
-    r"design|compare|comparison|evaluate|analy[sz]e|implement|optimi[sz]e|strategy|"
+    r"\b(?:designs?|designed|designing|compar(?:e|es|ed|ing|isons?)|"
+    r"evaluat(?:e|es|ed|ing|ions?)|analy(?:[sz]e|[sz]es|[sz]ed|[sz]ing|sis|ses)|"
+    r"implement(?:s|ed|ing|ations?)?|optimi[sz](?:e|es|ed|ing|ations?)|strateg(?:y|ies))\b|"
     r"設計|比較|評估|規劃|策略|整合|優化",
     re.IGNORECASE,
 )

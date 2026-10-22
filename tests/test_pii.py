@@ -220,6 +220,9 @@ def test_registered_finders_extend_detection() -> None:
         ("卡號 4111 1111 1111 1111", ["4111 1111 1111 1111"]),
         ("card 5555-5555-5555-4444", ["5555-5555-5555-4444"]),
         ("Amex 378282246310005", ["378282246310005"]),
+        ("Discover 6445644564456445", ["6445644564456445"]),
+        ("Diners 36000000000008", ["36000000000008"]),
+        ("Maestro 5018000000000009", ["5018000000000009"]),
         # Luhn-valid numbers without a card issuer prefix are not cards.
         ("物流單號 1234567812345670", []),
         ("order 8000000000000002", []),
@@ -235,6 +238,10 @@ def test_card_numbers_need_an_issuer_prefix(text: str, expected: list[str]) -> N
     [
         ("居留證號碼 AB10000004", ["AB10000004"]),
         ("ARC: AB10000004", ["AB10000004"]),
+        ("我的居留證號碼是AB10000004", ["AB10000004"]),
+        ("居留證號碼（ARC）：AB10000004", ["AB10000004"]),
+        ("my ARC number is AB10000004", ["AB10000004"]),
+        ("Alien Resident Certificate (ARC) No.: AB10000004", ["AB10000004"]),
         ("A810000008", ["A810000008"]),
         # Old format without a keyword reads as a 統一發票 number.
         ("統一發票 AB10000004 中獎了嗎", []),

@@ -196,6 +196,8 @@ def test_providers_without_api_keys_are_disabled(monkeypatch) -> None:
         ("優化這句話", "simple"),
         ("Design a birthday card message", "simple"),
         ("Compare A and B", "simple"),
+        ("幫我設計一句祝福語，送給系統管理員", "simple"),
+        ("I am a designer; compare apples and pears", "simple"),
         # Strong cues, two cues, or a long request are promoted.
         (
             "Compare microservice and monolith architecture for a 50-person team",
@@ -203,6 +205,10 @@ def test_providers_without_api_keys_are_disabled(monkeypatch) -> None:
         ),
         ("Design a rate limiter", "complex"),
         ("幫我設計一個會員系統", "complex"),
+        ("Design a scalable distributed system", "complex"),
+        ("Implement a red-black tree in Rust with deletion", "complex"),
+        ("幫我設計一個支援百萬用戶同時在線的即時聊天系統", "complex"),
+        ("設計一個高可用的分散式訊息佇列系統", "complex"),
         ("幫我重構這段程式", "complex"),
         ("比較三種補償方案並規劃時程", "complex"),
         (

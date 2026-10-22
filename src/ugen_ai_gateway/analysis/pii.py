@@ -33,10 +33,11 @@ TAIWAN_ARC_PATTERN = re.compile(
 )
 # Old format (two letters + 8 digits) looks exactly like a 統一發票 number, so
 # it only counts right after a keyword naming it.
+# The keyword may be followed by a few words first: "居留證號碼是",
+# "ARC number is", "Alien Resident Certificate (ARC) No.:".
 TAIWAN_OLD_ARC_PATTERN = re.compile(
-    r"(?:居留證(?:號碼|號)?|居留|統一證號|ARC(?: no\.?| number)?|"
-    r"resident (?:permit|certificate)(?: no\.?| number)?)\s*[:：#]?\s*"
-    r"(?P<value>[A-Z][A-D]\d{8})" + _NOT_BEFORE_WORD,
+    r"(?:居留證|居留|統一證號|\bARC\b|\bUI No\b|resident (?:permit|certificate))"
+    r"[^\n]{0,24}?(?<![A-Za-z0-9])(?P<value>[A-Z][A-D]\d{8})" + _NOT_BEFORE_WORD,
     re.IGNORECASE,
 )
 CREDIT_CARD_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
@@ -131,12 +132,11 @@ def _is_valid_resident_certificate(value: str) -> bool:
     return checksum % 10 == 0
 
 
-# Issuer prefixes and lengths of payment cards (Visa, Mastercard, Amex, JCB,
-# UnionPay, Discover). A Luhn check alone passes 1 in 10 random numbers, such
-# as tracking or order numbers; real cards always carry one of these.
+# A Luhn check alone passes 1 in 10 random numbers, such as tracking or order
+# numbers. Payment cards start with 2 (Mastercard 2221-2720), 3 (Amex, Diners,
+# JCB), 4 (Visa), 5 (Mastercard, Maestro) or 6 (Discover, UnionPay, Maestro).
 _CARD_PREFIXES = re.compile(
-    r"4\d{12}(?:\d{3}){0,2}|5[1-5]\d{14}|2(?:2[2-9]|[3-6]\d|7[01])\d{13}|2720\d{12}|"
-    r"3[47]\d{13}|35\d{14,17}|62\d{14,17}|6(?:011|5\d{2})\d{12,15}"
+    r"(?:222[1-9]|22[3-9]\d|2[3-6]\d{2}|27[01]\d|2720|[3-6]\d{3})\d+"
 )
 
 
