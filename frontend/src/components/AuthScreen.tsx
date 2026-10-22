@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiFetch, errorMessage, ssoStartUrl, type AuthStatus, type Session } from '../api';
+import { apiFetch, errorMessage, startSso, type AuthStatus, type Session } from '../api';
 
 type Mode = 'login' | 'register';
 const USERNAME = /^[A-Za-z0-9_.-]{3,32}$/;
@@ -50,7 +50,7 @@ function AuthScreen({ status, onSignedIn, initialError = '' }: { status: AuthSta
         <button type="button" role="tab" aria-selected={registering} className={registering ? 'selected' : ''} onClick={() => switchMode('register')}>Create account</button>
       </div>}
       {status.sso && <>
-        <a className="cancel-button sso-button" href={ssoStartUrl()}>{status.sso.provider === 'google' && <GoogleLogo/>}{status.sso.label}</a>
+        <button type="button" className="cancel-button sso-button" onClick={startSso}>{status.sso.provider === 'google' && <GoogleLogo/>}{status.sso.label}</button>
         <div className="auth-divider"><span>or use a username</span></div>
       </>}
       <form className="auth-form" onSubmit={submit}>

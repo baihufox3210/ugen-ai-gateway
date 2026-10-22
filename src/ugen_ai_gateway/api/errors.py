@@ -3,6 +3,7 @@ import logging
 from ugen_ai_gateway.services.errors import (
     GatewayConfigurationError,
     InvalidChatRequest,
+    ModelNotFound,
     PolicyViolation,
     ProviderRequestError,
     ProviderTimeout,
@@ -17,6 +18,8 @@ def http_error_for(exc: Exception) -> tuple[int, str]:
     """Map a gateway exception to an HTTP status and a client-safe message."""
     if isinstance(exc, PolicyViolation):
         return 400, str(exc)
+    if isinstance(exc, ModelNotFound):
+        return 404, str(exc)
     if isinstance(exc, RequestTooLarge):
         return 413, str(exc)
     if isinstance(exc, InvalidChatRequest):

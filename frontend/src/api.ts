@@ -8,8 +8,25 @@ export type User = { id: string; username: string; is_admin: boolean; avatar?: s
 export type Session = { token: string; user: User };
 export type AuthStatus = { accounts_enabled: boolean; has_users: boolean; registration_open: boolean; sso?: { label: string; provider?: 'google' | 'oidc' } | null };
 
-/** Start single sign-on: the gateway sends the browser to the identity provider. */
-export const ssoStartUrl = () => `${apiUrl}/v1/ugen/auth/oidc/start`;
+const SSO_BROWSER_STORAGE = 'ugen-sso-browser';
+
+/** Start single sign-on: the gateway sends the browser to the identity
+ * provider. A random value kept in this tab must come back with the session,
+ * so a session handed over in someone else's link is refused. */
+export function startSso(): void {
+  const value = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+  try { sessionStorage.setItem(SSO_BROWSER_STORAGE, value); } catch { /* the result will be refused; nothing else to do */ }
+  window.location.assign(`${apiUrl}/v1/ugen/auth/oidc/start?browser=${value}`);
+}
+
+/** The value startSso kept, once. */
+export function takeSsoBrowser(): string | null {
+  try {
+    const value = sessionStorage.getItem(SSO_BROWSER_STORAGE);
+    sessionStorage.removeItem(SSO_BROWSER_STORAGE);
+    return value;
+  } catch { return null; }
+}
 
 /** Tokens are sent in an HTTP header, which only carries printable ASCII. */
 const isHeaderSafe = (token: string) => /^[\x21-\x7e]*$/.test(token);

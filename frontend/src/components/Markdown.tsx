@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { memo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
@@ -69,4 +69,5 @@ function Markdown({ text }: { text: string }) {
   </div>;
 }
 
-export default Markdown;
+// Memoized: finished answers are not parsed again while a new one streams.
+export default memo(Markdown);

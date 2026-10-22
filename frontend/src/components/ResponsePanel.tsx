@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
 import type { User } from '../api';
 import { copyText } from '../clipboard';
 import type { ConversationMemory, ConversationTurn } from '../types';
@@ -6,7 +6,7 @@ import Avatar from './Avatar';
 
 // The Markdown and LaTeX renderer is large, so it loads with the first reply instead of the page.
 const LazyMarkdown = lazy(() => import('./Markdown'));
-const Markdown = ({ text }: { text: string }) => <Suspense fallback={<div className="markdown plain">{text}</div>}><LazyMarkdown text={text}/></Suspense>;
+const Markdown = memo(({ text }: { text: string }) => <Suspense fallback={<div className="markdown plain">{text}</div>}><LazyMarkdown text={text}/></Suspense>);
 
 // Built-in rules that keep a request local, with the reason in plain words.
 const POLICY_RULES: Record<string, string> = {
@@ -36,8 +36,12 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
   const threadRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<{ turnId: string; text: string } | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  // Follow the answer while the view is at the bottom; scrolling up to read
+  // stops that until the next message.
+  const followRef = useRef(true);
+  useEffect(() => { followRef.current = true; }, [turns.length]);
   useEffect(() => {
-    if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    if (threadRef.current && followRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
   }, [turns.length, turns.at(-1)?.result?.content, streamingText]);
   const hasTurns = turns.length > 0;
 
@@ -53,7 +57,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
         <span className="conversation-live"><i/> Live</span>
       </span>
     </div>
-    {hasTurns ? <div className="conversation-thread" ref={threadRef}>{turns.map((turn, index) => {
+    {hasTurns ? <div className="conversation-thread" ref={threadRef} onScroll={event => { const el = event.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>{turns.map((turn, index) => {
       const result = turn.result;
       const generatedTokens = result?.usage?.generation?.completion_tokens;
       const generationMs = result?.performance?.generation_ms;

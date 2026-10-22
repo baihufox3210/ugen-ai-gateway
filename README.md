@@ -549,7 +549,9 @@ metadata as usage tracking (never message text or values), chained so that
 each entry's SHA-256 covers the previous entry's hash. Changing, deleting, or
 reordering an entry breaks verification from that point on.
 
-- `GET /v1/ugen/audit?since=<unix time>&limit=1000&format=json|csv` exports it.
+- `GET /v1/ugen/audit?since=<unix time>&limit=1000&format=json|csv` exports it:
+  entries from `since` onwards, or without `since` the newest `limit` entries,
+  oldest first either way.
 - `GET /v1/ugen/audit/verify` recomputes the chain and returns
   `{"ok": true, "entries": N, "first_invalid_seq": null}`.
 

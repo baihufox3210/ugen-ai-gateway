@@ -10,7 +10,7 @@ from ugen_ai_gateway.routing.config import (
     RoutingConfig,
     Target,
 )
-from ugen_ai_gateway.services.errors import ProviderUnavailable
+from ugen_ai_gateway.services.errors import ModelNotFound, ProviderUnavailable
 
 Selection = Literal["auto", "local", "cloud"]
 
@@ -92,17 +92,11 @@ class RuleEngine:
         model: str | None = None,
         chars: int = 0,
     ) -> Route:
-        """Route a request. A ``model`` that is not configured anywhere is used
-        as-is on whichever provider the other rules pick."""
+        """Route a request. A ``model`` must be configured: an unknown name
+        would run with no price, so its cost would escape budgets."""
+        if model and self.config.find_model(model) is None:
+            raise ModelNotFound(f"The model '{model}' does not exist")
         route = self._choose(analysis, selection, model, chars)
-        if (
-            model
-            and not route.model.answers_to(model)
-            and self.config.find_model(model) is None
-        ):
-            route = Route(
-                route.provider, ModelConfig(id=model), route.reason, route.rule
-            )
         blocked = set(self.config.privacy.never_cloud).intersection(
             analysis.personal_data_types
         )

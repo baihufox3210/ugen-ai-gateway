@@ -21,13 +21,22 @@ class InMemoryRateLimiter:
     """Sliding-window limiter for a single process. Use a shared store (such as
     Redis) behind the same interface when running several workers."""
 
+    # How often idle buckets are dropped, so memory does not grow with every
+    # client address ever seen.
+    SWEEP_SECONDS = 300.0
+
     def __init__(self) -> None:
         self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._lock = Lock()
+        self._longest_window = 0.0
+        self._last_sweep = time.monotonic()
 
     def hit(self, bucket: str, *, limit: int, window_seconds: float) -> bool:
         now = time.monotonic()
         with self._lock:
+            self._longest_window = max(self._longest_window, window_seconds)
+            if now - self._last_sweep >= self.SWEEP_SECONDS:
+                self._sweep(now)
             timestamps = self._requests[bucket]
             while timestamps and timestamps[0] <= now - window_seconds:
                 timestamps.popleft()
@@ -35,6 +44,15 @@ class InMemoryRateLimiter:
                 return False
             timestamps.append(now)
             return True
+
+    def _sweep(self, now: float) -> None:
+        cutoff = now - self._longest_window
+        for name in [n for n, t in self._requests.items() if not t or t[-1] <= cutoff]:
+            del self._requests[name]
+        self._last_sweep = now
+
+    def __len__(self) -> int:
+        return len(self._requests)
 
     def clear(self) -> None:
         with self._lock:
@@ -53,6 +71,7 @@ def presented_api_key(request: Request) -> str:
 
 
 SESSION_PREFIX = "ugs_"
+_FAILED_KEYS_PER_MINUTE = 20
 
 
 async def identify(request: Request, store: UsageStore | None) -> Principal | None:
@@ -99,8 +118,19 @@ async def authenticate(request: Request, store: UsageStore | None) -> Principal:
     or an active API key created through the admin API.
     """
     principal = await identify(request, store)
+    client = request.client.host if request.client else "unknown"
     if principal is None:
         if await is_managed(store):
+            # Wrong keys count against the address, so keys cannot be guessed
+            # at full speed.
+            if presented_api_key(request) and not rate_limiter.hit(
+                f"bad-key:{client}",
+                limit=_FAILED_KEYS_PER_MINUTE,
+                window_seconds=60,
+            ):
+                raise HTTPException(
+                    status_code=429, detail="Too many invalid keys; wait a minute"
+                )
             raise HTTPException(
                 status_code=401, detail="Sign in or provide a valid API key"
             )
@@ -111,7 +141,6 @@ async def authenticate(request: Request, store: UsageStore | None) -> Principal:
     else:
         settings = get_settings()
         limit, window = settings.rate_limit_requests, settings.rate_limit_window_seconds
-    client = request.client.host if request.client else "unknown"
     if principal.api_key_id:
         bucket = f"key:{principal.api_key_id}"
     elif principal.user_id:

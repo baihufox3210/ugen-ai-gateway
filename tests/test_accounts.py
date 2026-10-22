@@ -275,3 +275,11 @@ def test_existing_database_gains_the_avatar_column(tmp_path) -> None:
         assert (await store.set_avatar(user["id"], PNG))["avatar"] == PNG  # type: ignore[index]
 
     asyncio.run(scenario())
+
+
+def test_configuration_endpoints_need_sign_in(monkeypatch) -> None:
+    env = AccountEnv(monkeypatch)
+    token = env.token("alice")
+    for path in ("/v1/ugen/config", "/v1/ugen/providers", "/v1/models"):
+        assert env.client.get(path).status_code == 401, path
+        assert env.client.get(path, headers=bearer(token)).status_code == 200, path

@@ -96,6 +96,9 @@ class _Pending:
     nonce: str
     redirect_uri: str
     expires_at: float
+    # Random value from the browser that started the sign-in, handed back with
+    # the session so a session in a link from someone else is refused.
+    browser: str = ""
 
 
 @dataclass
@@ -160,7 +163,9 @@ class OidcClient:
         self._discovery[issuer] = (time.time() + _DISCOVERY_TTL_SECONDS, document)
         return document
 
-    async def authorization_url(self, settings: OidcSettings, redirect_uri: str) -> str:
+    async def authorization_url(
+        self, settings: OidcSettings, redirect_uri: str, browser: str = ""
+    ) -> str:
         document = await self.discover(settings.issuer)
         now = time.time()
         # Forget abandoned sign-ins, and keep the table bounded.
@@ -170,7 +175,7 @@ class OidcClient:
             del self._pending[next(iter(self._pending))]
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         self._pending[state] = _Pending(
-            verifier, nonce, redirect_uri, now + PENDING_TTL_SECONDS
+            verifier, nonce, redirect_uri, now + PENDING_TTL_SECONDS, browser
         )
         challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
         query = urlencode(
@@ -192,6 +197,11 @@ class OidcClient:
         """Where the sign-in with this state said it would come back to."""
         pending = self._pending.get(state)
         return pending.redirect_uri if pending else None
+
+    def browser_for(self, state: str) -> str:
+        """The browser value the sign-in with this state started with."""
+        pending = self._pending.get(state)
+        return pending.browser if pending else ""
 
     async def finish(self, settings: OidcSettings, code: str, state: str) -> Identity:
         pending = self._pending.pop(state, None)

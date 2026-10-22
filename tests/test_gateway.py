@@ -9,6 +9,7 @@ from ugen_ai_gateway.analysis.redaction import PLACEHOLDER_INSTRUCTION
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis
 from ugen_ai_gateway.api.schemas import ChatRequest
 from ugen_ai_gateway.config import Settings
+from ugen_ai_gateway.services.errors import ModelNotFound
 from ugen_ai_gateway.services.gateway import GatewayService
 
 
@@ -246,11 +247,11 @@ def test_chat_keeps_complex_request_local_when_cloud_is_disabled() -> None:
     assert cloud.calls == []
 
 
-def test_chat_uses_request_model_override_for_selected_provider() -> None:
+def test_chat_uses_the_requested_configured_model() -> None:
     analyzer = FakeAnalyzer(analysis(complexity="complex"))
     service, local, cloud, _ = make_service(analyzer=analyzer)
     request = ChatRequest(
-        model="requested-model",
+        model="cloud-default",
         messages=[{"role": "user", "content": "solve this"}],
         temperature=0.7,
     )
@@ -258,9 +259,20 @@ def test_chat_uses_request_model_override_for_selected_provider() -> None:
     response = asyncio.run(service.chat(request))
 
     assert response.provider == "cloud"
-    assert cloud.calls[0]["model"] == "requested-model"
+    assert cloud.calls[0]["model"] == "cloud-default"
     assert cloud.calls[0]["temperature"] == 0.7
     assert local.calls == []
+
+
+def test_chat_rejects_models_that_are_not_configured() -> None:
+    service, local, cloud, _ = make_service()
+    request = ChatRequest(
+        model="o1-pro", messages=[{"role": "user", "content": "solve this"}]
+    )
+
+    with pytest.raises(ModelNotFound):
+        asyncio.run(service.chat(request))
+    assert cloud.calls == [] and local.calls == []
 
 
 def test_chat_ignores_requested_provider_and_uses_policy() -> None:

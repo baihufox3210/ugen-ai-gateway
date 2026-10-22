@@ -13,7 +13,7 @@ from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.dependencies import _service_from_routing_config
 from ugen_ai_gateway.routing.config import RoutingConfig, load_routing_config
 from ugen_ai_gateway.routing.engine import RuleEngine
-from ugen_ai_gateway.services.errors import ProviderUnavailable
+from ugen_ai_gateway.services.errors import ModelNotFound, ProviderUnavailable
 from ugen_ai_gateway.services.gateway import GatewayService
 
 EXAMPLE = Path(__file__).parents[1] / "routing.example.yaml"
@@ -134,10 +134,11 @@ def test_pinned_model_and_unknown_model_override() -> None:
     engine = RuleEngine(config())
 
     pinned = engine.decide(analysis(), model="pro")
-    unknown = engine.decide(analysis(), model="custom-tag")
 
     assert (pinned.provider.name, pinned.model.id) == ("gemini", "pro")
-    assert (unknown.provider.name, unknown.model.id) == ("ollama", "custom-tag")
+    # An unknown model would run unpriced, escaping budgets.
+    with pytest.raises(ModelNotFound):
+        engine.decide(analysis(), model="custom-tag")
 
 
 def test_unavailable_providers_are_skipped() -> None:

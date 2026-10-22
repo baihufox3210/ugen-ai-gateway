@@ -188,3 +188,23 @@ def test_admin_key_can_chat_and_sees_all_usage(monkeypatch) -> None:
     assert env.chat("admin").status_code == 200
     stats = env.client.get("/v1/ugen/stats", headers={"X-API-Key": "admin"}).json()
     assert stats["completed"] == 2
+
+
+def test_invalid_keys_are_throttled_per_address(monkeypatch) -> None:
+    env = Env(monkeypatch)
+    env.create_key()
+    statuses = [env.chat(f"ugk_guess_{n}").status_code for n in range(22)]
+    assert statuses[:20] == [401] * 20
+    assert statuses[20:] == [429, 429]
+
+
+def test_rate_limiter_drops_idle_buckets(monkeypatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(access.time, "monotonic", lambda: clock[0])
+    limiter = access.InMemoryRateLimiter()
+    for n in range(50):
+        limiter.hit(f"ip:{n}", limit=5, window_seconds=60)
+    assert len(limiter) == 50
+    clock[0] += limiter.SWEEP_SECONDS + 61
+    limiter.hit("ip:new", limit=5, window_seconds=60)
+    assert len(limiter) == 1

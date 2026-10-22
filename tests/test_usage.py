@@ -325,3 +325,14 @@ def _append_audit_entries(path: str) -> None:
     store = UsageStore(path)
     for _ in range(30):
         asyncio.run(store.append_audit("request.ok", request_id=None, detail={}))
+
+
+def test_audit_export_without_since_returns_the_newest_entries() -> None:
+    store = UsageStore(":memory:")
+    for number in range(5):
+        asyncio.run(store.append_audit(f"event_{number}", request_id=None, detail={}))
+
+    newest = asyncio.run(store.audit_entries(since=None, limit=2))
+    assert [entry["event"] for entry in newest] == ["event_3", "event_4"]
+    first = asyncio.run(store.audit_entries(since=0, limit=2))
+    assert [entry["event"] for entry in first] == ["event_0", "event_1"]

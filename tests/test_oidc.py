@@ -11,6 +11,7 @@ from tests.test_accounts import PASSWORD, AccountEnv, bearer
 from ugen_ai_gateway.services.oidc import OidcClient, username_from
 
 ISSUER = "https://id.example.com"
+BROWSER = "browser-value-1234567890"
 CALLBACK = "https://testserver/v1/ugen/auth/oidc/callback"
 
 
@@ -83,7 +84,11 @@ class SsoEnv(AccountEnv):
 
     def sign_in(self, code: str = "good-code") -> str:
         """Run the browser side of a sign-in; return the dashboard fragment."""
-        start = self.client.get("/v1/ugen/auth/oidc/start", follow_redirects=False)
+        start = self.client.get(
+            "/v1/ugen/auth/oidc/start",
+            params={"browser": BROWSER},
+            follow_redirects=False,
+        )
         assert start.status_code == 302
         target = urlparse(start.headers["location"])
         if target.netloc not in ("id.example.com", "accounts.google.com"):
@@ -96,7 +101,13 @@ class SsoEnv(AccountEnv):
             follow_redirects=False,
         )
         assert done.status_code == 302
-        return urlparse(done.headers["location"]).fragment
+        fragment = urlparse(done.headers["location"]).fragment
+        result = parse_qs(fragment)
+        if "sso" not in result:
+            return fragment
+        # The session comes back with the starting browser's value.
+        assert result["browser"] == [BROWSER]
+        return f"sso={result['sso'][0]}"
 
 
 def test_sso_creates_an_account_and_signs_it_in(monkeypatch) -> None:
@@ -115,7 +126,9 @@ def test_sso_creates_an_account_and_signs_it_in(monkeypatch) -> None:
         "provider": "oidc",
     }
 
-    start = env.client.get("/v1/ugen/auth/oidc/start", follow_redirects=False)
+    start = env.client.get(
+        "/v1/ugen/auth/oidc/start", params={"browser": BROWSER}, follow_redirects=False
+    )
     query = parse_qs(urlparse(start.headers["location"]).query)
     assert query["redirect_uri"] == [CALLBACK]
     assert query["code_challenge_method"] == ["S256"]
@@ -245,7 +258,11 @@ def test_callback_url_keeps_the_api_prefix(monkeypatch) -> None:
     view = env.client.get("/api/v1/ugen/sso", headers=bearer(admin)).json()
     assert view["callback_url"] == "https://testserver/api/v1/ugen/auth/oidc/callback"
     env.configure(admin)
-    start = env.client.get("/api/v1/ugen/auth/oidc/start", follow_redirects=False)
+    start = env.client.get(
+        "/api/v1/ugen/auth/oidc/start",
+        params={"browser": BROWSER},
+        follow_redirects=False,
+    )
     query = parse_qs(urlparse(start.headers["location"]).query)
     env.provider.nonce = query["nonce"][0]
     done = env.client.get(
@@ -377,3 +394,12 @@ def test_callback_url_uses_https_behind_a_proxy(monkeypatch) -> None:
         callback(host="localhost:7632", **{"x-forwarded-proto": "https"})
         == f"https://localhost:7632{path}"
     )
+
+
+def test_sign_on_must_start_from_the_dashboard(monkeypatch) -> None:
+    env = SsoEnv(monkeypatch)
+    admin = env.token("alice")
+    env.configure(admin)
+    # Without the browser value (for example a link made by someone else).
+    start = env.client.get("/v1/ugen/auth/oidc/start", follow_redirects=False)
+    assert "sso_error=" in start.headers["location"]

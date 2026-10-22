@@ -67,7 +67,7 @@ def test_saved_models_drive_the_gateway_without_a_restart(monkeypatch) -> None:
     )
     assert saved.status_code == 200, saved.text
 
-    config = env.client.get("/v1/ugen/config").json()
+    config = env.client.get("/v1/ugen/config", headers=bearer(env.admin)).json()
     assert config["local_model"] == "House"
     assert config["cloud_model"] == "Smart"
     assert config["cloud_enabled"] is True
@@ -184,7 +184,7 @@ def test_test_and_list_use_the_saved_key_unless_one_is_given(monkeypatch) -> Non
     )
     probe = {
         "target": "cloud",
-        "base_url": "https://g.example/v1",
+        "base_url": CLOUD["base_url"] + "/",
         "model": "gemini-a",
     }
     tested = env.client.post(
@@ -197,6 +197,15 @@ def test_test_and_list_use_the_saved_key_unless_one_is_given(monkeypatch) -> Non
         headers=bearer(env.admin),
     )
     assert listed.json()["models"] == ["gemini-a", "gemini-b"]
+    assert used == ["saved-key-9999", "typed-key"]
+
+    # The saved key never goes to a different address.
+    elsewhere = env.client.post(
+        "/v1/ugen/models/test",
+        json={**probe, "base_url": "https://evil.example/v1"},
+        headers=bearer(env.admin),
+    )
+    assert elsewhere.status_code == 422
     assert used == ["saved-key-9999", "typed-key"]
 
     monkeypatch.setattr(

@@ -175,7 +175,12 @@ def _routing_headers(routing: dict[str, Any], model: str) -> dict[str, str]:
 
 
 @router.get("/v1/models")
-async def list_models(gateway: GatewayDependency) -> dict[str, Any]:
+async def list_models(
+    gateway: GatewayDependency,
+    store: Annotated[UsageStore | None, Depends(get_usage_store)],
+    http_request: Request,
+) -> dict[str, Any]:
+    await authenticate(http_request, store)
     ids = [AUTO_MODEL, LOCAL_MODEL]
     if gateway.engine.default("cloud") is not None:
         ids.append(CLOUD_MODEL)

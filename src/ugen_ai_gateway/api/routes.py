@@ -55,8 +55,13 @@ async def readiness(request: Request, response: Response) -> dict[str, str]:
 
 
 @router.get("/v1/ugen/config")
-async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
-    """Expose non-secret configuration for the dashboard."""
+async def gateway_config(
+    gateway: GatewayDependency,
+    http_request: Request,
+    store: Annotated[UsageStore | None, Depends(get_usage_store)],
+) -> dict[str, Any]:
+    """Non-secret configuration for the dashboard, for signed-in callers."""
+    await authenticate(http_request, store)
     engine = gateway.engine
     local = engine.default("local")
     cloud = engine.default("cloud")
@@ -83,8 +88,13 @@ async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
 
 
 @router.get("/v1/ugen/providers")
-async def provider_status(gateway: GatewayDependency) -> dict[str, str]:
+async def provider_status(
+    gateway: GatewayDependency,
+    http_request: Request,
+    store: Annotated[UsageStore | None, Depends(get_usage_store)],
+) -> dict[str, str]:
     """Circuit-breaker state per provider: closed, open, or half_open."""
+    await authenticate(http_request, store)
     return gateway.provider_status()
 
 

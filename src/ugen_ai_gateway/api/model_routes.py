@@ -196,19 +196,35 @@ async def save_models(
 def _probe_client(probe: Probe, store: UsageStore | None):
     saved, _ = current_models(store)
     if probe.target == "local":
-        saved_key, fallback = saved.local.api_key, "local"
+        saved_url, saved_key, fallback = (
+            saved.local.base_url,
+            saved.local.api_key,
+            "local",
+        )
     elif probe.target == "cloud":
-        saved_key, fallback = saved.cloud.api_key, ""
+        saved_url, saved_key, fallback = saved.cloud.base_url, saved.cloud.api_key, ""
     else:
         match = next(
             (m for m in saved.extra if m.id == probe.target.removeprefix("extra:")),
             None,
         )
+        saved_url = match.base_url if match else ""
         saved_key = match.api_key if match else ""
         fallback = "local" if match and match.locality == "local" else ""
-    key = probe.api_key.strip() if probe.api_key is not None else saved_key
+    # The saved key only goes to the saved address, so a changed URL cannot
+    # be used to send it elsewhere; a new address needs the key typed in.
+    if _same_url(probe.base_url, saved_url):
+        key = probe.api_key.strip() if probe.api_key is not None else saved_key
+    else:
+        key = (probe.api_key or "").strip()
     if not key and not fallback:
-        raise HTTPException(status_code=422, detail="Enter the API key first")
+        detail = (
+            "The saved key is only sent to the saved base URL; enter the key "
+            "to try this address"
+            if saved_key and not _same_url(probe.base_url, saved_url)
+            else "Enter the API key first"
+        )
+        raise HTTPException(status_code=422, detail=detail)
     if not probe.base_url:
         raise HTTPException(status_code=422, detail="Enter the base URL first")
     return create_openai_client(
@@ -217,6 +233,10 @@ def _probe_client(probe: Probe, store: UsageStore | None):
         timeout=_PROBE_TIMEOUT,
         max_retries=0,
     )
+
+
+def _same_url(a: str | None, b: str | None) -> bool:
+    return bool(a and b) and a.strip().rstrip("/") == b.strip().rstrip("/")
 
 
 def _short(exc: Exception) -> str:

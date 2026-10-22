@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import App from './App';
 import AuthScreen from './components/AuthScreen';
-import { apiFetch, loadSession, saveSession, SIGNED_OUT_EVENT, type AuthStatus, type Session, type User } from './api';
+import { apiFetch, loadSession, takeSsoBrowser, saveSession, SIGNED_OUT_EVENT, type AuthStatus, type Session, type User } from './api';
 
 /** Shows the sign-in screen until there is a session, then the dashboard. */
 function Root() {
@@ -9,8 +9,9 @@ function Root() {
   const [statusError, setStatusError] = useState(false);
   const [session, setSession] = useState<Session | null>(loadSession);
   // A single sign-on result arrives in the URL fragment: #sso=<token> or #sso_error=<message>.
-  const [ssoToken] = useState(() => readFragment('sso'));
-  const [ssoError, setSsoError] = useState(() => readFragment('sso_error'));
+  const [sso] = useState(readSsoResult);
+  const ssoToken = sso.token;
+  const [ssoError, setSsoError] = useState(sso.error);
 
   const updateSession = useCallback((next: Session | null) => {
     saveSession(next); setSession(next);
@@ -81,6 +82,16 @@ function Root() {
   return <App key={session?.user.id ?? 'open'} user={session?.user ?? null} onSignOut={signOut}
     onUserChange={user => session && updateSession({ ...session, user })}
     onAccountDeleted={() => { updateSession(null); void loadStatus(); }}/>;
+}
+
+/** A single sign-on result, accepted only in the tab that started it. */
+function readSsoResult(): { token: string | null; error: string | null } {
+  const token = readFragment('sso');
+  const browser = readFragment('browser');
+  const error = readFragment('sso_error');
+  const expected = takeSsoBrowser();
+  if (token && (!expected || browser !== expected)) return { token: null, error: 'This sign-in was not started in this browser tab. Sign in again here.' };
+  return { token, error };
 }
 
 /** Read and remove one value from the URL fragment, so a token is not left in the address bar or history. */

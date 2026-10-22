@@ -11,7 +11,7 @@ import logging
 import re
 from functools import lru_cache
 from typing import Annotated, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -222,16 +222,23 @@ async def auth_status(store: UsageStoreDependency) -> dict[str, Any]:
 
 
 @router.get("/oidc/start")
-async def oidc_start(store: UsageStoreDependency, request: Request) -> Response:
-    """Send the browser to the identity provider to sign in."""
+async def oidc_start(
+    store: UsageStoreDependency, request: Request, browser: str = ""
+) -> Response:
+    """Send the browser to the identity provider to sign in. ``browser`` is a
+    random value the dashboard keeps and expects back with the session."""
     store = _require_store(store)
     _limit_attempts(request)
     settings = oidc_settings(store)
     redirect_uri = callback_url(request, settings)
     if not settings.ready:
         return _sso_failed(redirect_uri, "Single sign-on is not set up")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{16,64}", browser):
+        return _sso_failed(redirect_uri, "Start signing in from the sign-in page")
     try:
-        target = await get_oidc_client().authorization_url(settings, redirect_uri)
+        target = await get_oidc_client().authorization_url(
+            settings, redirect_uri, browser
+        )
     except OidcError as exc:
         return _sso_failed(redirect_uri, str(exc))
     return RedirectResponse(target, status_code=302)
@@ -252,6 +259,7 @@ async def oidc_callback(
     settings = oidc_settings(store)
     client = get_oidc_client()
     redirect_uri = client.take_redirect_uri(state) or callback_url(request, settings)
+    browser = client.browser_for(state)
     if error:
         return _sso_failed(redirect_uri, error_description or error)
     if not settings.ready:
@@ -287,8 +295,9 @@ async def oidc_callback(
             },
         )
     session = await _signed_in(store, user)
+    fragment = urlencode({"sso": session["token"], "browser": browser})
     return RedirectResponse(
-        f"{_dashboard_url(redirect_uri)}#sso={session['token']}", status_code=302
+        f"{_dashboard_url(redirect_uri)}#{fragment}", status_code=302
     )
 
 

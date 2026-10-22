@@ -186,6 +186,9 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
     const controller = new AbortController();
     abortRef.current = controller;
     let streamed = '';
+    // What this request was answered by, for a partial answer kept after Stop
+    // or an error (the state values belong to the previous render).
+    let streamModel = ''; let streamProvider: Provider = 'local';
     try {
       const fold = turnsToRemember(conversation, turn);
       if (fold) {
@@ -219,10 +222,10 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       const onEvent = (event: GatewayEvent) => {
         if (event.type === 'analysis_started') setPhase('analyzing');
         if (event.type === 'analysis_completed') { setPhase('analyzed'); setAnalysisSource(isSource(event.source) ? event.source : null); setPii({ found: Boolean(event.contains_personal_data), types: Array.isArray(event.personal_data_types) ? event.personal_data_types.map(String) : [] }); }
-        if (event.type === 'routed') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setPhase('routing'); setPii(current => current && { ...current, redacted: Number(event.redacted_values ?? 0) }); }
+        if (event.type === 'routed') { streamProvider = event.provider === 'cloud' ? 'cloud' : 'local'; setProvider(streamProvider); setPhase('routing'); setPii(current => current && { ...current, redacted: Number(event.redacted_values ?? 0) }); }
         if (event.type === 'guard' && event.kind === 'injection') setInjectionSignals(Array.isArray(event.signals) ? event.signals.map(String) : []);
-        if (event.type === 'fallback') { setFallbackFrom(event.from === 'cloud' ? 'cloud' : 'local'); setProvider(event.to === 'cloud' ? 'cloud' : 'local'); }
-        if (event.type === 'generation_started') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setModel(String(event.model ?? '')); setPhase('generating'); }
+        if (event.type === 'fallback') { setFallbackFrom(event.from === 'cloud' ? 'cloud' : 'local'); streamProvider = event.to === 'cloud' ? 'cloud' : 'local'; setProvider(streamProvider); }
+        if (event.type === 'generation_started') { streamProvider = event.provider === 'cloud' ? 'cloud' : 'local'; streamModel = String(event.model ?? ''); setProvider(streamProvider); setModel(streamModel); setPhase('generating'); }
         if (event.type === 'delta') { streamed += String(event.content ?? ''); setStreamingText(streamed); }
         if (event.type === 'result') received.result = event.data as ChatResult;
         if (event.type === 'error') streamError = String(event.detail ?? 'The model request failed.');
@@ -242,19 +245,25 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       setPii(piiFromResult(finalResult)); setAnalysisSource(finalResult.routing.analysis_source ?? null); setFallbackFrom(finalResult.routing.fallback_from ?? null); setPhase('complete');
     } catch (cause) {
       setMemoryBusy(false); setStreamingText(''); setStatsVersion(version => version + 1);
-      if (controller.signal.aborted && streamed) {
-        // Keep what was generated before Stop.
+      const message = cause instanceof Error ? cause.message : 'Could not reach the gateway.';
+      if (streamed) {
+        // Keep what was generated before Stop or the error.
         updateTurn(conversationId, turnId, {
-          content: streamed, model, provider: provider ?? 'local', stopped: true,
+          content: streamed, model: streamModel, provider: streamProvider, stopped: true,
           routing: { complexity: '', task_type: '', contains_personal_data: false, personal_data_types: [], reason: '' },
         });
-        setPhase('complete');
+        if (controller.signal.aborted) { setPhase('complete'); return; }
+        setError(`${message} The answer above is incomplete.`); setPhase('failed');
         return;
       }
-      setConversations(current => current.map(item => item.id !== conversationId ? item : { ...item, turns: item.turns.filter(existingTurn => existingTurn.id !== turnId) }));
+      // Nothing was generated: drop the new turn, and after a failed
+      // regenerate or edit bring back the turns it replaced.
+      setConversations(current => current.map(item => item.id !== conversationId ? item
+        : replaceFrom === undefined ? { ...item, turns: item.turns.filter(existingTurn => existingTurn.id !== turnId) }
+        : { ...item, turns: base.turns, memory: base.memory }));
       setPrompt(userText);
       if (controller.signal.aborted) { setPhase('idle'); return; }
-      setError(cause instanceof Error ? cause.message : 'Could not reach the gateway.'); setPhase('failed');
+      setError(message); setPhase('failed');
     } finally {
       abortRef.current = null;
     }

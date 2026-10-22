@@ -14,6 +14,10 @@ class PrivacyRedactionError(InvalidChatRequest):
     """Raised when detected personal data cannot be safely redacted."""
 
 
+class ModelNotFound(InvalidChatRequest):
+    """Raised when a request names a model that is not configured."""
+
+
 class PolicyViolation(InvalidChatRequest):
     """Raised when a guard blocks a request (for example prompt injection)."""
 

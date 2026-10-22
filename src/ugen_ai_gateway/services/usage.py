@@ -456,14 +456,18 @@ class UsageStore:
             )
 
     def _audit_entries(self, since: float | None, limit: int) -> list[dict[str, Any]]:
-        query = "SELECT * FROM audit"
-        parameters: tuple[Any, ...] = ()
-        if since is not None:
-            query += " WHERE created_at >= ?"
-            parameters = (since,)
-        query += " ORDER BY seq LIMIT ?"
+        # From ``since`` onwards, oldest first; without it, the newest entries
+        # (still in order), so a capped export always includes recent events.
         with self._lock:
-            rows = self._connection.execute(query, (*parameters, limit)).fetchall()
+            if since is not None:
+                rows = self._connection.execute(
+                    "SELECT * FROM audit WHERE created_at >= ? ORDER BY seq LIMIT ?",
+                    (since, limit),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT * FROM audit ORDER BY seq DESC LIMIT ?", (limit,)
+                ).fetchall()[::-1]
         return [{**dict(row), "detail": json.loads(row["detail"])} for row in rows]
 
     def _verify_audit(self) -> dict[str, Any]:
