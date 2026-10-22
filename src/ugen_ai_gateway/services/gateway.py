@@ -973,6 +973,7 @@ class GatewayService:
                 redacted_message["content"] = redacted_parts
             messages.append(cast(ChatCompletionMessageParam, redacted_message))
 
+        messages = _merged_system_messages(messages)
         if len(vault):
             messages = _with_system_instruction(messages, PLACEHOLDER_INSTRUCTION)
         return messages
@@ -1087,6 +1088,25 @@ def _message_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:
                 if isinstance(part, dict) and isinstance(part.get("text"), str)
             )
     return texts
+
+
+def _merged_system_messages(
+    messages: list[ChatCompletionMessageParam],
+) -> list[ChatCompletionMessageParam]:
+    """Join the system messages at the start (the gateway's system prompt, the
+    account's instructions, conversation memory) into one: some models' chat
+    templates accept only a single system message."""
+    count = 0
+    while (
+        count < len(messages)
+        and messages[count]["role"] == "system"
+        and isinstance(messages[count].get("content"), str)
+    ):
+        count += 1
+    if count < 2:
+        return messages
+    content = "\n\n".join(cast(str, message["content"]) for message in messages[:count])
+    return [{"role": "system", "content": content}, *messages[count:]]
 
 
 def _with_system_instruction(

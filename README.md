@@ -305,6 +305,9 @@ Everyone can change their password, profile picture and theme on the
 - `PUT /v1/ugen/auth/me/avatar` with `{"image": "data:image/webp;base64,..."}`
   sets the profile picture (PNG, JPEG or WebP, at most 200 KB; the dashboard
   crops and resizes it to 160×160 first) and `{"image": null}` removes it.
+- `GET`/`PUT /v1/ugen/auth/me/instructions` with `{"text": "..."}` (at most
+  4,000 characters; empty removes them) reads or sets the account's custom
+  instructions. See [System prompts](#system-prompts).
 - `PUT /v1/ugen/auth/me/password` with `{"current_password": "...",
   "new_password": "..."}` changes the password and signs out other browsers.
 - `DELETE /v1/ugen/auth/me` with `{"password": "..."}` (or `{"username":
@@ -487,6 +490,9 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
   are highlighted and have a copy button; Markdown tables and LaTeX math
   (`$…$`, `$$…$$`) are rendered.
 - **Theme**: System, Light or Dark, on the Account page.
+- **Custom instructions** on the Account page are added to all your
+  conversations; administrators set a **system prompt** for everyone at the
+  top of the Models page. See [System prompts](#system-prompts).
 - **Share** a conversation as a link or chat in it together; see
   [Sharing](#sharing).
 
@@ -558,6 +564,26 @@ The memory is sent as a system message, so it is analyzed and redacted like
 any other text. It never leaves the local model while it is written, and is
 saved with the conversation. The full history stays visible in the
 conversation; a marker shows how many earlier messages the memory covers.
+
+### System prompts
+
+Two optional prompts go ahead of every conversation, as one system message:
+
+1. The **system prompt** an administrator sets at the top of the Models page
+   (`GET`/`PUT /v1/ugen/system-prompt` with `{"text": "..."}`, at most 8,000
+   characters). It applies to every request, from the dashboard and the
+   OpenAI-compatible API alike, for house rules such as language, tone or
+   topics to decline. The audit log records each change with its length only.
+2. Each account's **custom instructions**, set on the Account page: who they
+   are or how they like answers. They apply to that account's requests while
+   it is signed in, never to API keys (an app writes its own prompts). They
+   are stored encrypted like saved conversations.
+
+Then come the conversation memory and the client's own system messages. All
+of it is analyzed and redacted like any other text, so keep personal data out
+of the system prompt: a phone number there would be replaced by a placeholder
+on its way to a cloud model, and could keep requests local under privacy
+rules.
 
 ### Guards
 
