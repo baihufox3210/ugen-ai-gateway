@@ -180,9 +180,9 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .flow-v4-tip.local{top:calc(var(--arm) - 3.5px)}
 .flow-v4-tip.cloud{bottom:calc(var(--arm) - 3.5px)}
 .flow-v4-tip.chosen{border-color:#54a885}
-.flow-v4-branch-dot{z-index:2;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:#38a477;box-shadow:0 0 6px #38a477;animation:1.2s cubic-bezier(.45,0,.55,1) infinite}
-.flow-v4-branch-dot.local{animation-name:branch-local}
-.flow-v4-branch-dot.cloud{animation-name:branch-cloud}
+.flow-v4-branch-dot{z-index:2;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:#38a477;box-shadow:0 0 6px #38a477}
+.flow-v4-branch-dot.local{animation:branch-local 1.2s cubic-bezier(.45,0,.55,1) infinite}
+.flow-v4-branch-dot.cloud{animation:branch-cloud 1.2s cubic-bezier(.45,0,.55,1) infinite}
 .flow-v4-targets{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--target-gap);width:100%}
 .flow-v4-targets .flow-v4-card{width:88%;justify-self:center;min-height:62px;padding:8px 9px}
 .flow-v4-targets .cloud .flow-v4-icon{background:#efecfa;color:#7463a9}
@@ -212,7 +212,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
   .flow-v4-steps>.flow-v4-card,.flow-v4-targets .flow-v4-card{width:100%;min-height:56px;gap:7px;padding:8px}
   .flow-v4-icon{flex-basis:28px;width:28px;height:28px;border-radius:8px;font-size:15px}
   .flow-v4-copy{gap:3px}
-  .flow-v4-copy small{font-size:6.5px;letter-spacing:.3px}
+  .flow-v4-copy small{font-size:8px;letter-spacing:.2px}
   .flow-v4-copy b{font-size:10.5px;line-height:1.25}
   .flow-v4-link{margin:0 3px}
   .flow-v4-branch{min-height:120px;margin:0 2px}
