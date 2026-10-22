@@ -201,6 +201,52 @@ class GatewayService:
                 return f"Provider '{name}' is not reachable; see the server logs"
         return None
 
+    @property
+    def embedding_model(self) -> str:
+        return self._settings.embedding_model
+
+    async def embed(
+        self, inputs: Any, *, options: dict[str, Any], principal: Principal
+    ) -> Any:
+        """Create embeddings on the local model only: documents being indexed
+        never leave this machine, so they need no redaction."""
+        model = self.embedding_model
+        if not model:
+            raise GatewayConfigurationError(
+                "No embedding model is configured; an administrator can set one on "
+                "the Models page"
+            )
+        route = self._engine.default("local")
+        if route is None:
+            raise ProviderUnavailable("Local provider is unavailable")
+        provider = self._provider_for(route)
+        record = UsageRecord(
+            id=uuid.uuid4().hex,
+            api_key_id=principal.api_key_id,
+            user_id=principal.user_id,
+            provider="local",
+            provider_name=route.provider.name,
+            model=model,
+            task_type="embedding",
+        )
+        started = perf_counter()
+        try:
+            result = await provider.embed(model=model, input=inputs, **options)  # type: ignore[attr-defined]
+        except TimeoutError as exc:
+            record.status, record.error = "error", "timeout"
+            await self._save(record)
+            raise ProviderTimeout("Local model timed out") from exc
+        except Exception as exc:
+            record.status, record.error = "error", type(exc).__name__
+            await self._save(record)
+            error = ProviderOutage if is_outage(exc) else ProviderRequestError
+            raise error(f"Embedding request failed: {exc}") from exc
+        usage = getattr(result, "usage", None)
+        record.prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        record.generation_ms = record.total_ms = (perf_counter() - started) * 1000
+        await self._save(record)
+        return result
+
     async def summarize_memory(
         self, previous: str, messages: list[dict[str, str]]
     ) -> str:

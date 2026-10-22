@@ -180,6 +180,8 @@ async def list_models(gateway: GatewayDependency) -> dict[str, Any]:
     if gateway.engine.default("cloud") is not None:
         ids.append(CLOUD_MODEL)
     ids.extend(model for model in gateway.engine.models() if model not in ids)
+    if gateway.embedding_model:
+        ids.append(EMBEDDING_MODEL)
     return {
         "object": "list",
         "data": [
@@ -337,3 +339,44 @@ async def _sse(
     finally:
         await events.aclose()  # type: ignore[attr-defined]
     yield "data: [DONE]\n\n"
+
+
+EMBEDDING_MODEL = "ugen-embed"
+
+
+class OpenAIEmbeddingRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    model: str = EMBEDDING_MODEL
+    input: str | list[str] | list[int] | list[list[int]]
+    encoding_format: Literal["float", "base64"] | None = None
+    dimensions: int | None = Field(default=None, ge=1)
+
+
+@router.post("/v1/embeddings", response_model=None)
+async def create_embeddings(
+    body: OpenAIEmbeddingRequest,
+    gateway: GatewayDependency,
+    store: Annotated[UsageStore | None, Depends(get_usage_store)],
+    http_request: Request,
+) -> JSONResponse:
+    """OpenAI-compatible embeddings, always computed by the local model."""
+    principal = await authenticate(http_request, store)
+    if body.model not in (EMBEDDING_MODEL, gateway.embedding_model):
+        return error_response(
+            404,
+            f"The model '{body.model}' does not exist; use '{EMBEDDING_MODEL}'",
+            code="model_not_found",
+        )
+    texts = [body.input] if isinstance(body.input, str) else body.input
+    if sum(len(text) for text in texts if isinstance(text, str)) > 200_000:
+        return error_response(413, "Input exceeds 200,000 characters", code=None)
+    options = body.model_dump(
+        include={"encoding_format", "dimensions"}, exclude_none=True
+    )
+    try:
+        result = await gateway.embed(body.input, options=options, principal=principal)
+    except Exception as exc:  # noqa: BLE001 - every failure maps to an API error
+        return error_response(*http_error_for(exc))
+    payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+    return JSONResponse(payload)

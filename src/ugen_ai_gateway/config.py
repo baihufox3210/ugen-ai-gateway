@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     # Optional public names for the models: shown in the dashboard and API
     # responses instead of the real model names, and accepted as `model`.
     local_model_alias: str = ""
+    # Model for /v1/embeddings, always on the local server (Models page).
+    embedding_model: str = ""
 
     cloud_api_key: str = ""
     cloud_base_url: str = ""

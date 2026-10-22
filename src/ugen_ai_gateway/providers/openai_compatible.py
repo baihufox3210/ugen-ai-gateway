@@ -22,6 +22,9 @@ class OpenAICompatibleProvider:
     async def health_check(self) -> None:
         await self._client.models.list()
 
+    async def embed(self, *, model: str, input: Any, **options: Any) -> Any:
+        return await self._client.embeddings.create(model=model, input=input, **options)
+
     async def complete(
         self,
         *,

@@ -145,7 +145,12 @@ def _build_gateway_service() -> GatewayService:
     models, _ = current_models(store)
     if models.local.model:
         return _service_from_routing_config(
-            settings.model_copy(update={"analysis_mode": models.analysis_mode}),
+            settings.model_copy(
+                update={
+                    "analysis_mode": models.analysis_mode,
+                    "embedding_model": models.local.embedding_model,
+                }
+            ),
             _apply_privacy(to_routing(models), privacy),
             usage_store=store,
         )
