@@ -204,7 +204,7 @@ advanced settings; it documents every one. The main ones:
 | `UGEN_IMAGE` | Docker only: image to run, e.g. `ghcr.io/baihufox3210/ugen-ai-gateway:latest` | built locally |
 | `USAGE_DB_PATH` | SQLite database; empty turns off accounts and usage tracking | `data/ugen.db` (Docker: `/app/data/ugen.db`) |
 | `GATEWAY_API_KEY`, `ADMIN_API_KEY` | Optional fixed keys with full access (for scripts); `APP_ENV=production` requires `GATEWAY_API_KEY` | blank |
-| `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `redact` |
+| `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `off` |
 | `FALLBACK_TO_LOCAL`, `FALLBACK_TO_CLOUD` | Fallback when a provider is down ([Resilience](#resilience)) | `true`, `false` |
 | `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS` | Requests per client IP per window | `60`, `60` |
 | `REQUEST_TIMEOUT`, `MAX_RETRIES` | Provider timeout (seconds) and retries | `300`, `2` |
@@ -602,8 +602,10 @@ sending keys to a URL). This is a heuristic tripwire, not a guarantee.
 
 **Personal data in answers.** The reply is scanned for personal data that the
 user did not provide, such as a phone number or key the model produced on its
-own. `OUTPUT_PII_ACTION=redact` (default) replaces it with a `[LABEL]` marker,
-`flag` only records it, `off` skips the check. Values from the request are left
+own. It is off by default (`OUTPUT_PII_ACTION=off`): personal data is hidden
+from models, not from the person reading the answer, and placeholders are
+restored in replies. `redact` replaces such data with a `[LABEL]` marker and
+`flag` only records it. Values from the request are left
 alone. Names and places are not checked in answers (answers mention them
 all the time, and the model cannot leak one it was never given); only
 structured data such as numbers, keys and cards is. When streaming, text is released only at points no value can span (the

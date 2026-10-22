@@ -839,7 +839,9 @@ def test_output_keeps_names_and_places_the_model_mentions() -> None:
         words = "Ask Bob Lee about it, or call 0912-345-678 today. "
         local = FakeProvider()
         local.chunks = [text_chunk(word + " ") for word in words.split(" ")]
-        service, _, _, _ = make_service(local_provider=local)
+        service, _, _, _ = make_service(
+            local_provider=local, output_pii_action="redact"
+        )
         request = ChatRequest(messages=[{"role": "user", "content": "plan my day"}])
         events = asyncio.run(collect(service, request))
     finally:
