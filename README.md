@@ -174,8 +174,9 @@ changes apply to the next request, without a restart.
   requests, so routing is faster; the local model is used otherwise.
 - **Embedding model** (optional): a local model that serves
   [`/v1/embeddings`](#post-v1embeddings).
-- **Routing**: *Fast* (rules decide, `hybrid`) or *Thorough* (the local model
-  judges every request, `llm`); see [Routing behavior](#routing-behavior).
+- **Routing**: *Fast* (rules settle clear cases, the local model the rest,
+  `hybrid`) or *Thorough* (the local model judges every request, `llm`); see
+  [Routing behavior](#routing-behavior).
 - **More models**: add further local or cloud connections, then **routing
   rules** that send matching requests to them. Rules match on complexity, task
   type, personal data (any, or specific types) and request length; they are
@@ -656,9 +657,22 @@ is saved) controls how:
 
 | Mode | Behavior |
 | --- | --- |
-| `hybrid` (default) | Fast rule-based analysis when the request would stay on the local model anyway; the local model analyzes anything that could go to the cloud |
+| `hybrid` (default) | The rules decide when they are sure and the request stays local; the local model analyzes everything else |
 | `llm` | Always ask the local model |
-| `rules` | Regular expressions only, never call the model |
+| `rules` | Rules only, never call the model |
+
+**How difficulty is judged.** Rules settle a request only when the signal is
+unambiguous: small talk and thanks, "what is X" with nothing more asked, short
+rewrites, translations and wishes (simple), or explicit design, proof,
+algorithm or debugging work (complex). Words like "design" or 比較 alone
+decide nothing ("幫我設計一句生日祝福" is simple, "幫我設計一個會員系統"
+complex). Everything else is left to the local model, whose prompt defines the
+levels by what a 7-9B model answers well, with examples. When the rules are
+sure, the model's opinion does not override them. A short follow-up
+("第二點再詳細一點", "continue") is judged together with the request before it.
+`tests/data/complexity_cases.json` holds 360 labeled Chinese and English
+requests, many deliberately tricky; the tests require that the rules are never
+wrong about local versus cloud on the ones they settle.
 
 Rule-based analysis only detects the structured personal data listed under
 [Personal-data handling](#personal-data-handling); names and addresses need the

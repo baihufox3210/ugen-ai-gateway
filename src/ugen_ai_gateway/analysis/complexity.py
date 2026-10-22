@@ -36,6 +36,7 @@ _HARD = _any(
     r"comprehensive|in[ -]depth|thorough|multi[ -]?step|refactor|debug|"
     r"distributed|scalab|high[ -]availability|concurren|race condition|deadlock|"
     r"memory leak|time complexity|big[ -]o\b|\bprove\b|\bproof\b|theorem|derive|"
+    r"\bcrdts?\b|\braft\b|\bpaxos\b|consensus algorithm|\bp ?(?:=|vs\.?|versus) ?np\b|"
     r"\b(?:design|build|implement|architect|write|create|develop) (?:a|an|the|my|our) "
     r"(?:[\w-]+ ){0,3}(?:system|service|api|backend|database|schema|architecture|"
     r"pipeline|protocol|limiter|cache|queue|platform|compiler|interpreter|engine|"
@@ -66,13 +67,24 @@ _LIGHT_TASK = _any(
     r"\btranslat|\bin (?:english|chinese|japanese)\b|翻譯|譯成|翻成|換成(?:英文|中文|日文)|"
     r"\b(?:rewrite|rephrase|paraphrase|polish|proofread|shorten|simplify)\b|"
     r"\bfix (?:the |my )?(?:typos?|grammar|spelling)|\bmake it (?:shorter|more formal|"
-    r"friendlier|polite)|潤飾|潤稿|改寫|換句話說|修飾|錯字|文法|語氣|口吻|縮短|精簡|"
+    r"friendlier|polite)|潤飾|潤稿|改寫|換句話說|修飾|錯字|文法|縮短|精簡|"
     r"\b(?:summari[sz]e|tl;?dr)\b|摘要|總結|重點整理|"
-    r"祝福|賀詞|生日|卡片|標語|slogan|caption|hashtag|取名|起名|名字|暱稱|"
-    r"\bname (?:ideas|suggestions)|\bbirthday|\bwish(?:es)?\b|\bjoke\b|笑話|"
-    r"一句話|一句|一行|簡短|短短",
+    r"祝福|賀詞|生日|卡片|標語|slogan|caption|hashtag|取名|起名|暱稱|"
+    r"\bname (?:ideas|suggestions)|\bbirthday|\bwish(?:es)?\b|\bjoke\b|笑話",
+)
+# Writing to a brief: an email, letter or report with requirements.
+_COMPOSITION = _any(
+    r"\b(?:e-?mail|letter|cover letter|report|essay|article|proposal|speech|"
+    r"announcement|press release|blog post|resume|cv)\b|"
+    r"一封|信件|求職信|自傳|履歷|報告|文章|企劃|提案|講稿|演講稿|公告|新聞稿|心得|讀書心得",
 )
 # Asking what something is: simple even when the topic is not.
+# A definition question that also asks for more ("…並舉例說明").
+_MORE_ASKED = _any(
+    r"\b(?:explain|compare|difference|versus|vs\.?|why|how|examples?|pros|cons|"
+    r"trade-?offs?|in detail|detailed|walk me through|step)\b|"
+    r"說明|解釋|比較|差別|差異|舉例|例子|為什麼|為何|怎麼|如何|優缺點|取捨|詳細|步驟|原理",
+)
 _DEFINITION = _any(
     r"^\s*(?:what(?:'s| is| are| does)|who (?:is|was)|define|meaning of)\b(?!.*"
     r"\b(?:difference|between|compare|versus|vs\.?)\b)",
@@ -95,10 +107,33 @@ _FOLLOW_UP = _any(
     r"\bmore detail|\belaborate|\bexpand\b|\bstep \d|\bwhat about\b|\bhow about\b|"
     r"\band if\b|\bwhat if\b|\binstead\b|\bthat\b|\bthis one\b|\babove\b|\bpart \d",
 )
-_ACKNOWLEDGEMENT = _any(
-    r"^\s*(?:thanks?(?: you| a lot| so much)?|thx|ok(?:ay)?|great|perfect|got it|cool|"
-    r"nice|謝謝|感謝|好的|好|了解|收到|讚|太好了|沒問題|懂了)[\s!！.。~～,，]*"
-    r"(?:謝謝|thanks)?[\s!！.。~～]*$",
+_ACK_WORD = (
+    r"(?:thanks?(?: you| a lot| so much)?|thx|ty|ok(?:ay)?|great|perfect|got it|cool|"
+    r"nice|awesome|謝謝|謝啦|謝囉|感謝|感恩|好的|好喔|好|了解了?|收到|讚|太好了|沒問題|懂了|"
+    r"很清楚|清楚了|明白了?|很棒|很有幫助|helpful|makes sense|"
+    r"OK)"
+)
+_ACKNOWLEDGEMENT = re.compile(
+    rf"^\s*{_ACK_WORD}(?:[\s,，!！.。~～]*{_ACK_WORD})*[\s!！.。~～,，]*$",
+    re.IGNORECASE,
+)
+# Work a small model often gets wrong: code to write, calculations to show,
+# and advice on a specific medical, legal or financial situation.
+# Asks for a short answer.
+_BRIEF = _any(
+    r"\b(?:briefly|in short|keep it short|short answer|in one sentence|eli5|simply)\b|"
+    r"簡單說|簡單講|簡短|一句話|國小程度|小學生|白話",
+)
+_SUBSTANTIAL = _any(
+    r"\b(?:write|create|build|make) (?:a|an|me a) (?:[\w-]+ ){0,3}(?:function|script|"
+    r"component|class|program|scraper|bot|query|regex|game|cover letter)\b|"
+    r"\bfix (?:this|my|the) (?:code|regex|query|bug)|\bshow (?:the |your )?(?:work|steps)|"
+    r"\b(?:doctor|prescri|medication|dose|diagnos|symptom|lawyer|legal|contract|"
+    r"enforceable|lawsuit|sue|tax|equity|vest|mortgage|invest)\w*|"
+    r"寫(?:一個|個|一支|支)[^，。\n]{0,20}(?:函式|函數|程式|腳本|爬蟲|元件|組件|遊戲|API|SQL|類別)|"
+    r"算式|計算過程|列式|步驟|流程|時間表|"
+    r"醫生|醫師|藥|劑量|症狀|病|診斷|律師|法律|合約|契約|違法|告|勞基法|押金|稅|保險|"
+    r"投資|股票|貸款|房貸|退休金",
 )
 _CODE = re.compile(
     r"```|^\s{4,}\S|\b(?:def|class|function|import|return)\b|[{};]\s*$", re.MULTILINE
@@ -131,12 +166,18 @@ def assess_complexity(text: str, previous: str | None = None) -> Assessment:
                 follow_up=True,
             )
 
-    if _CHITCHAT.search(stripped):
+    if _CHITCHAT.search(stripped) or _ACKNOWLEDGEMENT.search(stripped):
         return Assessment("simple", True, "Small talk.")
 
     hard = _HARD.search(stripped)
     has_code = bool(_CODE.search(stripped))
-    definition = bool(_DEFINITION.search(stripped)) and size <= 80
+    # Only when nothing else is asked ("什麼是 CAP 定理？請舉例說明取捨" is more).
+    definition = (
+        bool(_DEFINITION.search(stripped))
+        and size <= 80
+        and not _MORE_ASKED.search(stripped)
+        and len(re.findall(r"[?？]", stripped)) <= 1
+    )
 
     if definition and not has_code:
         return Assessment("simple", True, "Asks what something is.")
@@ -149,14 +190,42 @@ def assess_complexity(text: str, previous: str | None = None) -> Assessment:
     task_words = {word.lower() for word in _TASK_WORDS.findall(stripped)}
     list_items = len(_LIST_ITEM.findall(stripped))
 
-    if light and not has_code and size <= 600 and len(task_words) <= 1:
+    composing = bool(_COMPOSITION.search(stripped))
+    if (
+        light
+        and not composing
+        and not has_code
+        and size <= 600
+        and len(task_words) <= 1
+    ):
         return Assessment("simple", True, "A short rewrite, translation or summary.")
 
-    # Uncertain: the analysis model decides. Best guess for rules-only mode.
+    # Uncertain: the analysis model decides. Below is the best guess for
+    # rules-only mode.
+    substantial = bool(_SUBSTANTIAL.search(stripped))
     if size >= 1400 or list_items >= 4 or len(task_words) >= 3:
         guess: Complexity = "complex"
-    elif has_code or size >= 280 or task_words:
+    elif substantial and size >= 120:
+        guess = "complex"
+    elif (
+        _BRIEF.search(stripped)
+        and not has_code
+        and size < 160
+        or light
+        and not composing
+        and not has_code
+    ):
+        guess = "simple"
+    elif has_code or substantial or composing or size >= 160 or task_words:
         guess = "moderate"
     else:
         guess = "simple"
+    if previous and size <= 80:
+        # A short message after another one is judged with it.
+        earlier = assess_complexity(previous)
+        order = ("simple", "moderate", "complex")
+        guess = max(guess, earlier.complexity, key=order.index)
+        return Assessment(
+            guess, False, "A follow-up to the previous request.", follow_up=True
+        )
     return Assessment(guess, False, "No clear signal; judged by the analysis model.")

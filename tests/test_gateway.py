@@ -335,9 +335,10 @@ def test_chat_analyzes_user_text_from_strings_and_text_parts() -> None:
 
     asyncio.run(service.chat(request))
 
-    # The latest message on its own; older ones together in one call.
+    # The latest message (a short follow-up, so together with the message
+    # before it) in one call; older ones together in another.
     assert analyzer.inputs == [
-        "second",
+        "from a part\n\nsecond",
         ANALYSIS_BATCH_SEPARATOR.join(["system prompt", "first", "from a part"]),
     ]
 
@@ -388,7 +389,7 @@ def test_long_conversations_need_at_most_two_analysis_calls() -> None:
             )
         )
     )
-    assert analyzer.inputs[2:] == ["one more"]
+    assert analyzer.inputs[2:] == ["and now?\n\none more"]
 
 
 def test_personal_data_without_values_in_a_batch_keeps_requests_local() -> None:
@@ -450,7 +451,7 @@ def test_earlier_messages_are_not_analyzed_again() -> None:
     ]
     asyncio.run(service.chat(ChatRequest(messages=later)))
 
-    assert analyzer.inputs == ["first question", "follow-up"]
+    assert analyzer.inputs == ["first question", "first question\n\nfollow-up"]
 
 
 def test_personal_data_in_earlier_messages_is_still_redacted() -> None:

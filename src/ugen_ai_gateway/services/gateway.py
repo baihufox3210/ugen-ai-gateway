@@ -827,9 +827,22 @@ class GatewayService:
         )
         # The analysis model judges an unclear follow-up together with the
         # request it follows ("第二點再詳細一點" alone says little).
+        message = latest
         if assessment.follow_up and not assessment.certain:
-            latest = f"{user_texts[-2]}\n\n{latest}"
-        texts = list(dict.fromkeys([*_analysis_texts(request.messages), latest]))
+            latest = f"{user_texts[-2]}\n\n{message}"
+        # The message itself is covered by the combined text when there is one.
+        texts = list(
+            dict.fromkeys(
+                [
+                    *(
+                        text
+                        for text in _analysis_texts(request.messages)
+                        if text != message or latest == message
+                    ),
+                    latest,
+                ]
+            )
+        )
 
         # The rules decide the difficulty when they are sure; otherwise the
         # analysis model does. Hybrid mode skips the model call only when the
@@ -874,6 +887,15 @@ class GatewayService:
         if latest_missing:
             results[latest] = fresh[0]
             self._analysis_cache.put(latest, fresh[0])
+            if latest != message:
+                # Cache the message's own share, so the next turn, where it
+                # is an earlier message, needs no call for it.
+                share = _share_of_batch(message, fresh[0])
+                if not (
+                    fresh[0].contains_personal_data
+                    and not fresh[0].personal_data_values
+                ):
+                    self._analysis_cache.put(message, share)
         if older:
             batch = fresh[-1]
             # Personal data reported without values cannot be traced to one
