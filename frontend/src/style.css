@@ -707,3 +707,4 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .sso-steps{margin:0 0 12px;padding-left:18px;color:#5f776d;font-size:10.5px;line-height:1.7}
 .sso-steps a{color:#2f7a5f}
 .sso-steps code{font:10px var(--mono)}
+.account-button small.sync-error{color:#a1574f}

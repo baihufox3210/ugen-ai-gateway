@@ -6,6 +6,7 @@ import ResponsePanel from './components/ResponsePanel';
 import SettingsDialog, { type SettingsPage } from './components/SettingsDialog';
 import Sidebar from './components/Sidebar';
 import { apiFetch, errorMessage, type User } from './api';
+import { forgetLocalHistory, useConversations } from './conversationStore';
 import { downloadConversation } from './exportConversation';
 import { FOLD_CHUNK, requestMessages, size, turnMessages, turnsToRemember } from './memory';
 import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from './types';
@@ -13,23 +14,9 @@ import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, Analysis
 // crypto.randomUUID only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere.
 const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
 
-const STORAGE_KEY = 'ugen-gateway-conversations-v1';
 const PROVIDER_SELECTION_KEY = 'ugen-gateway-provider-selection';
 type View = 'chat' | 'monitor';
 type DeleteAction = { type: 'conversation'; conversationId: string } | { type: 'turn'; conversationId: string; turnId: string } | { type: 'all' };
-// Each account keeps its own history in this browser.
-const conversationsKey = (user: User | null) => user ? `${STORAGE_KEY}:${user.id}` : STORAGE_KEY;
-function loadConversations(key: string): Conversation[] {
-  try {
-    // History saved before accounts existed goes to the first account that signs in here.
-    if (key !== STORAGE_KEY && localStorage.getItem(key) === null) {
-      const legacy = localStorage.getItem(STORAGE_KEY);
-      if (legacy !== null) { localStorage.setItem(key, legacy); localStorage.removeItem(STORAGE_KEY); }
-    }
-    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
-    return Array.isArray(stored) ? stored as Conversation[] : [];
-  } catch { return []; }
-}
 function isSource(value: unknown): value is AnalysisSource {
   return value === 'llm' || value === 'rules' || value === 'cache';
 }
@@ -46,8 +33,6 @@ function loadProviderSelection(): ProviderSelection {
 type Props = { user: User | null; onSignOut: () => void; onAccountDeleted: () => void; onUserChange: (user: User) => void };
 
 function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
-  const storageKey = conversationsKey(user);
-  const [conversations, setConversations] = useState<Conversation[]>(() => loadConversations(storageKey));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -69,6 +54,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [providerSelection, setProviderSelection] = useState<ProviderSelection>(loadProviderSelection);
   const busy = !['idle', 'complete', 'failed'].includes(phase);
+  const { conversations, setConversations, status: syncStatus, syncError, flush } = useConversations(user, busy);
   const activeConversation = conversations.find(item => item.id === activeId) ?? null;
   const turns = activeConversation?.turns ?? [];
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
@@ -76,7 +62,6 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
   const [memoryBusy, setMemoryBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => { try { localStorage.setItem(storageKey, JSON.stringify(conversations)); } catch { /* history lasts for this page only */ } }, [storageKey, conversations]);
   useEffect(() => { try { localStorage.setItem(PROVIDER_SELECTION_KEY, providerSelection); } catch { /* selection simply resets next visit */ } }, [providerSelection]);
   useEffect(() => {
     let active = true;
@@ -292,7 +277,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       <span className="mobile-title">ugen<span className="brand-dot">.</span><small>AI GATEWAY</small></span>
       <button className="icon-button new-chat-mini" onClick={newConversation} disabled={busy} aria-label="New conversation" title="New conversation">+</button>
     </header>
-    <Sidebar conversations={conversations} activeId={activeId} busy={busy} onNew={newConversation} onSelect={selectConversation}
+    <Sidebar conversations={conversations} syncStatus={syncStatus} syncError={syncError} activeId={activeId} busy={busy} onNew={newConversation} onSelect={selectConversation}
       onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onRename={(id, title) => setConversations(current => current.map(item => item.id === id ? { ...item, title } : item))} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)} user={user} onOpenSettings={page => { setSettingsPage(page); setDrawerOpen(false); }}/>
     <div className="drawer-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true"/>
     <nav className="view-tabs" role="tablist" aria-label="Switch view">
@@ -301,9 +286,11 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
     </nav>
     <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section></main>
     <section className="chat-column"><ResponsePanel setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
-    {settingsPage && <SettingsDialog user={user} page={settingsPage} onPageChange={setSettingsPage} onUserChange={onUserChange} onSignOut={onSignOut} onClose={() => setSettingsPage(null)} onModelsSaved={() => setModelsVersion(version => version + 1)}
-      onAccountDeleted={() => { try { localStorage.removeItem(storageKey); } catch { /* nothing saved */ } onAccountDeleted(); }}/>}
-    {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all' ? 'Every conversation saved on this device will be permanently deleted.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}
+    {settingsPage && <SettingsDialog user={user} page={settingsPage} onPageChange={setSettingsPage} onUserChange={onUserChange} onSignOut={() => void flush().finally(onSignOut)} onClose={() => setSettingsPage(null)} onModelsSaved={() => setModelsVersion(version => version + 1)}
+      onAccountDeleted={() => { forgetLocalHistory(user); onAccountDeleted(); }}/>}
+    {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all'
+      ? user ? 'Every conversation in your account will be permanently deleted, on every device.' : 'Every conversation saved on this device will be permanently deleted.'
+      : user ? 'This removes it from your history on every device.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}
   </div>;
 }
 export default App;

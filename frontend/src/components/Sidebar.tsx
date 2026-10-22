@@ -3,9 +3,12 @@ import type { User } from '../api';
 import Avatar from './Avatar';
 import type { SettingsPage } from './SettingsDialog';
 import type { Conversation } from '../types';
+import type { SyncStatus } from '../conversationStore';
 
 type Props = {
   conversations: Conversation[];
+  syncStatus: SyncStatus;
+  syncError: string;
   activeId: string | null;
   busy: boolean;
   onNew: () => void;
@@ -18,7 +21,11 @@ type Props = {
   user: User | null;
 };
 
-function Sidebar({ conversations, activeId, busy, onNew, onSelect, onDelete, onRename, onClearAll, onClose, onOpenSettings, user }: Props) {
+const SYNC_LABEL: Record<SyncStatus, string> = {
+  local: 'history on this device', loading: 'loading history…', synced: 'synced across devices', saving: 'saving…', error: 'not saved, retrying',
+};
+
+function Sidebar({ conversations, syncStatus, syncError, activeId, busy, onNew, onSelect, onDelete, onRename, onClearAll, onClose, onOpenSettings, user }: Props) {
   const [query, setQuery] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const needle = query.trim().toLowerCase();
@@ -35,6 +42,7 @@ function Sidebar({ conversations, activeId, busy, onNew, onSelect, onDelete, onR
       <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search conversations" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setQuery(''); } }}/>
     </label>}
     <nav className="history-list" aria-label="Conversation history">
+      {syncStatus === 'loading' && !conversations.length && <div className="history-empty"><span className="spinner dark" aria-hidden="true"/><small>Loading your conversations…</small></div>}
       {needle && shown.length === 0 && <div className="history-empty"><b>No matches</b><small>Nothing in your conversations matches “{query}”.</small></div>}
       {conversations.length ? shown.map(conversation => {
         const messages = conversation.turns.reduce((count, turn) => count + (turn.result ? 2 : 1), 0);
@@ -50,10 +58,10 @@ function Sidebar({ conversations, activeId, busy, onNew, onSelect, onDelete, onR
           <button className="icon-button history-rename-button" aria-label={`Rename conversation: ${conversation.title}`} title="Rename" onClick={() => setRenaming({ id: conversation.id, title: conversation.title })} disabled={busy}>✎</button>
           <button className="icon-button history-delete" aria-label={`Delete conversation: ${conversation.title}`} title="Delete conversation" onClick={() => onDelete(conversation.id)} disabled={busy}>×</button>
         </div>;
-      }) : <div className="history-empty"><span>✳</span><b>No conversations yet</b><small>Your conversations will appear here.</small></div>}
+      }) : syncStatus === 'loading' ? null : <div className="history-empty"><span>✳</span><b>No conversations yet</b><small>Your conversations will appear here.</small></div>}
     </nav>
     <div className="sidebar-bottom"><button className="new-chat" onClick={onNew} disabled={busy}><span>+</span> New conversation <kbd>⌘ K</kbd></button><div className="sidebar-footer">{user
-      ? <button className="account-button" onClick={() => onOpenSettings('account')} title="Account settings"><Avatar user={user} className="small"/><span><b>{user.username}</b><small>{user.is_admin ? 'Administrator' : 'Member'} · history on this device</small></span></button>
+      ? <button className="account-button" onClick={() => onOpenSettings('account')} title="Account settings"><Avatar user={user} className="small"/><span><b>{user.username}</b><small className={syncStatus === 'error' ? 'sync-error' : ''} title={syncError || undefined}>{user.is_admin ? 'Administrator' : 'Member'} · {SYNC_LABEL[syncStatus]}</small></span></button>
       : <span className="account-button static"><span className="sidebar-status-dot"/><span><b>Local privacy</b><small>History stays on this device</small></span></span>}
       {(!user || user.is_admin) && <button className="icon-button settings-button" onClick={() => onOpenSettings(user ? 'users' : 'models')} aria-label="Gateway settings" title="Gateway settings: users, models, privacy and API keys"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.4Z"/></svg></button>}
     </div></div>

@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     # administrator; set ALLOW_REGISTRATION=false to stop further sign-ups.
     allow_registration: bool = True
     session_ttl_days: float = Field(default=30, gt=0)
+    # Saved conversations per account, measured compressed and encrypted.
+    conversation_storage_mb: float = Field(default=200, gt=0)
     # Built dashboard (frontend/dist) served at "/". Empty: use frontend/dist
     # next to the source tree when it exists.
     static_dir: str = ""

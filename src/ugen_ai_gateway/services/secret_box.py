@@ -55,3 +55,10 @@ class SecretBox:
                 "SECRET_KEY changed?); enter it again on the Models page"
             )
             return ""
+
+    def encrypt(self, data: bytes) -> bytes:
+        return self._fernet.encrypt(data)
+
+    def decrypt(self, token: bytes) -> bytes:
+        """Raises ``InvalidToken`` when the key does not match."""
+        return self._fernet.decrypt(token)

@@ -1,8 +1,10 @@
-"""Request metadata, feedback, API keys and user accounts stored in SQLite.
+"""Request metadata, feedback, API keys, user accounts and saved
+conversations, stored in SQLite.
 
-Only metadata is stored: routing, token counts, timings, cost, and which
-personal-data types were found. Message text and personal-data values are
-never written.
+Request records hold only metadata: routing, token counts, timings, cost, and
+which personal-data types were found. Conversations that dashboard users save
+are stored encrypted (see ``api/conversation_routes.py``); nothing else holds
+message text or personal-data values.
 """
 
 import asyncio
@@ -93,6 +95,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions (user_id);
+CREATE TABLE IF NOT EXISTS conversations (
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    -- Compressed, encrypted JSON of the whole conversation, title included.
+    data BLOB NOT NULL,
+    size INTEGER NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (user_id, id)
+);
+CREATE INDEX IF NOT EXISTS conversations_updated
+    ON conversations (user_id, updated_at);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -835,6 +849,80 @@ class UsageStore:
             )
         return _user_view(row)
 
+    # Saved conversations: opaque encrypted blobs, one per conversation.
+
+    async def list_conversations(
+        self, user_id: str, since: float | None = None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Conversations changed after ``since`` (all when None), and the ids
+        of every conversation the user has, so clients can drop deleted ones."""
+        return await asyncio.to_thread(self._list_conversations, user_id, since)
+
+    def _list_conversations(
+        self, user_id: str, since: float | None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT id, data, updated_at FROM conversations WHERE user_id = ? "
+                "AND (? IS NULL OR updated_at > ?) ORDER BY updated_at DESC",
+                (user_id, since, since),
+            ).fetchall()
+            ids = [
+                row["id"]
+                for row in self._connection.execute(
+                    "SELECT id FROM conversations WHERE user_id = ? "
+                    "ORDER BY updated_at DESC",
+                    (user_id,),
+                )
+            ]
+        return [dict(row) for row in rows], ids
+
+    async def sync_conversations(
+        self,
+        user_id: str,
+        save: list[tuple[str, bytes, int]],
+        delete: list[str],
+        *,
+        max_total_bytes: int,
+    ) -> float:
+        """Store (id, data, size) items and delete ids in one transaction;
+        returns the server time of the change. Raises ``StorageFull`` when the
+        user's saved conversations would exceed ``max_total_bytes``."""
+        return await asyncio.to_thread(
+            self._sync_conversations, user_id, save, delete, max_total_bytes
+        )
+
+    def _sync_conversations(
+        self,
+        user_id: str,
+        save: list[tuple[str, bytes, int]],
+        delete: list[str],
+        max_total_bytes: int,
+    ) -> float:
+        now = time.time()
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.executemany(
+                "DELETE FROM conversations WHERE user_id = ? AND id = ?",
+                [(user_id, conversation_id) for conversation_id in delete],
+            )
+            self._connection.executemany(
+                "INSERT INTO conversations "
+                "(user_id, id, data, size, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (user_id, id) DO UPDATE SET "
+                "data = excluded.data, size = excluded.size, "
+                "updated_at = excluded.updated_at",
+                [(user_id, cid, data, size, now, now) for cid, data, size in save],
+            )
+            total = self._connection.execute(
+                "SELECT COALESCE(SUM(size), 0) FROM conversations WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()[0]
+            if save and total > max_total_bytes:
+                # Rolls the transaction back.
+                raise StorageFull(total)
+        return now
+
     async def delete_user(self, user_id: str) -> bool:
         """Delete an account with its sessions, request metadata and feedback.
 
@@ -953,6 +1041,9 @@ class UsageStore:
             self._connection.execute(
                 "DELETE FROM sessions WHERE user_id = ?", (user_id,)
             )
+            self._connection.execute(
+                "DELETE FROM conversations WHERE user_id = ?", (user_id,)
+            )
             deleted = self._connection.execute(
                 "DELETE FROM users WHERE id = ?", (user_id,)
             ).rowcount
@@ -977,6 +1068,10 @@ def _month_start() -> float:
 
 # Stored for accounts created by single sign-on; no password matches it.
 NO_PASSWORD = "!"
+
+
+class StorageFull(ValueError):
+    """Saving would exceed the per-account conversation storage limit."""
 
 
 class UsernameTaken(ValueError):

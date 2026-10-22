@@ -117,14 +117,15 @@ docker compose pull && docker compose up -d   # update, with UGEN_IMAGE set
 docker compose logs -f gateway             # follow the logs
 ```
 
-Accounts, API keys, settings, usage metadata and the audit log live in one
-SQLite file in the `ugen-data` volume, which survives rebuilds (`docker
-compose down -v` deletes it). Provider API keys and the single sign-on client
-secret in it are encrypted with `secret.key`, which is created next to the
-database on first use (or derived from `SECRET_KEY` when set). **Back up
-`secret.key` together with the database**: without it, stored provider keys
-must be entered again. Conversations are never stored on the server; they stay
-in each user's browser. To take a consistent backup while the gateway runs:
+Accounts, API keys, settings, saved conversations, usage metadata and the
+audit log live in one SQLite file in the `ugen-data` volume, which survives
+rebuilds (`docker compose down -v` deletes it). Conversations, provider API
+keys and the single sign-on client secret in it are encrypted with
+`secret.key`, which is created next to the database on first use (or derived
+from `SECRET_KEY` when set). **Back up `secret.key` together with the
+database**: without it, saved conversations cannot be read and stored provider
+keys must be entered again. To take a consistent backup while the gateway
+runs:
 
 ```sh
 docker compose exec gateway python -c "import sqlite3; sqlite3.connect('/app/data/ugen.db').backup(sqlite3.connect('/app/data/backup.db'))"
@@ -198,6 +199,7 @@ advanced settings; it documents every one. The main ones:
 | `ROUTING_CONFIG` | YAML with several providers, models and rules; overrides the Models page ([Routing rules](#routing-rules-and-multiple-models)) | blank |
 | `LOCAL_*`, `CLOUD_*` | Starting values for the Models page before it is first saved | blank |
 | `SESSION_TTL_DAYS` | How long a dashboard sign-in lasts | `30` |
+| `CONVERSATION_STORAGE_MB` | Saved conversations per account, compressed | `200` |
 | `GATEWAY_HOST`, `GATEWAY_PORT` | Docker only: listen address and port | `0.0.0.0`, `7632` |
 | `UGEN_IMAGE` | Docker only: image to run, e.g. `ghcr.io/baihufox3210/ugen-ai-gateway:latest` | built locally |
 | `USAGE_DB_PATH` | SQLite database; empty turns off accounts and usage tracking | `data/ugen.db` (Docker: `/app/data/ugen.db`) |
@@ -468,14 +470,40 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
 
 ### Using the dashboard
 
-- **Conversations** are kept in your browser, listed in the sidebar with
-  search (titles and message text). Double-click a title or use ✎ to rename,
+- **Conversations** are saved to your account on the gateway and follow you
+  to every browser and device you sign in to (see
+  [Saved conversations](#saved-conversations)). They are listed in the sidebar
+  with search (titles and message text). Double-click a title or use ✎ to rename,
   and **Export** a conversation as Markdown or JSON.
 - **Stop** ends an answer while it streams. Each answer can be copied or
   regenerated, and each of your messages edited and sent again. Code blocks
   are highlighted and have a copy button; Markdown tables and LaTeX math
   (`$…$`, `$$…$$`) are rendered.
 - **Theme**: System, Light or Dark, on the Account page.
+
+### Saved conversations
+
+With accounts, each person's conversations are stored on the gateway:
+
+- **Encrypted**: every conversation, title included, is compressed and
+  encrypted with `secret.key` / `SECRET_KEY` before it is written. Only the
+  account that saved it can read it; administrators cannot.
+- **Synced**: changes are saved within a second; other open browsers pick
+  them up when their window regains focus and every 30 seconds. The sidebar
+  shows *synced across devices*, *saving…* or *not saved, retrying*. When the
+  same conversation is changed on two devices at once, the last save wins.
+- **Moved automatically**: history saved in a browser by an older version is
+  uploaded the first time its owner signs in there, then removed from the
+  browser.
+- **Limits**: 5 MB of text per conversation and `CONVERSATION_STORAGE_MB`
+  (default 200, measured compressed) per account. Deleting an account deletes
+  its conversations.
+- `GET /v1/ugen/conversations?since=<server_time>` returns conversations
+  changed since an earlier response, plus every id; `POST
+  /v1/ugen/conversations/sync` with `{"save": [...], "delete": [...]}` saves
+  and deletes. Both need a dashboard session.
+
+Without accounts (no database), conversations stay in the browser.
 
 ### Conversation memory
 
@@ -486,8 +514,8 @@ decisions, preferences, names and open tasks worth keeping, merged with the
 memory so far. Recent turns (about 10,000 characters, at least the last two)
 are sent as they are, and the memory is sent before them as a system message,
 so it is analyzed and redacted like any other text. The memory never leaves
-the local model while it is written, and is stored with the conversation in
-the browser. A marker in the conversation shows how many earlier messages it
+the local model while it is written, and is saved with the conversation. A
+marker in the conversation shows how many earlier messages it
 covers.
 
 ### Guards
@@ -534,7 +562,9 @@ Each request's metadata is stored in SQLite at `USAGE_DB_PATH` (default
 `data/ugen.db`; empty disables tracking): routing decision, provider and model,
 matched rule, task type, complexity, analysis source, which personal-data
 types were found and how many values were redacted, fallback, token counts,
-timings, and cost. Message text and personal-data values are never written.
+timings, and cost. Usage records never contain message text or personal-data
+values; the only message text on the server is in [saved
+conversations](#saved-conversations), encrypted.
 
 Cost uses the per-million-token prices in the routing configuration. Savings
 compare it with the same tokens on the default cloud model, so answers kept on
