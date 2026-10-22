@@ -31,8 +31,10 @@ def test_secret_key_setting_wins_and_a_wrong_key_reads_empty(tmp_path) -> None:
 def test_model_configuration_keys_are_sealed(tmp_path) -> None:
     box = SecretBox.for_database(str(tmp_path / "ugen.db"))
     stored = StoredModels.model_validate(
-        {"cloud": {"api_key": "sk-cloud"}, "local": {"api_key": "lk"}}
+        {"cloud": {"api_key": "sk-cloud"}, "local": {"api_key": "local-secret-1"}}
     )
     data = sealed(stored, box)
-    assert "sk-cloud" not in str(data) and "lk" not in data["local"]["api_key"]
+    assert (
+        "sk-cloud" not in str(data) and "local-secret-1" not in data["local"]["api_key"]
+    )
     assert unsealed(data, box).cloud.api_key == "sk-cloud"
