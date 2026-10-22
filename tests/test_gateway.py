@@ -811,9 +811,11 @@ def test_memory_is_summarized_by_the_local_model_only() -> None:
     )
 
 
-def test_slow_detection_does_not_block_other_requests() -> None:
+def test_output_keeps_names_and_places_the_model_mentions() -> None:
+    """Named-entity recognition checks what is sent, not the answer: answers
+    name people and places all the time, and NER mistakes there (a verb read
+    as a name) used to blank out words."""
     import re
-    import time
 
     from ugen_ai_gateway.analysis.pii import (
         PersonalDataMatch,
@@ -823,9 +825,8 @@ def test_slow_detection_does_not_block_other_requests() -> None:
 
     scans: list[str] = []
 
-    def slow_names(text: str) -> list[PersonalDataMatch]:
+    def names(text: str) -> list[PersonalDataMatch]:
         scans.append(text)
-        time.sleep(0.02)  # like a spaCy model
         return [
             PersonalDataMatch(
                 "person_name", "PERSON_NAME", m.start(), m.end(), m.group()
@@ -833,37 +834,19 @@ def test_slow_detection_does_not_block_other_requests() -> None:
             for m in re.finditer("Bob Lee", text)
         ]
 
-    register_finder(slow_names, types=["person_name"])
+    register_finder(names, types=["person_name"])
     try:
-        words = "Ask Bob Lee about it. Then write the report and send it today. " * 4
+        words = "Ask Bob Lee about it, or call 0912-345-678 today. "
         local = FakeProvider()
         local.chunks = [text_chunk(word + " ") for word in words.split(" ")]
         service, _, _, _ = make_service(local_provider=local)
         request = ChatRequest(messages=[{"role": "user", "content": "plan my day"}])
-
-        async def run() -> tuple[list, int]:
-            ticks = 0
-            done = False
-
-            async def heartbeat() -> None:
-                nonlocal ticks
-                while not done:
-                    ticks += 1
-                    await asyncio.sleep(0.005)
-
-            beat = asyncio.create_task(heartbeat())
-            events = await collect(service, request)
-            done = True
-            await beat
-            return events, ticks
-
-        events, ticks = asyncio.run(run())
+        events = asyncio.run(collect(service, request))
     finally:
         clear_registered_finders()
 
     text = events[-1].response.content
-    # Names the user never gave are still redacted.
-    assert "Bob Lee" not in text and "[PERSON_NAME]" in text
-    # Scanned per sentence, not per token, and the loop kept running meanwhile.
-    assert len(scans) < len(local.chunks) / 2
-    assert ticks >= len(scans)
+    assert "Bob Lee" in text and "[PERSON_NAME]" not in text
+    # Structured data the user never gave is still redacted.
+    assert "0912-345-678" not in text and "[TAIWAN_MOBILE]" in text
+    assert not any("Bob Lee" in scanned for scanned in scans)

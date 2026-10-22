@@ -292,7 +292,7 @@ _INSTALLED = object()
 
 
 def find_personal_data(
-    text: str, *, custom_finder: Any = _INSTALLED
+    text: str, *, custom_finder: Any = _INSTALLED, entities: bool = True
 ) -> list[PersonalDataMatch]:
     """Return non-overlapping personal-data matches in text order.
 
@@ -315,7 +315,7 @@ def find_personal_data(
             add(PersonalDataMatch(detector.type, detector.label, start, end, value))
     custom = _custom_finder if custom_finder is _INSTALLED else custom_finder
     finders = [custom] if custom is not None else []
-    for finder in [*finders, *_extra_finders]:
+    for finder in [*finders, *(_extra_finders if entities else [])]:
         for candidate in finder(text):
             add(candidate)
     return sorted(found, key=lambda item: item.start)

@@ -664,13 +664,13 @@ class GatewayService:
                         if text and restorer is not None:
                             text = restorer.feed(text)
                         if text and guard is not None:
-                            text = await guard.feed_async(text)
+                            text = guard.feed(text)
                         if text:
                             parts.append(text)
                             yield GatewayEvent("delta", {"content": text})
                 rest = restorer.flush() if restorer is not None else ""
                 if guard is not None:
-                    rest = await guard.feed_async(rest) + await guard.flush_async()
+                    rest = guard.feed(rest) + guard.flush()
                 if rest:
                     parts.append(rest)
                     yield GatewayEvent("delta", {"content": rest})
@@ -697,7 +697,7 @@ class GatewayService:
         if restore:
             content = prepared.vault.restore(content)  # type: ignore[union-attr]
         if guard is not None:
-            content = await guard.check_async(content)
+            content = guard.check(content)
         yield _Generated(
             content,
             completion.model,

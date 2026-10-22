@@ -1,12 +1,11 @@
 """Input and output guards: prompt-injection signals and personal data the model
 produced on its own."""
 
-import asyncio
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from ugen_ai_gateway.analysis.pii import find_personal_data, has_slow_finders
+from ugen_ai_gateway.analysis.pii import find_personal_data
 
 _INJECTION_SIGNALS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -81,10 +80,6 @@ def check_injection(texts: Iterable[str]) -> InjectionCheck:
 _BOUNDARY = re.compile(r"[\s，。、；：！？「」『』（）()]")
 # Spaced numbers (cards, phones) contain whitespace but are at most this long.
 _HOLD_BACK = 24
-# With slow detection, text is scanned at sentence ends or every this many
-# characters.
-_SENTENCE_END = re.compile(r"[.!?。！？\n]")
-_SLOW_SCAN_CHARACTERS = 400
 
 
 def _comparable(value: str) -> str:
@@ -109,6 +104,10 @@ class OutputGuard:
     anything else that looks like personal data, such as a phone number or key
     the model produced on its own, is replaced with a ``[LABEL]`` marker. In
     streaming mode text is released only at boundaries no value can cross.
+
+    Names and places (named-entity recognition) are not checked: answers
+    mention them all the time ("Tokyo", "Einstein"), and the model cannot leak
+    one the user never gave it. Only structured data is: numbers, keys, cards.
     """
 
     def __init__(self, allowed_values: Iterable[str], *, redact: bool) -> None:
@@ -116,36 +115,6 @@ class OutputGuard:
         self._redact = redact
         self._pending = ""
         self.findings: list[str] = []
-        # With named-entity recognition, each scan takes milliseconds: scan
-        # once per sentence rather than per token, on a worker thread.
-        self._slow = has_slow_finders()
-
-    async def feed_async(self, text: str) -> str:
-        """``feed`` without blocking the event loop when detection is slow."""
-        if not self._slow:
-            return self.feed(text)
-        self._pending += text
-        if not self._sentence_ready():
-            return ""
-        return await asyncio.to_thread(self.feed, "")
-
-    async def flush_async(self) -> str:
-        if not self._slow:
-            return self.flush()
-        return await asyncio.to_thread(self.flush)
-
-    async def check_async(self, text: str) -> str:
-        if not self._slow:
-            return self.check(text)
-        return await asyncio.to_thread(self.check, text)
-
-    def _sentence_ready(self) -> bool:
-        """Enough held text for a slow scan: a sentence end before the
-        hold-back, or a long stretch without one."""
-        body = self._pending[: max(0, len(self._pending) - _HOLD_BACK)]
-        return len(self._pending) >= _SLOW_SCAN_CHARACTERS or bool(
-            _SENTENCE_END.search(body)
-        )
 
     def check(self, text: str) -> str:
         """Process a complete text at once."""
@@ -179,7 +148,7 @@ class OutputGuard:
         begin = buffer.rfind("-----BEGIN")
         if begin != -1 and "-----END" not in buffer[begin:]:
             cut = min(cut, begin)
-        for match in find_personal_data(buffer):
+        for match in find_personal_data(buffer, entities=False):
             if match.start < cut < match.end:
                 cut = match.start
         return cut
@@ -188,7 +157,7 @@ class OutputGuard:
         if not text:
             return text
         output = text
-        for match in reversed(find_personal_data(text)):
+        for match in reversed(find_personal_data(text, entities=False)):
             if _comparable(match.value) in self._allowed:
                 continue
             self.findings.append(match.type)

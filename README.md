@@ -604,7 +604,9 @@ sending keys to a URL). This is a heuristic tripwire, not a guarantee.
 user did not provide, such as a phone number or key the model produced on its
 own. `OUTPUT_PII_ACTION=redact` (default) replaces it with a `[LABEL]` marker,
 `flag` only records it, `off` skips the check. Values from the request are left
-alone. When streaming, text is released only at points no value can span (the
+alone. Names and places are not checked in answers (answers mention them
+all the time, and the model cannot leak one it was never given); only
+structured data such as numbers, keys and cards is. When streaming, text is released only at points no value can span (the
 last 24 characters are held until the next safe break), so a value is never
 sent in pieces before it can be checked. Findings appear in
 `routing.output_findings`.
