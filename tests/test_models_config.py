@@ -337,3 +337,35 @@ def test_incomplete_extra_models_and_bad_rules_are_refused(monkeypatch) -> None:
     assert response.status_code == 422 and "API key" in response.json()["detail"]
     bad = env.put(body(rules=[{"name": "x", "target": "ghost"}]))
     assert bad.status_code == 422 and "unknown model" in bad.json()["detail"]
+
+
+def test_cloud_from_complex_keeps_moderate_requests_local(monkeypatch) -> None:
+    from ugen_ai_gateway.analysis.schemas import RequestAnalysis
+    from ugen_ai_gateway.routing.engine import RuleEngine
+
+    def route(cloud_from: str, complexity: str) -> str:
+        stored = StoredModels.model_validate(
+            {
+                "local": LOCAL,
+                "cloud_enabled": True,
+                "cloud": CLOUD,
+                "cloud_from": cloud_from,
+            }
+        )
+        analysis = RequestAnalysis(
+            contains_personal_data=False,
+            complexity=complexity,  # type: ignore[arg-type]
+            task_type="general",
+            reason="test",
+        )
+        return RuleEngine(to_routing(stored)).decide(analysis).locality
+
+    assert route("moderate", "moderate") == "cloud"
+    assert route("complex", "moderate") == "local"
+    assert route("complex", "complex") == "cloud"
+
+    # Saved from the Models page and shown back.
+    env = ModelsEnv(monkeypatch)
+    saved = env.put(body(cloud_enabled=True, cloud=CLOUD, cloud_from="complex"))
+    assert saved.status_code == 200, saved.text
+    assert env.get().json()["config"]["cloud_from"] == "complex"

@@ -18,6 +18,7 @@ from ugen_ai_gateway.routing.config import (
     RoutingConfig,
     Rule,
     Target,
+    cloud_rule,
 )
 from ugen_ai_gateway.services.secret_box import SecretBox
 
@@ -90,6 +91,8 @@ class StoredModels(BaseModel):
     # hybrid: rules when a request stays local anyway; llm: the local model
     # judges every request.
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
+    # The lowest difficulty the cloud model answers in Auto mode.
+    cloud_from: Literal["moderate", "complex"] = "moderate"
     extra: list[ExtraModel] = Field(default_factory=list, max_length=20)
     rules: list[RouteRule] = Field(default_factory=list, max_length=50)
 
@@ -166,6 +169,7 @@ def from_settings(settings: Settings) -> StoredModels:
         ),
         cloud_enabled=bool(settings.cloud_api_key and settings.cloud_model),
         analysis_mode="llm" if settings.analysis_mode == "llm" else "hybrid",
+        cloud_from=settings.cloud_from,
     )
 
 
@@ -250,13 +254,7 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
                 )
             )
     if cloud_target is not None:
-        rules.append(
-            Rule(
-                name="moderate-or-complex-to-cloud",
-                when=Condition(complexity=["moderate", "complex"]),
-                route=cloud_target,
-            )
-        )
+        rules.append(cloud_rule(stored.cloud_from, cloud_target))
     return RoutingConfig(
         providers=providers,
         defaults=Defaults(local=Target(provider="local"), cloud=cloud_target),
@@ -282,6 +280,7 @@ def public_view(stored: StoredModels) -> dict[str, Any]:
         "cloud_enabled": stored.cloud_enabled,
         "cloud": masked(stored.cloud),
         "analysis_mode": stored.analysis_mode,
+        "cloud_from": stored.cloud_from,
         "extra": [masked(model) for model in stored.extra],
         "rules": [rule.model_dump() for rule in stored.rules],
     }
