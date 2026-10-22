@@ -181,3 +181,13 @@ def test_responses_carry_security_headers() -> None:
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_api_docs_can_load_swagger_but_nothing_else_relaxes() -> None:
+    client = TestClient(create_app())
+    for path in ("/docs", "/api/docs", "/redoc"):
+        docs = client.get(path)
+        assert docs.status_code == 200, path
+        assert "https://cdn.jsdelivr.net" in docs.headers["content-security-policy"]
+    health = client.get("/health").headers["content-security-policy"]
+    assert "cdn.jsdelivr.net" not in health and "script-src 'self';" in health

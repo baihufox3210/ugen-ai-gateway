@@ -59,8 +59,7 @@ SECURITY_HEADERS = [
         b"content-security-policy",
         (
             b"default-src 'self'; script-src 'self'; "
-            b"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            b"font-src 'self' https://fonts.gstatic.com data:; "
+            b"style-src 'self' 'unsafe-inline'; font-src 'self' data:; "
             b"img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; "
             b"base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         ),
@@ -70,6 +69,17 @@ SECURITY_HEADERS = [
     (b"referrer-policy", b"no-referrer"),
     (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
 ]
+# The interactive API docs (/docs, /redoc) load Swagger UI and ReDoc from
+# cdn.jsdelivr.net with an inline start-up script; only those pages allow it.
+DOCS_PATHS = ("/docs", "/docs/oauth2-redirect", "/redoc")
+DOCS_CSP = (
+    b"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    b"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+    b"font-src 'self' https://fonts.gstatic.com data:; "
+    b"img-src 'self' data: https://fastapi.tiangolo.com https://cdn.redoc.ly; "
+    b"worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
+    b"base-uri 'self'; frame-ancestors 'none'"
+)
 
 
 class SecurityHeaders:
@@ -84,16 +94,20 @@ class SecurityHeaders:
             await self.app(scope, receive, send)
             return
 
+        path = scope["path"].removeprefix(API_PREFIX)
+        headers = SECURITY_HEADERS
+        if path in DOCS_PATHS:
+            headers = [
+                (b"content-security-policy", DOCS_CSP),
+                *(h for h in SECURITY_HEADERS if h[0] != b"content-security-policy"),
+            ]
+
         async def with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 present = {name for name, _ in message.get("headers", [])}
                 message["headers"] = [
                     *message.get("headers", []),
-                    *(
-                        header
-                        for header in SECURITY_HEADERS
-                        if header[0] not in present
-                    ),
+                    *(header for header in headers if header[0] not in present),
                 ]
             await send(message)
 
