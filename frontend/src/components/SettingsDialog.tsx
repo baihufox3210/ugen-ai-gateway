@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, apiUrl, errorMessage, type User } from '../api';
 import Avatar from './Avatar';
 import AvatarCropper from './AvatarCropper';
+import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
 
-export type SettingsPage = 'account' | 'keys';
+export type SettingsPage = 'account' | 'models' | 'keys';
 type Props = {
   user: User | null;
   page: SettingsPage;
@@ -13,6 +14,7 @@ type Props = {
   onSignOut: () => void;
   onAccountDeleted: () => void;
   onClose: () => void;
+  onModelsSaved: () => void;
 };
 type ApiKey = {
   id: string; name: string; prefix: string; created_at: number; revoked_at: number | null; last_used_at: number | null;
@@ -186,25 +188,26 @@ function ApiKeysPage() {
   </>;
 }
 
-function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onAccountDeleted, onClose }: Props) {
-  // Without accounts (no database) the gateway runs open and key management is open too.
-  const canManageKeys = user ? user.is_admin : true;
+function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onAccountDeleted, onClose, onModelsSaved }: Props) {
+  // Without accounts (no database) the gateway runs open and management is open too.
+  const canManage = user ? user.is_admin : true;
   const pages: { id: SettingsPage; label: string }[] = [
     ...(user ? [{ id: 'account' as const, label: 'Account' }] : []),
-    ...(canManageKeys ? [{ id: 'keys' as const, label: 'API keys' }] : []),
+    ...(canManage ? [{ id: 'models' as const, label: 'Models' }, { id: 'keys' as const, label: 'API keys' }] : []),
   ];
   const current = pages.some(item => item.id === page) ? page : pages[0]?.id;
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="confirm-modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div className="settings-head">
-        <div><span className="eyebrow">SETTINGS</span><h2 id="settings-title">{current === 'keys' ? 'API keys' : 'Account'}</h2></div>
+        <div><span className="eyebrow">SETTINGS</span><h2 id="settings-title">{pages.find(item => item.id === current)?.label ?? 'Settings'}</h2></div>
         <button className="icon-button" onClick={onClose} aria-label="Close settings">×</button>
       </div>
       {pages.length > 1 && <div className="settings-tabs" role="tablist" aria-label="Settings pages">
         {pages.map(item => <button key={item.id} type="button" role="tab" aria-selected={current === item.id} className={current === item.id ? 'selected' : ''} onClick={() => onPageChange(item.id)}>{item.label}</button>)}
       </div>}
       {current === 'account' && user && <AccountPage user={user} onUserChange={onUserChange} onSignOut={onSignOut} onAccountDeleted={onAccountDeleted}/>}
+      {current === 'models' && <ModelsPage onSaved={onModelsSaved}/>}
       {current === 'keys' && <ApiKeysPage/>}
     </section>
   </div>;

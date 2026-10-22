@@ -177,7 +177,7 @@ class GatewayService:
     async def readiness_problem(self) -> str | None:
         """Why the gateway cannot serve requests, or None when it can."""
         if not self._configured:
-            return "No local model is configured; set LOCAL_MODEL"
+            return "No local model is configured; set one on the Models page"
         for name, provider in self._providers.items():
             try:
                 await provider.health_check()  # type: ignore[attr-defined]
@@ -666,7 +666,10 @@ class GatewayService:
 
     def _validated_user_input(self, request: ChatRequest) -> str:
         if not self._configured:
-            raise GatewayConfigurationError("LOCAL_MODEL is not configured")
+            raise GatewayConfigurationError(
+                "No local model is configured; an administrator can set one on the "
+                "Models page"
+            )
 
         # Text parts count too: many OpenAI clients send content as a list.
         user_input = "\n".join(_user_texts(request.messages))

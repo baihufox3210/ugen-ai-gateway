@@ -1,10 +1,13 @@
 # docker compose up -d --build
-# Models, keys and other settings come from .env (copy .env.example).
+# Models are set up on the dashboard's Models page. .env is optional: copy
+# .env.example to change ports or other advanced settings.
 services:
   gateway:
     build: .
     image: ugen-ai-gateway
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       # 127.0.0.1 keeps the gateway off the network, e.g. behind an HTTPS proxy.
       HOST: ${GATEWAY_HOST:-0.0.0.0}

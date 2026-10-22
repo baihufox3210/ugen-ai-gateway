@@ -11,6 +11,11 @@ from ugen_ai_gateway.providers.openai_compatible import OpenAICompatibleProvider
 from ugen_ai_gateway.routing.config import RoutingConfig, load_routing_config
 from ugen_ai_gateway.services.errors import GatewayConfigurationError
 from ugen_ai_gateway.services.gateway import GatewayService
+from ugen_ai_gateway.services.model_config import (
+    StoredModels,
+    from_settings,
+    to_routing,
+)
 from ugen_ai_gateway.services.usage import UsageStore
 
 logger = logging.getLogger(__name__)
@@ -47,8 +52,30 @@ def get_cloud_provider() -> OpenAICompatibleProvider:
     return OpenAICompatibleProvider(client, name="cloud", locality="cloud")
 
 
+MODELS_SETTING = "models"
+# Bumped whenever the model configuration is saved, so the next request
+# builds a gateway with the new connections. One process per database.
+_models_version = 0
+_service: tuple[int, GatewayService] | None = None
+
+
+def models_changed() -> None:
+    global _models_version
+    _models_version += 1
+
+
+def current_models(store: UsageStore | None) -> tuple[StoredModels, str]:
+    """The model configuration and where it comes from: "database" once saved
+    from the dashboard, "env" (LOCAL_* / CLOUD_*) before that."""
+    settings = get_settings()
+    saved = store.load_setting(MODELS_SETTING) if store is not None else None
+    if saved is not None:
+        return StoredModels.model_validate(saved), "database"
+    return from_settings(settings), "env"
+
+
 @lru_cache
-def get_gateway_service() -> GatewayService:
+def _register_ner() -> None:
     settings = get_settings()
     if settings.pii_ner == "presidio":
         register_finder(
@@ -60,23 +87,44 @@ def get_gateway_service() -> GatewayService:
             types=[data_type for data_type, _ in ENTITY_TYPES.values()],
         )
 
+
+def get_gateway_service() -> GatewayService:
+    global _service
+    version = _models_version
+    if _service is None or _service[0] != version:
+        _service = (version, _build_gateway_service())
+    return _service[1]
+
+
+def _build_gateway_service() -> GatewayService:
+    """ROUTING_CONFIG (a YAML file) wins; otherwise the models saved from the
+    dashboard, or the LOCAL_* / CLOUD_* settings before anything was saved."""
+    settings = get_settings()
+    _register_ner()
+    store = get_usage_store()
+
     if settings.routing_config:
         return _service_from_routing_config(
-            settings,
-            load_routing_config(settings.routing_config),
-            usage_store=get_usage_store(),
+            settings, load_routing_config(settings.routing_config), usage_store=store
         )
 
+    models, _ = current_models(store)
+    if models.local.model:
+        return _service_from_routing_config(
+            settings.model_copy(update={"analysis_mode": models.analysis_mode}),
+            to_routing(models),
+            usage_store=store,
+        )
+
+    # Nothing configured yet: requests fail until a local model is set.
     local_provider = get_local_provider()
     return GatewayService(
         settings=settings,
         local_provider=local_provider,
-        cloud_provider=(get_cloud_provider() if settings.cloud_api_key else None),
+        cloud_provider=None,
         analyzer=RequestAnalyzer(provider=local_provider, model=settings.local_model),
-        policy=RoutingPolicy(
-            cloud_enabled=bool(settings.cloud_api_key and settings.cloud_model)
-        ),
-        usage_store=get_usage_store(),
+        policy=RoutingPolicy(cloud_enabled=False),
+        usage_store=store,
     )
 
 

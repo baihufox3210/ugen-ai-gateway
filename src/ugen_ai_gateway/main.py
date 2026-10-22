@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ugen_ai_gateway.api.auth_routes import router as auth_router
+from ugen_ai_gateway.api.model_routes import router as model_router
 from ugen_ai_gateway.api.openai_routes import router as openai_router
 from ugen_ai_gateway.api.routes import router
 from ugen_ai_gateway.config import get_settings
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, lifespan=report_configuration)
     app.include_router(router)
     app.include_router(auth_router)
+    app.include_router(model_router)
     app.include_router(openai_router)
     if static := _static_dir():
         app.mount("/", StaticFiles(directory=static, html=True), name="dashboard")

@@ -280,7 +280,7 @@ def test_chat_rejects_missing_local_model() -> None:
     service, local, cloud, analyzer = make_service(local_model="")
     request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
 
-    with pytest.raises(ValueError, match="LOCAL_MODEL is not configured"):
+    with pytest.raises(ValueError, match="No local model is configured"):
         asyncio.run(service.chat(request))
 
     assert analyzer.inputs == []

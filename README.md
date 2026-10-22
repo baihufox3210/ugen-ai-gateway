@@ -33,41 +33,42 @@ ollama pull qwen2.5:7b
 
 git clone https://github.com/baihufox3210/ugen-ai-gateway.git
 cd ugen-ai-gateway
-cp .env.example .env          # set LOCAL_MODEL (and CLOUD_* for a cloud model)
 docker compose up -d --build
 ```
 
-Open `http://<host>:7632`, create the administrator account, and start
-chatting. The first account manages the gateway; see [Accounts](#accounts).
+Open `http://<host>:7632` and create the administrator account. Then open the
+**Models** page (chip icon in the sidebar), pick your local model server and
+model, optionally add a cloud provider, and save. No `.env` file is needed;
+see [Models](#models).
 
 ## Deployment
 
 The Docker image builds the dashboard and serves it together with the API on
-one port. Models and every other setting come from `.env`
-(see [Configuration](#configuration)).
+one port. Models are set up on the dashboard; `.env` is optional and holds
+advanced settings (see [Configuration](#configuration)). The compose file
+needs Docker Compose 2.24 or later.
 
 ### On a Linux server
 
 1. Install Docker and your local model server (for example Ollama with
    `ollama pull <model>`).
-2. Clone the repository, `cp .env.example .env`, and set at least
-   `LOCAL_MODEL` (plus `CLOUD_API_KEY`, `CLOUD_MODEL` and, for non-OpenAI
-   providers, `CLOUD_BASE_URL` to enable the cloud).
-3. `docker compose up -d --build`, then check `docker compose ps` shows the
-   container as `healthy`, and `curl http://localhost:7632/ready` returns
-   `{"status":"ready"}` once the model server is reachable.
-4. Open the dashboard and create the administrator account. To stop strangers
-   from signing up afterwards, set `ALLOW_REGISTRATION=false` and run
-   `docker compose up -d` again.
-5. For other apps that call the API, create API keys on the dashboard's
+2. Clone the repository and run `docker compose up -d --build`; check that
+   `docker compose ps` shows the container as `healthy`.
+3. Open the dashboard and create the administrator account.
+4. On the **Models** page, set up the local model (and a cloud provider if you
+   want one), use **Test connection**, and save. `curl
+   http://localhost:7632/ready` then returns `{"status":"ready"}`.
+5. To stop strangers from signing up, create `.env` with
+   `ALLOW_REGISTRATION=false` and run `docker compose up -d`.
+6. For other apps that call the API, create API keys on the dashboard's
    API keys page. Once any account or key exists, the API requires a key.
 
 The compose file uses host networking, so the container reaches a model
 server on the same machine at `localhost` (Ollama's default
 `http://localhost:11434/v1` works as is). On Docker Desktop (macOS, Windows),
 or to isolate the container, replace `network_mode: host` with the
-`ports`/`extra_hosts` lines in the file's comment and set
-`LOCAL_BASE_URL=http://host.docker.internal:11434/v1`.
+`ports`/`extra_hosts` lines in the file's comment and use
+`http://host.docker.internal:11434/v1` as the local base URL.
 
 To use a routing YAML file (`ROUTING_CONFIG`), mount it into the container,
 for example add `- ./routing.yaml:/app/routing.yaml:ro` under `volumes` and
@@ -120,34 +121,53 @@ docker compose exec gateway python -c "import sqlite3; sqlite3.connect('/app/dat
 docker compose restart gateway
 ```
 
+## Models
+
+Administrators manage model connections on the dashboard's **Models** page;
+changes apply to the next request, without a restart.
+
+- **Local model**: presets for Ollama (`http://localhost:11434/v1`) and LM
+  Studio (`http://localhost:1234/v1`), or any OpenAI-compatible base URL
+  (vLLM, llama.cpp server and so on). It answers simple requests and analyzes
+  every request for personal data.
+- **Cloud model**: presets for ChatGPT (OpenAI), Gemini and Claude, which all
+  speak the OpenAI Chat Completions API, or any OpenAI SDK-compatible base URL
+  (OpenRouter, Azure OpenAI, a company proxy). Each provider keeps its own key
+  and model, so switching the active provider is one click. The switch turns
+  cloud routing on or off.
+- **Load models** lists the provider's models; **Test connection** sends a
+  tiny request with the settings on screen, before saving.
+- **Alias** gives a model a public name ([Model aliases](#model-aliases));
+  the optional **prices** per million tokens feed the cost and savings figures.
+- **Routing**: *Fast* (rules decide, `hybrid`) or *Thorough* (the local model
+  judges every request, `llm`); see [Routing behavior](#routing-behavior).
+
+API keys are stored in the gateway's database and never sent back to the
+browser; the page shows only their last four characters. Until the page is
+saved, the `LOCAL_*` / `CLOUD_*` settings below are used as the starting
+values; a `ROUTING_CONFIG` file overrides the page entirely.
+
 ## Configuration
 
-Copy `.env.example` to `.env`; it documents every setting. The main ones:
+Nothing in `.env` is required. Copy `.env.example` to `.env` to change
+advanced settings; it documents every one. The main ones:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `LOCAL_BASE_URL` | Local OpenAI-compatible API base URL | `http://localhost:11434/v1` |
-| `LOCAL_MODEL` | Local model, also used to analyze requests | `qwen2.5:7b` |
-| `LOCAL_API_KEY` | API key sent to the local server | `local` |
-| `CLOUD_API_KEY`, `CLOUD_MODEL` | Cloud provider key and model; blank disables the cloud | blank |
-| `CLOUD_BASE_URL` | Cloud OpenAI-compatible base URL; blank means OpenAI | blank |
-| `LOCAL_MODEL_ALIAS`, `CLOUD_MODEL_ALIAS` | Public names for the models ([Model aliases](#model-aliases)) | blank |
-| `ROUTING_CONFIG` | YAML with several providers, models and rules ([Routing rules](#routing-rules-and-multiple-models)) | blank |
 | `ALLOW_REGISTRATION` | Allow sign-ups after the first (administrator) account | `true` |
+| `ROUTING_CONFIG` | YAML with several providers, models and rules; overrides the Models page ([Routing rules](#routing-rules-and-multiple-models)) | blank |
+| `LOCAL_*`, `CLOUD_*` | Starting values for the Models page before it is first saved | blank |
 | `SESSION_TTL_DAYS` | How long a dashboard sign-in lasts | `30` |
 | `GATEWAY_HOST`, `GATEWAY_PORT` | Docker only: listen address and port | `0.0.0.0`, `7632` |
 | `USAGE_DB_PATH` | SQLite database; empty turns off accounts and usage tracking | `data/ugen.db` (Docker: `/app/data/ugen.db`) |
 | `GATEWAY_API_KEY`, `ADMIN_API_KEY` | Optional fixed keys with full access (for scripts); `APP_ENV=production` requires `GATEWAY_API_KEY` | blank |
-| `ANALYSIS_MODE` | How requests are analyzed ([Routing behavior](#routing-behavior)) | `hybrid` |
 | `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `redact` |
 | `REDACT_LOCAL`, `RESTORE_REDACTED` | Redaction ([Personal-data handling](#personal-data-handling)) | `true`, `true` |
 | `FALLBACK_TO_LOCAL`, `FALLBACK_TO_CLOUD` | Fallback when a provider is down ([Resilience](#resilience)) | `true`, `false` |
 | `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS` | Requests per client IP per window | `60`, `60` |
 | `REQUEST_TIMEOUT`, `MAX_RETRIES` | Provider timeout (seconds) and retries | `300`, `2` |
 
-Cloud routing is enabled only when both `CLOUD_API_KEY` and `CLOUD_MODEL` are
-set. Use a cloud endpoint and model that support the OpenAI-compatible Chat
-Completions API. After changing `.env`, apply it with `docker compose up -d`.
+After changing `.env`, apply it with `docker compose up -d`.
 
 `/health` reports process liveness; `/ready` checks that the local model
 endpoint (and configured cloud endpoint) can be reached.
@@ -187,7 +207,7 @@ The `model` field picks the routing mode:
 | `ugen-auto` (default) | Analyze the request and route automatically |
 | `ugen-local` | Always use the local model |
 | `ugen-cloud` | Always use the cloud model |
-| the configured `LOCAL_MODEL` / `CLOUD_MODEL` name | Same as `ugen-local` / `ugen-cloud` |
+| the local or cloud model name (or its alias) | Same as `ugen-local` / `ugen-cloud` |
 
 Any other model name returns HTTP `404` with code `model_not_found`. Every
 request is still analyzed and redacted locally, whichever mode is chosen.
@@ -385,7 +405,9 @@ usage is `null`. `analysis_ms` measures the local analysis request,
 
 ## Routing behavior
 
-Each request is analyzed locally before routing. `ANALYSIS_MODE` controls how:
+Each request is analyzed locally before routing. The Models page's **Routing**
+setting (*Fast* is `hybrid`, *Thorough* is `llm`; `ANALYSIS_MODE` before the page
+is saved) controls how:
 
 | Mode | Behavior |
 | --- | --- |
@@ -441,8 +463,8 @@ and one cloud provider, with moderate and complex requests going to the cloud.
 
 ### Model aliases
 
-`LOCAL_MODEL_ALIAS` and `CLOUD_MODEL_ALIAS` (or `alias:` on a model in the
-routing YAML) give a model a public name. The alias replaces the real model
+The **Alias** fields on the Models page (or `alias:` on a model in the routing
+YAML) give a model a public name. The alias replaces the real model
 name everywhere clients look: the dashboard, `GET /v1/models`, the `model`
 field and `X-UGen-Model` header of responses, stream events and usage records.
 Requests may use either the alias or the real name as `model`; the provider is

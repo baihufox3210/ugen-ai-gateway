@@ -89,6 +89,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions (user_id);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -576,6 +581,28 @@ class UsageStore:
         row.pop("key_hash", None)
         row["allow_cloud"] = bool(row["allow_cloud"])
         return row
+
+    # Gateway settings changed from the dashboard, stored as JSON per key.
+
+    def load_setting(self, key: str) -> Any | None:
+        """Read a setting synchronously; it is small and read rarely."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+        return json.loads(row["value"]) if row else None
+
+    async def save_setting(self, key: str, value: Any) -> None:
+        await asyncio.to_thread(self._save_setting, key, value)
+
+    def _save_setting(self, key: str, value: Any) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at",
+                (key, json.dumps(value), time.time()),
+            )
 
     # User accounts. Passwords are stored as salted scrypt hashes and session
     # tokens as SHA-256 hashes; neither secret is ever written in plain text.
