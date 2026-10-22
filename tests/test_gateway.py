@@ -852,3 +852,55 @@ def test_output_keeps_names_and_places_the_model_mentions() -> None:
     # Structured data the user never gave is still redacted.
     assert "0912-345-678" not in text and "[TAIWAN_MOBILE]" in text
     assert not any("Bob Lee" in scanned for scanned in scans)
+
+
+def test_untraceable_findings_are_not_cached_for_shared_messages() -> None:
+    """A batch that reports personal data without values marks every message
+    in it; that must not stick to a message other requests share, such as
+    the gateway's system prompt."""
+
+    class NameSpotter(FakeAnalyzer):
+        async def analyze(self, user_input: str) -> RequestAnalysis:
+            self.inputs.append(user_input)
+            found = "Lin" in user_input
+            return RequestAnalysis(
+                contains_personal_data=found,
+                personal_data_types=["name"] if found else [],
+                complexity="complex",
+                task_type="general",
+                reason="Test analysis.",
+            )
+
+    service, _, _, _ = make_service(
+        analyzer=NameSpotter(), analysis_mode="llm", analysis_cache_size=16
+    )
+    shared = {"role": "system", "content": "House rules: be brief."}
+
+    def ask(*messages: dict) -> Any:
+        request = ChatRequest(
+            messages=[*messages, {"role": "user", "content": "design a system"}]
+        )
+        return asyncio.run(service.chat(request))
+
+    ask(shared, {"role": "system", "content": "Call me Lin."})
+    other = ask(shared)
+
+    assert other.provider == "cloud"
+    assert other.routing.personal_data_types == []
+
+
+def test_system_messages_given_as_text_parts_are_merged_too() -> None:
+    service, local, _, _ = make_service()
+    request = ChatRequest(
+        messages=[
+            {"role": "system", "content": "House rules."},
+            {"role": "system", "content": [{"type": "text", "text": "You are a bot."}]},
+            {"role": "user", "content": "hi"},
+        ]
+    )
+
+    asyncio.run(service.chat(request))
+
+    sent = local.calls[0]["messages"]
+    assert sent[0] == {"role": "system", "content": "House rules.\n\nYou are a bot."}
+    assert [message["role"] for message in sent] == ["system", "user"]

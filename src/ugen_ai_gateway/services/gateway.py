@@ -11,6 +11,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.cache import AnalysisCache
+from ugen_ai_gateway.analysis.complexity import assess_complexity
 from ugen_ai_gateway.analysis.guard import OutputGuard, check_injection
 from ugen_ai_gateway.analysis.pii import (
     find_personal_data,
@@ -819,17 +820,31 @@ class GatewayService:
         started_at = perf_counter()
         mode = self._settings.analysis_mode
         source: AnalysisSource
-        latest = _user_texts(request.messages)[-1]
+        user_texts = _user_texts(request.messages)
+        latest = user_texts[-1]
+        assessment = assess_complexity(
+            latest, user_texts[-2] if len(user_texts) > 1 else None
+        )
+        # The analysis model judges an unclear follow-up together with the
+        # request it follows ("第二點再詳細一點" alone says little).
+        if assessment.follow_up and not assessment.certain:
+            latest = f"{user_texts[-2]}\n\n{latest}"
         texts = list(dict.fromkeys([*_analysis_texts(request.messages), latest]))
 
-        quick = (
-            self._policy.classify_complexity(
-                latest, _merge(rule_analysis(latest), [rule_analysis(t) for t in texts])
-            )
-            if mode != "llm"
-            else None
+        # The rules decide the difficulty when they are sure; otherwise the
+        # analysis model does. Hybrid mode skips the model call only when the
+        # rules are sure and the request stays on the local model, so
+        # free-form personal data is still checked before anything can reach
+        # the cloud.
+        quick = _merge(rule_analysis(latest), [rule_analysis(t) for t in texts])
+        quick = quick.model_copy(
+            update={"complexity": assessment.complexity, "reason": assessment.reason}
         )
-        if quick is not None and (mode == "rules" or self._stays_local(request, quick)):
+        if mode == "rules" or (
+            mode == "hybrid"
+            and assessment.certain
+            and self._stays_local(request, quick)
+        ):
             return quick, (perf_counter() - started_at) * 1000, "rules"
 
         results: dict[str, RequestAnalysis] = {}
@@ -860,10 +875,18 @@ class GatewayService:
             results[latest] = fresh[0]
             self._analysis_cache.put(latest, fresh[0])
         if older:
+            batch = fresh[-1]
+            # Personal data reported without values cannot be traced to one
+            # message, so every message in the batch carries it. Cache such
+            # shares only for this request: the batch may hold another
+            # account's text, and a shared message (the system prompt) would
+            # carry its findings into everyone's requests.
+            unplaced = batch.contains_personal_data and not batch.personal_data_values
             for text in older:
-                result = _share_of_batch(text, fresh[-1])
+                result = _share_of_batch(text, batch)
                 results[text] = result
-                self._analysis_cache.put(text, result)
+                if not unplaced:
+                    self._analysis_cache.put(text, result)
         source = "llm" if missing else "cache"
 
         analysis = _merge(results[latest], list(results.values()))
@@ -880,7 +903,13 @@ class GatewayService:
             )
         else:
             analysis = analysis.model_copy(update={"usage": None})
-        analysis = self._policy.classify_complexity(latest, analysis)
+        if assessment.certain:
+            analysis = analysis.model_copy(
+                update={
+                    "complexity": assessment.complexity,
+                    "reason": assessment.reason,
+                }
+            )
         return analysis, (perf_counter() - started_at) * 1000, source
 
     def _stays_local(self, request: ChatRequest, analysis: RequestAnalysis) -> bool:
@@ -1090,23 +1119,36 @@ def _message_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:
     return texts
 
 
+def _system_text(message: ChatCompletionMessageParam) -> str | None:
+    """The text of a system (or developer) message, given as a string or as
+    text parts; None for any other message."""
+    if message["role"] not in ("system", "developer"):
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list) and all(
+        isinstance(part, dict) and part.get("type") == "text" for part in content
+    ):
+        return "\n".join(str(part.get("text", "")) for part in content)
+    return None
+
+
 def _merged_system_messages(
     messages: list[ChatCompletionMessageParam],
 ) -> list[ChatCompletionMessageParam]:
     """Join the system messages at the start (the gateway's system prompt, the
-    account's instructions, conversation memory) into one: some models' chat
-    templates accept only a single system message."""
-    count = 0
-    while (
-        count < len(messages)
-        and messages[count]["role"] == "system"
-        and isinstance(messages[count].get("content"), str)
-    ):
-        count += 1
-    if count < 2:
+    account's instructions, conversation memory, the client's own) into one:
+    some models' chat templates accept only a single system message."""
+    texts: list[str] = []
+    for message in messages:
+        text = _system_text(message)
+        if text is None:
+            break
+        texts.append(text)
+    if len(texts) < 2:
         return messages
-    content = "\n\n".join(cast(str, message["content"]) for message in messages[:count])
-    return [{"role": "system", "content": content}, *messages[count:]]
+    return [{"role": "system", "content": "\n\n".join(texts)}, *messages[len(texts) :]]
 
 
 def _with_system_instruction(

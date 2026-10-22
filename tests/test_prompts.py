@@ -58,7 +58,10 @@ def test_api_keys_get_the_system_prompt_but_no_account_instructions(
 
     response = env.client.post(
         "/v1/chat/completions",
-        json={"model": "auto", "messages": [{"role": "user", "content": "hello"}]},
+        json={
+            "model": "auto",
+            "messages": [{"role": "user", "content": "please design a system"}],
+        },
         headers=bearer(key),
     )
 
