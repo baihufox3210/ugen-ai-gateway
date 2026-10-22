@@ -2,8 +2,9 @@ import logging
 from functools import lru_cache
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
+from ugen_ai_gateway.analysis.custom_rules import PrivacySettings, rules_finder
 from ugen_ai_gateway.analysis.ner import ENTITY_TYPES, build_presidio_finder
-from ugen_ai_gateway.analysis.pii import register_finder
+from ugen_ai_gateway.analysis.pii import register_finder, set_custom_finder
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.config import Settings, get_settings
 from ugen_ai_gateway.providers.openai_client import create_openai_client
@@ -55,6 +56,7 @@ def get_cloud_provider() -> OpenAICompatibleProvider:
 
 
 MODELS_SETTING = "models"
+PRIVACY_SETTING = "privacy"
 # Bumped whenever the model configuration is saved, so the next request
 # builds a gateway with the new connections. One process per database.
 _models_version = 0
@@ -98,25 +100,56 @@ def get_gateway_service() -> GatewayService:
     return _service[1]
 
 
+def current_privacy(store: UsageStore | None) -> PrivacySettings:
+    saved = store.load_setting(PRIVACY_SETTING) if store is not None else None
+    return PrivacySettings.model_validate(saved or {})
+
+
+def install_rules(privacy: PrivacySettings) -> None:
+    """Make the custom terms part of personal-data detection."""
+    set_custom_finder(
+        rules_finder(privacy.rules) if privacy.rules else None,
+        types=[rule.type for rule in privacy.rules],
+    )
+
+
+def _apply_privacy(routing: RoutingConfig, privacy: PrivacySettings) -> RoutingConfig:
+    """Install the custom terms and add their keep-local types to the routing."""
+    install_rules(privacy)
+    never_cloud = list(
+        dict.fromkeys([*routing.privacy.never_cloud, *privacy.never_cloud_types()])
+    )
+    return routing.model_copy(
+        update={
+            "privacy": routing.privacy.model_copy(update={"never_cloud": never_cloud})
+        }
+    )
+
+
 def _build_gateway_service() -> GatewayService:
     """ROUTING_CONFIG (a YAML file) wins; otherwise the models saved from the
-    dashboard, or the LOCAL_* / CLOUD_* settings before anything was saved."""
+    dashboard, or the LOCAL_* / CLOUD_* settings before anything was saved.
+    The Privacy page's terms and rules apply either way."""
     settings = get_settings()
     _register_ner()
     store = get_usage_store()
+    privacy = current_privacy(store)
 
     if settings.routing_config:
         return _service_from_routing_config(
-            settings, load_routing_config(settings.routing_config), usage_store=store
+            settings,
+            _apply_privacy(load_routing_config(settings.routing_config), privacy),
+            usage_store=store,
         )
 
     models, _ = current_models(store)
     if models.local.model:
         return _service_from_routing_config(
             settings.model_copy(update={"analysis_mode": models.analysis_mode}),
-            to_routing(models),
+            _apply_privacy(to_routing(models), privacy),
             usage_store=store,
         )
+    install_rules(privacy)
 
     # Nothing configured yet: requests fail until a local model is set.
     local_provider = get_local_provider()

@@ -4,9 +4,10 @@ import Avatar from './Avatar';
 import AvatarCropper from './AvatarCropper';
 import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
+import PrivacyPage from './PrivacyPage';
 import UsersPage from './UsersPage';
 
-export type SettingsPage = 'account' | 'users' | 'models' | 'keys';
+export type SettingsPage = 'account' | 'users' | 'models' | 'privacy' | 'keys';
 type Props = {
   user: User | null;
   page: SettingsPage;
@@ -227,7 +228,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
   const canManage = user ? user.is_admin : true;
   const pages: { id: SettingsPage; label: string }[] = [
     ...(user ? [{ id: 'account' as const, label: 'Account' }] : []),
-    ...(canManage ? [...(user ? [{ id: 'users' as const, label: 'Users' }] : []), { id: 'models' as const, label: 'Models' }, { id: 'keys' as const, label: 'API keys' }] : []),
+    ...(canManage ? [...(user ? [{ id: 'users' as const, label: 'Users' }] : []), { id: 'models' as const, label: 'Models' }, { id: 'privacy' as const, label: 'Privacy' }, { id: 'keys' as const, label: 'API keys' }] : []),
   ];
   const current = pages.some(item => item.id === page) ? page : pages[0]?.id;
 
@@ -243,6 +244,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
       {current === 'account' && user && <AccountPage user={user} onUserChange={onUserChange} onSignOut={onSignOut} onAccountDeleted={onAccountDeleted}/>}
       {current === 'users' && <UsersPage currentUserId={user?.id ?? null}/>}
       {current === 'models' && <ModelsPage onSaved={onModelsSaved}/>}
+      {current === 'privacy' && <PrivacyPage/>}
       {current === 'keys' && <ApiKeysPage/>}
     </section>
   </div>;

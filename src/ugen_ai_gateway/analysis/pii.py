@@ -227,6 +227,14 @@ _TYPE_ORDER = (
 Finder = Callable[[str], list[PersonalDataMatch]]
 _extra_finders: list[Finder] = []
 _extra_types: set[str] = set()
+# Administrator-defined terms (custom_rules); replaced as a whole when saved.
+_custom_finder: Finder | None = None
+_custom_types: frozenset[str] = frozenset()
+
+
+def set_custom_finder(finder: Finder | None, *, types: Iterable[str] = ()) -> None:
+    global _custom_finder, _custom_types
+    _custom_finder, _custom_types = finder, frozenset(types)
 
 
 def register_finder(finder: Finder, *, types: Iterable[str]) -> None:
@@ -241,7 +249,11 @@ def clear_registered_finders() -> None:
 
 
 def supported_types() -> frozenset[str]:
-    return frozenset(detector.type for detector in DETECTORS) | _extra_types
+    return (
+        frozenset(detector.type for detector in DETECTORS)
+        | _extra_types
+        | _custom_types
+    )
 
 
 def find_personal_data(text: str) -> list[PersonalDataMatch]:
@@ -262,7 +274,8 @@ def find_personal_data(text: str) -> list[PersonalDataMatch]:
     for detector in DETECTORS:
         for start, end, value in detector.matches(text):
             add(PersonalDataMatch(detector.type, detector.label, start, end, value))
-    for finder in _extra_finders:
+    finders = [_custom_finder] if _custom_finder is not None else []
+    for finder in [*finders, *_extra_finders]:
         for candidate in finder(text):
             add(candidate)
     return sorted(found, key=lambda item: item.start)
