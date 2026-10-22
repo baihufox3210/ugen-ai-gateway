@@ -715,3 +715,25 @@ def test_personal_data_inside_chinese_text_is_redacted_and_restored() -> None:
         "請通知[PERSONAL_DATA_1]，電話[TAIWAN_MOBILE_1]"
     )
     assert response.content == "已通知王小明（0912345678）"
+
+
+def test_memory_is_summarized_by_the_local_model_only() -> None:
+    service, local, cloud, _ = make_service()
+    memory = asyncio.run(
+        service.summarize_memory(
+            "- user is Alex",
+            [
+                {"role": "user", "content": "I prefer Python"},
+                {"role": "assistant", "content": "ok"},
+            ],
+        )
+    )
+
+    assert memory == "hello"  # FakeProvider's reply
+    assert cloud.calls == []
+    sent = local.calls[-1]["messages"]
+    assert "long-term memory" in sent[0]["content"]
+    assert (
+        "- user is Alex" in sent[1]["content"]
+        and "USER: I prefer Python" in sent[1]["content"]
+    )

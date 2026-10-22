@@ -25,3 +25,16 @@ REQUEST_ANALYSIS_SYSTEM_PROMPT = (
     "are visible in the input. Do not include bracketed uppercase placeholders "
     "such as [EMAIL] or [TAIWAN_MOBILE]; those values were already removed."
 )
+
+MEMORY_SYSTEM_PROMPT = (
+    "You maintain the long-term memory of a conversation between a user and an "
+    "assistant. You receive the current memory (possibly empty) and older messages "
+    "that are about to leave the conversation window. Return the updated memory "
+    "only, as a short Markdown bullet list, in the language the conversation uses.\n"
+    "Keep everything the assistant may need later: facts the user stated about "
+    "themselves, people, projects and data; names, numbers, dates, identifiers, "
+    "code and file names; preferences and constraints; decisions made and their "
+    "reasons; open questions and unfinished tasks. Merge with the current memory, "
+    "update facts that changed, and drop small talk and anything already answered "
+    "that will not matter again. Do not invent anything. Stay under 250 words."
+)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PromptPanel from './components/PromptPanel';
 import MonitorPanel from './components/MonitorPanel';
 import RequestFlow from './components/RequestFlow';
@@ -6,6 +6,7 @@ import ResponsePanel from './components/ResponsePanel';
 import SettingsDialog, { type SettingsPage } from './components/SettingsDialog';
 import Sidebar from './components/Sidebar';
 import { apiFetch, errorMessage, type User } from './api';
+import { FOLD_CHUNK, requestMessages, size, turnMessages, turnsToRemember } from './memory';
 import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from './types';
 
 // crypto.randomUUID only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere.
@@ -69,6 +70,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
   const turns = activeConversation?.turns ?? [];
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [modelsVersion, setModelsVersion] = useState(0);
+  const [memoryBusy, setMemoryBusy] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { try { localStorage.setItem(storageKey, JSON.stringify(conversations)); } catch { /* history lasts for this page only */ } }, [storageKey, conversations]);
   useEffect(() => { try { localStorage.setItem(PROVIDER_SELECTION_KEY, providerSelection); } catch { /* selection simply resets next visit */ } }, [providerSelection]);
@@ -171,30 +174,53 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
     }));
   }
 
-  async function sendPrompt() {
-    const userText = prompt.trim();
+  /** Stop the request in flight; a partial answer is kept. */
+  function stopGeneration() { abortRef.current?.abort(); }
+
+  /** Send ``text`` as a new turn. ``replaceFrom`` first drops that turn and every
+   * later one (to regenerate or edit); older turns may be folded into memory. */
+  async function sendTurn(text: string, replaceFrom?: number) {
+    const userText = text.trim();
     if (!userText || busy) return;
     const existing = activeConversation;
     const conversationId = existing?.id ?? newId();
     const turnId = newId();
-    const conversation: Conversation = existing ?? { id: conversationId, title: userText.slice(0, 36), updatedAt: Date.now(), turns: [] };
+    const base: Conversation = existing ?? { id: conversationId, title: userText.slice(0, 36), updatedAt: Date.now(), turns: [] };
+    const keptTurns = replaceFrom === undefined ? base.turns : base.turns.slice(0, replaceFrom);
+    // Editing a turn that is already in memory makes that memory stale.
+    let conversation: Conversation = { ...base, turns: keptTurns, memory: base.memory && base.memory.coveredTurns <= keptTurns.length ? base.memory : undefined };
     const turn: ConversationTurn = { id: turnId, user: userText };
-    const nextTurns = [...conversation.turns, turn];
-    const messages = nextTurns.flatMap(item => [
-      { role: 'user' as const, content: item.user },
-      ...(item.result ? [{ role: 'assistant' as const, content: item.result.content }] : []),
-    ]).slice(-62);
-    const totalChars = messages.reduce((count, message) => count + message.content.length, 0);
-    if (totalChars > 32000) { setError('This conversation is over the 32,000-character limit. Start a new conversation and try again.'); return; }
+    const save = (next: Conversation) => setConversations(current => [{ ...next, updatedAt: Date.now() }, ...current.filter(item => item.id !== conversationId)]);
 
-    setConversations(current => [
-      { ...conversation, updatedAt: Date.now(), turns: nextTurns },
-      ...current.filter(item => item.id !== conversationId),
-    ]);
+    save({ ...conversation, turns: [...keptTurns, turn] });
     setActiveId(conversationId); setPrompt(''); setStreamingText(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setFallbackFrom(null); setInjectionSignals([]); setError('');
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let streamed = '';
     try {
+      const fold = turnsToRemember(conversation, turn);
+      if (fold) {
+        setMemoryBusy(true);
+        const [from, to] = fold;
+        // Fold in chunks so each update stays within the endpoint's limit.
+        for (let start = from; start < to;) {
+          let end = start + 1;
+          for (let chars = size(conversation.turns[start]); end < to && chars + size(conversation.turns[end]) <= FOLD_CHUNK; end += 1) chars += size(conversation.turns[end]);
+          const response = await apiFetch('/v1/ugen/memory', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+            body: JSON.stringify({ previous: conversation.memory?.text ?? '', messages: turnMessages(conversation.turns.slice(start, end)) }),
+          });
+          if (!response.ok) throw new Error(`Could not update the conversation memory: ${await errorMessage(response)}`);
+          const { memory } = await response.json() as { memory: string };
+          conversation = { ...conversation, memory: { text: memory, coveredTurns: end, updatedAt: Date.now() } };
+          save({ ...conversation, turns: [...keptTurns, turn] });
+          start = end;
+        }
+        setMemoryBusy(false);
+      }
+      const messages = requestMessages(conversation, [...keptTurns, turn]);
       const response = await apiFetch('/v1/ugen/chat/stream', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
         body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2 }),
       });
       if (!response.ok) throw new Error(response.status === 401 ? 'Your session has ended. Sign in again.' : await errorMessage(response));
@@ -208,7 +234,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
         if (event.type === 'guard' && event.kind === 'injection') setInjectionSignals(Array.isArray(event.signals) ? event.signals.map(String) : []);
         if (event.type === 'fallback') { setFallbackFrom(event.from === 'cloud' ? 'cloud' : 'local'); setProvider(event.to === 'cloud' ? 'cloud' : 'local'); }
         if (event.type === 'generation_started') { setProvider(event.provider === 'cloud' ? 'cloud' : 'local'); setModel(String(event.model ?? '')); setPhase('generating'); }
-        if (event.type === 'delta') setStreamingText(current => current + String(event.content ?? ''));
+        if (event.type === 'delta') { streamed += String(event.content ?? ''); setStreamingText(streamed); }
         if (event.type === 'result') received.result = event.data as ChatResult;
         if (event.type === 'error') streamError = String(event.detail ?? 'The model request failed.');
       };
@@ -226,9 +252,33 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       setProvider(finalResult.provider === 'cloud' ? 'cloud' : 'local'); setModel(finalResult.model);
       setPii(piiFromResult(finalResult)); setAnalysisSource(finalResult.routing.analysis_source ?? null); setFallbackFrom(finalResult.routing.fallback_from ?? null); setPhase('complete');
     } catch (cause) {
+      setMemoryBusy(false); setStreamingText(''); setStatsVersion(version => version + 1);
+      if (controller.signal.aborted && streamed) {
+        // Keep what was generated before Stop.
+        updateTurn(conversationId, turnId, {
+          content: streamed, model, provider: provider ?? 'local', stopped: true,
+          routing: { complexity: '', task_type: '', contains_personal_data: false, personal_data_types: [], reason: '' },
+        });
+        setPhase('complete');
+        return;
+      }
       setConversations(current => current.map(item => item.id !== conversationId ? item : { ...item, turns: item.turns.filter(existingTurn => existingTurn.id !== turnId) }));
-      setError(cause instanceof Error ? cause.message : 'Could not reach the gateway.'); setPrompt(userText); setStreamingText(''); setStatsVersion(version => version + 1); setPhase('failed');
+      setPrompt(userText);
+      if (controller.signal.aborted) { setPhase('idle'); return; }
+      setError(cause instanceof Error ? cause.message : 'Could not reach the gateway.'); setPhase('failed');
+    } finally {
+      abortRef.current = null;
     }
+  }
+
+  function sendPrompt() { void sendTurn(prompt); }
+  function regenerate(turnId: string) {
+    const index = turns.findIndex(turn => turn.id === turnId);
+    if (index >= 0) void sendTurn(turns[index].user, index);
+  }
+  function editTurn(turnId: string, text: string) {
+    const index = turns.findIndex(turn => turn.id === turnId);
+    if (index >= 0) void sendTurn(text, index);
   }
 
   const flowStatus = busy ? 'active' : phase === 'failed' ? 'failed' : phase === 'complete' ? 'complete' : '';
@@ -246,7 +296,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
     <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section></main>
-    <section className="chat-column"><ResponsePanel user={user} turns={turns} busy={busy} streamingText={streamingText} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onClear={() => setPrompt('')}/></section>
+    <section className="chat-column"><ResponsePanel user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
     {settingsPage && <SettingsDialog user={user} page={settingsPage} onPageChange={setSettingsPage} onUserChange={onUserChange} onSignOut={onSignOut} onClose={() => setSettingsPage(null)} onModelsSaved={() => setModelsVersion(version => version + 1)}
       onAccountDeleted={() => { try { localStorage.removeItem(storageKey); } catch { /* nothing saved */ } onAccountDeleted(); }}/>}
     {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all' ? 'Every conversation saved on this device will be permanently deleted.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}

@@ -22,9 +22,13 @@ export type ChatResult = {
   };
   usage?: { generation?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
   performance?: { analysis_ms: number; generation_ms: number; total_ms: number };
+  /** The user stopped generation; ``content`` is the partial answer. */
+  stopped?: boolean;
 };
 export type ConversationTurn = { id: string; user: string; result?: ChatResult; feedback?: 1 | -1 };
-export type Conversation = { id: string; title: string; updatedAt: number; turns: ConversationTurn[] };
+/** Older turns folded into a summary by the local model; ``coveredTurns`` counts them from the start. */
+export type ConversationMemory = { text: string; coveredTurns: number; updatedAt: number };
+export type Conversation = { id: string; title: string; updatedAt: number; turns: ConversationTurn[]; memory?: ConversationMemory };
 export type GatewayEvent = { type: string; [key: string]: unknown };
 export type PiiState = { found: boolean; types: string[]; redacted?: number };
 export type AnalysisSource = 'llm' | 'rules' | 'cache';

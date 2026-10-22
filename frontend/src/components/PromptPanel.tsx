@@ -2,7 +2,7 @@ import type { ProviderSelection } from '../types';
 
 type Props = {
   prompt: string; busy: boolean; error: string; providerSelection: ProviderSelection; cloudAvailable: boolean;
-  onPromptChange: (value: string) => void; onProviderSelectionChange: (value: ProviderSelection) => void; onSubmit: () => void; onClear: () => void;
+  onPromptChange: (value: string) => void; onProviderSelectionChange: (value: ProviderSelection) => void; onSubmit: () => void; onStop: () => void; onClear: () => void;
 };
 const PROVIDER_OPTIONS: { value: ProviderSelection; label: string; glyph: string; hint: string }[] = [
   { value: 'auto', label: 'Auto', glyph: '⇄', hint: 'Pick the model from the local analysis' },
@@ -10,7 +10,7 @@ const PROVIDER_OPTIONS: { value: ProviderSelection; label: string; glyph: string
   { value: 'cloud', label: 'Cloud', glyph: '✳', hint: 'Always use the cloud model (personal data is still redacted first)' },
 ];
 
-function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onClear }: Props) {
+function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onStop, onClear }: Props) {
   return <article className="panel prompt-panel">
     <div className="composer-topline">
       <span className="eyebrow">YOUR MESSAGE</span>
@@ -30,7 +30,9 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
           </button>;
         })}
       </div>
-      <div className="prompt-actions">{prompt && <button className="clear-draft" onClick={onClear} disabled={busy}>Clear draft</button>}<button className="send-button" onClick={onSubmit} disabled={busy || !prompt.trim()}>{busy ? <><i className="spinner"/> Working</> : <>Send <span>↗</span></>}</button></div></div>
+      <div className="prompt-actions">{prompt && <button className="clear-draft" onClick={onClear} disabled={busy}>Clear draft</button>}{busy
+        ? <button className="send-button stop-button" onClick={onStop} title="Stop generating"><i className="spinner"/> Stop</button>
+        : <button className="send-button" onClick={onSubmit} disabled={!prompt.trim()}>Send <span>↗</span></button>}</div></div>
     {error && <div className="error-box" role="alert"><b>Request not completed</b><span>{error}</span></div>}
   </article>;
 }

@@ -14,6 +14,7 @@ from ugen_ai_gateway.analysis.cache import AnalysisCache
 from ugen_ai_gateway.analysis.guard import OutputGuard, check_injection
 from ugen_ai_gateway.analysis.pii import find_personal_data, supported_types
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
+from ugen_ai_gateway.analysis.prompts import MEMORY_SYSTEM_PROMPT
 from ugen_ai_gateway.analysis.redaction import (
     PLACEHOLDER_INSTRUCTION,
     RedactionVault,
@@ -199,6 +200,45 @@ class GatewayService:
                 logger.warning("Provider %s is not reachable: %s", name, exc)
                 return f"Provider '{name}' is not reachable; see the server logs"
         return None
+
+    async def summarize_memory(
+        self, previous: str, messages: list[dict[str, str]]
+    ) -> str:
+        """Fold older messages into the conversation memory using the local
+        model, so nothing leaves this machine to do it."""
+        if not self._configured:
+            raise GatewayConfigurationError(
+                "No local model is configured; an administrator can set one on the "
+                "Models page"
+            )
+        route = self._engine.default("local")
+        if route is None:
+            raise ProviderUnavailable("Local provider is unavailable")
+        transcript = "\n\n".join(
+            f"{message['role'].upper()}: {message['content']}" for message in messages
+        )
+        try:
+            completion = await self._provider_for(route).complete(
+                model=route.model.id,
+                messages=[
+                    {"role": "system", "content": MEMORY_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": f"Current memory:\n{previous or '(empty)'}\n\n"
+                        f"Older messages:\n{transcript}",
+                    },
+                ],
+                temperature=0.2,
+            )
+        except TimeoutError as exc:
+            raise ProviderTimeout("Local model timed out") from exc
+        except Exception as exc:
+            error = ProviderOutage if is_outage(exc) else ProviderRequestError
+            raise error(f"Updating the memory failed: {exc}") from exc
+        content = completion.choices[0].message.content if completion.choices else None
+        if not isinstance(content, str) or not content.strip():
+            raise ProviderRequestError("The local model returned an empty memory")
+        return content.strip()
 
     async def chat(
         self,

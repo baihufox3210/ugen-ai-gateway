@@ -249,6 +249,42 @@ async def whoami(store: UsageStoreDependency, http_request: Request) -> dict[str
     }
 
 
+class MemoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=32_000)
+
+
+class MemoryRequest(BaseModel):
+    previous: str = Field(default="", max_length=8_000)
+    messages: list[MemoryMessage] = Field(min_length=1, max_length=64)
+
+
+@router.post("/v1/ugen/memory")
+async def update_memory(
+    body: MemoryRequest,
+    gateway: GatewayDependency,
+    store: UsageStoreDependency,
+    http_request: Request,
+) -> dict[str, str]:
+    """Fold older messages into a conversation's memory with the local model.
+
+    The dashboard keeps the memory with the conversation and sends it as a
+    system message, where it is checked and redacted like any other text."""
+    await authenticate(http_request, store)
+    if sum(len(message.content) for message in body.messages) > 60_000:
+        raise HTTPException(
+            status_code=413, detail="Too much text to summarize at once"
+        )
+    try:
+        memory = await gateway.summarize_memory(
+            body.previous, [message.model_dump() for message in body.messages]
+        )
+    except Exception as exc:
+        status_code, detail = http_error_for(exc)
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return {"memory": memory}
+
+
 @router.post("/v1/ugen/chat", response_model=ChatResponse)
 async def create_chat(
     request: ChatRequest,

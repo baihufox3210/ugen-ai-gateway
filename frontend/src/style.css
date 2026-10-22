@@ -437,7 +437,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 
 /* Live streaming reply */
 /* The caret is drawn after the last block so blocks keep their normal layout while text arrives. */
-.streaming .markdown>:is(p,h2,h3,h4,h5,h6):last-child::after,.streaming .markdown>:is(ul,ol):last-child>li:last-child::after,.streaming .markdown>blockquote:last-child>p:last-child::after,.streaming .markdown>pre:last-child>code::after{content:'';display:inline-block;width:7px;height:14px;margin-left:2px;vertical-align:-2px;border-radius:1px;background:#65a580;animation:cursor-blink 1s steps(2,end) infinite}
+.streaming .markdown>:is(p,h2,h3,h4,h5,h6):last-child::after,.streaming .markdown>:is(ul,ol):last-child>li:last-child::after,.streaming .markdown>blockquote:last-child>p:last-child::after,.streaming .markdown>.code-block:last-child code::after{content:'';display:inline-block;width:7px;height:14px;margin-left:2px;vertical-align:-2px;border-radius:1px;background:#65a580;animation:cursor-blink 1s steps(2,end) infinite}
 .route-mode.fallback{background:#fdf1e3;color:#a4692a}
 .result-foot .fallback-note{border-color:#f0dcc2;background:#fff8ef;color:#a4692a;font-weight:600}
 .result-foot .policy-note{border-color:#cde5da;background:#f0f8f4;color:#2f7a5f;font-weight:600}
@@ -597,3 +597,35 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .mode-options small{color:#788c83;font-size:9.5px;line-height:1.55}
 .models-save{position:sticky;bottom:-22px;display:flex;align-items:center;justify-content:flex-end;gap:12px;margin:18px -22px -22px;border-top:1px solid #eaf0ed;padding:12px 22px;background:#fffffff2;backdrop-filter:blur(6px)}
 @media(max-width:560px){.mode-options,.cost-row{grid-template-columns:1fr}.models-save{bottom:-16px;margin:18px -16px -16px;padding:12px 16px}}
+.message-actions{display:flex;align-items:center;gap:2px;margin-left:auto}
+.message-action{border:0;border-radius:5px;padding:4px 6px;background:transparent;color:#8a9c95;font-size:8.5px;cursor:pointer;opacity:0;transition:opacity .18s,color .18s,background .18s}
+.turn:hover .message-action,.turn:focus-within .message-action{opacity:1}
+.message-action:hover:not(:disabled){background:#eef5f1;color:#20594b}
+.message-action:disabled{opacity:.3;cursor:not-allowed}
+@media(hover:none){.message-action{opacity:1}}
+.feedback{margin-left:4px}
+.turn.remembered{opacity:.62}
+.memory-marker{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:4px 10px;margin:2px 0 14px;border-top:1px dashed #cfe1d8;padding-top:10px;color:#6d887c;font-size:9.5px}
+.memory-marker .text-action{margin-left:0}
+.memory-text{flex-basis:100%;margin-top:6px;border:1px solid #dcebe3;border-radius:10px;padding:10px 12px;background:#f5faf7;font-size:11.5px;text-align:left}
+.edit-form{display:grid;gap:6px;margin-top:6px}
+.edit-form textarea{width:100%;resize:vertical;border:1px solid #cfe1d8;border-radius:9px;padding:9px 11px;background:#fff;color:#263e37;font:13px/1.6 'DM Sans','Noto Sans TC',sans-serif;outline:none}
+.edit-form textarea:focus{border-color:#89bba7;box-shadow:0 0 0 3px #64a88e15}
+.edit-form small{color:#8a9c95;font-size:9px}
+.edit-form>span{display:flex;justify-content:flex-end;gap:6px}
+.stop-button{background:#7a3d36}
+.stop-button:hover{background:#673129}
+.code-block{margin:12px 0;overflow:hidden;border:1px solid #e0e9e5;border-radius:9px;background:#f6f8f7}
+.code-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e3ebe7;padding:4px 6px 4px 11px;background:#eef3f1;color:#6d887c;font:9px var(--mono)}
+.code-head button{border:0;border-radius:5px;padding:3px 7px;background:transparent;color:#5f7c70;font:9px 'DM Sans',sans-serif;cursor:pointer}
+.code-head button:hover{background:#e0ece6;color:#20594b}
+.markdown .code-block pre{margin:0;border:0;border-radius:0;background:transparent}
+.hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-type{color:#7b4fb0}
+.hljs-string,.hljs-attr-value,.hljs-regexp,.hljs-template-string{color:#2f7a3f}
+.hljs-number,.hljs-literal,.hljs-symbol{color:#b0612a}
+.hljs-comment,.hljs-quote{color:#8a9c95;font-style:italic}
+.hljs-title,.hljs-title.function_,.hljs-section{color:#1f6f9f}
+.hljs-attr,.hljs-attribute,.hljs-property,.hljs-variable,.hljs-params{color:#9a5a1e}
+.hljs-meta,.hljs-tag,.hljs-name{color:#4f6a60}
+.hljs-addition{color:#2f7a3f;background:#eaf6ee}
+.hljs-deletion{color:#a1574f;background:#fbeeec}

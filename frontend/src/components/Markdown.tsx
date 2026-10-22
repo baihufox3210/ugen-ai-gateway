@@ -1,8 +1,11 @@
+import { useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
+import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'katex/dist/katex.min.css';
+import { copyText } from '../clipboard';
 
 // Code is left exactly as written: fenced blocks (closed or still streaming) and inline spans.
 const CODE = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/g;
@@ -21,7 +24,25 @@ export function normalizeMath(text: string): string {
   }).join('');
 }
 
+/** A fenced code block with its language and a Copy button. */
+function CodeBlock({ language, children }: { language: string; children: ReactNode }) {
+  const pre = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  return <div className="code-block">
+    <div className="code-head"><span>{language || 'text'}</span>
+      <button type="button" onClick={async () => { if (await copyText(pre.current?.innerText ?? '')) { setCopied(true); setTimeout(() => setCopied(false), 1500); } }}>{copied ? 'Copied' : 'Copy'}</button>
+    </div>
+    <pre ref={pre}>{children}</pre>
+  </div>;
+}
+
 const components: Components = {
+  pre: ({ node, children }) => {
+    const code = node?.children[0];
+    const classes = code && 'properties' in code ? code.properties.className : undefined;
+    const language = Array.isArray(classes) ? String(classes.find(name => String(name).startsWith('language-')) ?? '').slice(9) : '';
+    return <CodeBlock language={language}>{children}</CodeBlock>;
+  },
   // Headings start one level down so a reply's "#" fits under the panel's own title.
   h1: ({ node: _node, ...props }) => <h2 {...props}/>,
   h2: ({ node: _node, ...props }) => <h3 {...props}/>,
@@ -41,7 +62,7 @@ function Markdown({ text }: { text: string }) {
   return <div className="markdown">
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}
+      rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }], [rehypeHighlight, { detect: true }]]}
       components={components}>
       {normalizeMath(text)}
     </ReactMarkdown>
