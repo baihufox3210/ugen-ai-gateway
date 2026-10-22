@@ -28,6 +28,14 @@ class LocalModel(BaseModel):
     alias: str = Field(default="", max_length=100)
 
 
+class LocalSettings(LocalModel):
+    # Optional smaller model that analyzes requests (faster routing); the
+    # main model is used when empty.
+    analysis_model: str = Field(default="", max_length=200)
+    # Optional model for /v1/embeddings, which always run locally.
+    embedding_model: str = Field(default="", max_length=200)
+
+
 class CloudModel(LocalModel):
     # USD per million tokens, for the cost and savings figures.
     input_cost_per_million: float = Field(default=0, ge=0)
@@ -35,7 +43,7 @@ class CloudModel(LocalModel):
 
 
 class StoredModels(BaseModel):
-    local: LocalModel = Field(default_factory=LocalModel)
+    local: LocalSettings = Field(default_factory=LocalSettings)
     cloud_enabled: bool = False
     cloud: CloudModel = Field(default_factory=CloudModel)
     # hybrid: rules when a request stays local anyway; llm: the local model
@@ -67,7 +75,7 @@ class StoredModels(BaseModel):
 def from_settings(settings: Settings) -> StoredModels:
     """The configuration the LOCAL_* / CLOUD_* settings describe."""
     return StoredModels(
-        local=LocalModel(
+        local=LocalSettings(
             base_url=settings.local_base_url,
             api_key="" if settings.local_api_key == "local" else settings.local_api_key,
             model=settings.local_model,
@@ -96,7 +104,14 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
             locality="local",
             base_url=local.base_url or None,
             api_key=local.api_key or "local",
-            models=[ModelConfig(id=local.model, alias=local.alias or None)],
+            models=[
+                ModelConfig(id=local.model, alias=local.alias or None),
+                *(
+                    [ModelConfig(id=local.analysis_model)]
+                    if local.analysis_model and local.analysis_model != local.model
+                    else []
+                ),
+            ],
         )
     ]
     rules: list[Rule] = []
@@ -129,7 +144,7 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
     return RoutingConfig(
         providers=providers,
         defaults=Defaults(local=Target(provider="local"), cloud=cloud_target),
-        analysis=Target(provider="local"),
+        analysis=Target(provider="local", model=local.analysis_model or None),
         rules=rules,
     )
 

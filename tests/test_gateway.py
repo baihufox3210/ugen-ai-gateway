@@ -323,7 +323,58 @@ def test_chat_analyzes_user_text_from_strings_and_text_parts() -> None:
 
     asyncio.run(service.chat(request))
 
-    assert analyzer.inputs == ["first\nfrom a part\nsecond"]
+    # Each user and system message is analyzed on its own (and cached).
+    assert analyzer.inputs == ["system prompt", "first", "from a part", "second"]
+
+
+def test_difficulty_comes_from_the_latest_message_only() -> None:
+    service, _local, cloud, _ = make_service(analysis_mode="hybrid")
+    request = ChatRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "Compare microservice and monolith architecture",
+            },
+            {"role": "assistant", "content": "..."},
+            {"role": "user", "content": "thanks, what time is it?"},
+        ]
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert response.provider == "local"
+    assert response.routing.complexity == "simple"
+    assert cloud.calls == []
+
+
+def test_earlier_messages_are_not_analyzed_again() -> None:
+    service, _, _, analyzer = make_service(analysis_cache_size=16)
+    first = [{"role": "user", "content": "first question"}]
+    asyncio.run(service.chat(ChatRequest(messages=first)))
+    later = [
+        *first,
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "follow-up"},
+    ]
+    asyncio.run(service.chat(ChatRequest(messages=later)))
+
+    assert analyzer.inputs == ["first question", "follow-up"]
+
+
+def test_personal_data_in_earlier_messages_is_still_redacted() -> None:
+    service, local, _, _ = make_service()
+    request = ChatRequest(
+        messages=[
+            {"role": "user", "content": "my email is alex@example.com"},
+            {"role": "assistant", "content": "noted"},
+            {"role": "user", "content": "write a greeting"},
+        ]
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert response.routing.redacted_values == 1
+    assert "alex@example.com" not in str(local.calls[-1]["messages"])
 
 
 def test_chat_redacts_text_parts_in_multimodal_messages() -> None:

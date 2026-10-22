@@ -229,3 +229,12 @@ def test_unconfigured_gateway_points_to_the_models_page(monkeypatch) -> None:
     response = env.chat(env.admin)
     assert response.status_code == 503
     assert "Models page" in response.json()["detail"]
+
+
+def test_a_separate_analysis_model_analyzes_requests() -> None:
+    stored = StoredModels.model_validate(
+        {"local": {**LOCAL, "analysis_model": "qwen3:1.7b"}}
+    )
+    routing = to_routing(stored)
+    assert routing.analysis.model == "qwen3:1.7b"
+    assert routing.resolve(routing.defaults.local)[1].id == "qwen3:8b"

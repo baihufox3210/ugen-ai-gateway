@@ -5,6 +5,7 @@ import NumberStepper from './NumberStepper';
 type Target = 'local' | 'cloud';
 type SavedConnection = {
   base_url: string; model: string; alias: string; has_api_key: boolean; api_key_hint: string;
+  analysis_model?: string; embedding_model?: string;
   input_cost_per_million?: number; output_cost_per_million?: number;
 };
 type ModelsResponse = {
@@ -12,13 +13,14 @@ type ModelsResponse = {
   config: { local: SavedConnection; cloud_enabled: boolean; cloud: SavedConnection; analysis_mode: 'hybrid' | 'llm' };
 };
 /** A connection being edited. ``apiKey`` undefined keeps the saved key; '' removes it. */
-type Draft = { baseUrl: string; model: string; alias: string; apiKey?: string; hasKey: boolean; keyHint: string; inputCost: string; outputCost: string };
+type Draft = { baseUrl: string; model: string; alias: string; apiKey?: string; hasKey: boolean; keyHint: string; inputCost: string; outputCost: string; analysisModel: string; embeddingModel: string };
 type Probe = { state: 'idle' | 'working' | 'ok' | 'error'; message?: string };
 
 const toDraft = (saved: SavedConnection): Draft => ({
   baseUrl: saved.base_url, model: saved.model, alias: saved.alias, hasKey: saved.has_api_key, keyHint: saved.api_key_hint,
   inputCost: saved.input_cost_per_million ? String(saved.input_cost_per_million) : '',
   outputCost: saved.output_cost_per_million ? String(saved.output_cost_per_million) : '',
+  analysisModel: saved.analysis_model ?? '', embeddingModel: saved.embedding_model ?? '',
 });
 const costStep = (current: number, direction: 1 | -1) => (direction === 1 ? current < 10 : current <= 10) ? 0.1 : 1;
 
@@ -45,6 +47,12 @@ function ConnectionFields({ target, draft, onChange, models, probe, onProbe }: {
       <datalist id={`${target}-models`}>{models.map(model => <option key={model} value={model}/>)}</datalist>
     </label>
     <label>Alias <small>Shown instead of the model name (optional)</small><input value={draft.alias} onChange={event => set({ alias: event.target.value })} placeholder={draft.model || 'e.g. House model'}/></label>
+    {!isCloud && <>
+      <label>Analysis model <small>A smaller model here makes routing faster (optional; the model above is used otherwise)</small>
+        <input value={draft.analysisModel} onChange={event => set({ analysisModel: event.target.value })} list={`${target}-models`} placeholder={draft.model || 'e.g. qwen3:1.7b'} spellCheck={false}/></label>
+      <label>Embedding model <small>Serves /v1/embeddings, always on this machine (optional)</small>
+        <input value={draft.embeddingModel} onChange={event => set({ embeddingModel: event.target.value })} list={`${target}-models`} placeholder="e.g. nomic-embed-text" spellCheck={false}/></label>
+    </>}
     {isCloud && <div className="cost-row">
       <label>Input $ / 1M tokens<NumberStepper value={draft.inputCost} onChange={inputCost => set({ inputCost })} step={costStep} min={0} decimals={2} placeholder="0" label="Input price"/></label>
       <label>Output $ / 1M tokens<NumberStepper value={draft.outputCost} onChange={outputCost => set({ outputCost })} step={costStep} min={0} decimals={2} placeholder="0" label="Output price"/></label>
@@ -109,6 +117,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     return {
       base_url: draft.baseUrl.trim(), model: draft.model.trim(), alias: draft.alias.trim(),
       ...(draft.apiKey !== undefined ? { api_key: draft.apiKey } : {}),
+      ...(withCosts ? {} : { analysis_model: draft.analysisModel.trim(), embedding_model: draft.embeddingModel.trim() }),
       ...(withCosts ? { input_cost_per_million: Number(draft.inputCost || 0), output_cost_per_million: Number(draft.outputCost || 0) } : {}),
     };
   }

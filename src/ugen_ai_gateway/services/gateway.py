@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -47,6 +48,7 @@ from ugen_ai_gateway.services.resilience import CircuitBreaker, is_outage
 from ugen_ai_gateway.services.usage import UsageRecord, UsageStore, token_cost
 
 logger = logging.getLogger(__name__)
+READINESS_CACHE_SECONDS = 10.0
 
 MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
 ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -158,6 +160,7 @@ class GatewayService:
         self._engine = RuleEngine(routing, available=set(self._providers))
         self._breakers: dict[str, CircuitBreaker] = {}
         self._background: set[asyncio.Task[None]] = set()
+        self._readiness: tuple[float, str | None] = (-READINESS_CACHE_SECONDS, None)
         self._analysis_cache = AnalysisCache(
             max_size=settings.analysis_cache_size,
             ttl_seconds=settings.analysis_cache_ttl_seconds,
@@ -175,9 +178,20 @@ class GatewayService:
         return await self.readiness_problem() is None
 
     async def readiness_problem(self) -> str | None:
-        """Why the gateway cannot serve requests, or None when it can."""
+        """Why the gateway cannot serve requests, or None when it can.
+
+        Provider checks are reused for a few seconds, so frequent health
+        probes do not turn into a stream of calls to paid cloud APIs."""
         if not self._configured:
             return "No local model is configured; set one on the Models page"
+        checked_at, problem = self._readiness
+        if time.monotonic() - checked_at < READINESS_CACHE_SECONDS:
+            return problem
+        problem = await self._check_providers()
+        self._readiness = (time.monotonic(), problem)
+        return problem
+
+    async def _check_providers(self) -> str | None:
         for name, provider in self._providers.items():
             try:
                 await provider.health_check()  # type: ignore[attr-defined]
@@ -684,31 +698,65 @@ class GatewayService:
     async def _analyze(
         self, request: ChatRequest, user_input: str
     ) -> tuple[RequestAnalysis, float, AnalysisSource]:
-        """Analyze the request, returning the result, its duration and its source."""
+        """Analyze the request, returning the result, its duration and its source.
+
+        Difficulty and task type come from the latest user message, so an
+        earlier complex question does not send every later one to the cloud.
+        Personal data is looked for in every user and system message (system
+        messages carry conversation memory). Each message is analyzed once and
+        cached, so a long conversation only costs one model call per turn.
+        """
         started_at = perf_counter()
         mode = self._settings.analysis_mode
         source: AnalysisSource
+        latest = _user_texts(request.messages)[-1]
+        texts = list(dict.fromkeys([*_analysis_texts(request.messages), latest]))
 
         quick = (
-            self._policy.classify_complexity(user_input, rule_analysis(user_input))
+            self._policy.classify_complexity(
+                latest, _merge(rule_analysis(latest), [rule_analysis(t) for t in texts])
+            )
             if mode != "llm"
             else None
         )
         if quick is not None and (mode == "rules" or self._stays_local(request, quick)):
-            analysis, source = quick, "rules"
-        elif cached := self._analysis_cache.get(user_input):
-            analysis, source = cached, "cache"
-        else:
-            try:
-                analysis = await self._analyzer.analyze(user_input)
-            except TimeoutError as exc:
-                raise ProviderTimeout("Analysis provider timed out") from exc
-            except Exception as exc:
-                raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
-            analysis = self._policy.classify_complexity(user_input, analysis)
-            self._analysis_cache.put(user_input, analysis)
-            source = "llm"
+            return quick, (perf_counter() - started_at) * 1000, "rules"
 
+        results: dict[str, RequestAnalysis] = {}
+        missing = []
+        for text in texts:
+            if cached := self._analysis_cache.get(text):
+                results[text] = cached
+            else:
+                missing.append(text)
+        try:
+            fresh = await asyncio.gather(
+                *(self._analyzer.analyze(text) for text in missing)
+            )
+        except TimeoutError as exc:
+            raise ProviderTimeout("Analysis provider timed out") from exc
+        except Exception as exc:
+            raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
+        for text, result in zip(missing, fresh, strict=True):
+            self._analysis_cache.put(text, result)
+            results[text] = result
+        source = "llm" if missing else "cache"
+
+        analysis = _merge(results[latest], list(results.values()))
+        usages = [result.usage for result in fresh if result.usage is not None]
+        if usages:
+            analysis = analysis.model_copy(
+                update={
+                    "usage": TokenUsage(
+                        prompt_tokens=sum(u.prompt_tokens for u in usages),
+                        completion_tokens=sum(u.completion_tokens for u in usages),
+                        total_tokens=sum(u.total_tokens for u in usages),
+                    )
+                }
+            )
+        else:
+            analysis = analysis.model_copy(update={"usage": None})
+        analysis = self._policy.classify_complexity(latest, analysis)
         return analysis, (perf_counter() - started_at) * 1000, source
 
     def _stays_local(self, request: ChatRequest, analysis: RequestAnalysis) -> bool:
@@ -814,6 +862,29 @@ def _note_route(record: UsageRecord, prepared: _PreparedChat) -> None:
     record.provider_name = prepared.route.provider.name
     record.model = prepared.public_model
     record.rule = prepared.route.rule
+
+
+def _analysis_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:
+    """Texts checked for personal data: user messages and system messages
+    (conversation memory). Assistant replies only repeat what users wrote."""
+    return _message_texts(
+        [message for message in messages if message["role"] in ("user", "system")]
+    )
+
+
+def _merge(latest: RequestAnalysis, analyses: list[RequestAnalysis]) -> RequestAnalysis:
+    """The latest message's difficulty with personal data from all messages."""
+    return latest.model_copy(
+        update={
+            "contains_personal_data": any(a.contains_personal_data for a in analyses),
+            "personal_data_types": list(
+                dict.fromkeys(t for a in analyses for t in a.personal_data_types)
+            ),
+            "personal_data_values": list(
+                dict.fromkeys(v for a in analyses for v in a.personal_data_values)
+            ),
+        }
+    )
 
 
 def _user_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:

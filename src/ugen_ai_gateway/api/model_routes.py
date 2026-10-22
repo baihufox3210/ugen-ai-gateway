@@ -44,13 +44,18 @@ class _Connection(BaseModel):
         return _check_url(value)
 
 
+class LocalUpdate(_Connection):
+    analysis_model: str = Field(default="", max_length=200)
+    embedding_model: str = Field(default="", max_length=200)
+
+
 class CloudUpdate(_Connection):
     input_cost_per_million: float = Field(default=0, ge=0, le=10_000)
     output_cost_per_million: float = Field(default=0, ge=0, le=10_000)
 
 
 class ModelsUpdate(BaseModel):
-    local: _Connection = Field(default_factory=_Connection)
+    local: LocalUpdate = Field(default_factory=LocalUpdate)
     cloud_enabled: bool = False
     cloud: CloudUpdate = Field(default_factory=CloudUpdate)
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"

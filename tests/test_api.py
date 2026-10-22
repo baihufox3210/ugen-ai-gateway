@@ -161,3 +161,16 @@ def test_ready_names_the_unreachable_provider() -> None:
         response.json()["reason"]
         == "Provider 'local' is not reachable; see the server logs"
     )
+
+
+def test_ready_reuses_a_recent_provider_check() -> None:
+    calls = []
+
+    class Counting:
+        async def health_check(self) -> None:
+            calls.append(1)
+
+    service, *_ = make_service(local_provider=Counting(), cloud_api_key="")  # type: ignore[arg-type]
+    for _ in range(3):
+        assert asyncio.run(service.readiness_problem()) is None
+    assert len(calls) == 1
