@@ -43,6 +43,46 @@ class CloudModel(LocalModel):
     output_cost_per_million: float = Field(default=0, ge=0)
 
 
+class ExtraModel(CloudModel):
+    """An additional model that routing rules can send requests to."""
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")
+    name: str = Field(min_length=1, max_length=60)
+    locality: Literal["local", "cloud"] = "cloud"
+
+    def usable(self) -> bool:
+        return bool(
+            self.base_url and self.model and (self.api_key or self.locality == "local")
+        )
+
+    @property
+    def provider(self) -> str:
+        return f"extra-{self.id}"
+
+
+Complexity = Literal["simple", "moderate", "complex"]
+TaskType = Literal[
+    "general", "coding", "reasoning", "summarization", "translation", "other"
+]
+
+
+class RuleCondition(BaseModel):
+    """Every set field must match; empty lists match anything."""
+
+    complexity: list[Complexity] = Field(default_factory=list)
+    task_type: list[TaskType] = Field(default_factory=list)
+    contains_personal_data: bool | None = None
+    min_chars: int | None = Field(default=None, ge=0)
+    max_chars: int | None = Field(default=None, ge=0)
+
+
+class RouteRule(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    when: RuleCondition = Field(default_factory=RuleCondition)
+    # "local", "cloud", or an extra model's id.
+    target: str = Field(min_length=1, max_length=40)
+
+
 class StoredModels(BaseModel):
     local: LocalSettings = Field(default_factory=LocalSettings)
     cloud_enabled: bool = False
@@ -50,6 +90,21 @@ class StoredModels(BaseModel):
     # hybrid: rules when a request stays local anyway; llm: the local model
     # judges every request.
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
+    extra: list[ExtraModel] = Field(default_factory=list, max_length=20)
+    rules: list[RouteRule] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def check_references(self) -> "StoredModels":
+        ids = [model.id for model in self.extra]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Extra model ids must be different")
+        targets = {"local", "cloud", *ids}
+        for rule in self.rules:
+            if rule.target not in targets:
+                raise ValueError(
+                    f"Rule '{rule.name}' sends requests to an unknown model"
+                )
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -78,6 +133,8 @@ def sealed(stored: StoredModels, box: SecretBox) -> dict[str, Any]:
     data = stored.model_dump()
     data["local"]["api_key"] = box.seal(stored.local.api_key)
     data["cloud"]["api_key"] = box.seal(stored.cloud.api_key)
+    for extra in data["extra"]:
+        extra["api_key"] = box.seal(extra["api_key"])
     return data
 
 
@@ -85,6 +142,8 @@ def unsealed(data: dict[str, Any], box: SecretBox) -> StoredModels:
     stored = StoredModels.model_validate(data)
     stored.local.api_key = box.open(stored.local.api_key)
     stored.cloud.api_key = box.open(stored.cloud.api_key)
+    for extra in stored.extra:
+        extra.api_key = box.open(extra.api_key)
     return stored
 
 
@@ -132,6 +191,27 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
     ]
     rules: list[Rule] = []
     cloud_target: Target | None = None
+    targets: dict[str, Target] = {"local": Target(provider="local")}
+    for extra in stored.extra:
+        if not extra.usable():
+            continue
+        providers.append(
+            ProviderConfig(
+                name=extra.provider,
+                locality=extra.locality,
+                base_url=extra.base_url,
+                api_key=extra.api_key or "local",
+                models=[
+                    ModelConfig(
+                        id=extra.model,
+                        alias=extra.alias or None,
+                        input_cost_per_million=extra.input_cost_per_million,
+                        output_cost_per_million=extra.output_cost_per_million,
+                    )
+                ],
+            )
+        )
+        targets[extra.id] = Target(provider=extra.provider)
     if cloud := stored.active_cloud():
         providers.append(
             ProviderConfig(
@@ -150,6 +230,26 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
             )
         )
         cloud_target = Target(provider="cloud")
+        targets["cloud"] = cloud_target
+    # The administrator's rules first, in order; rules pointing at a model
+    # that is off or incomplete are skipped.
+    for rule in stored.rules:
+        if rule.target in targets:
+            when = rule.when
+            rules.append(
+                Rule(
+                    name=rule.name,
+                    when=Condition(
+                        complexity=when.complexity or None,
+                        task_type=list(when.task_type) or None,
+                        contains_personal_data=when.contains_personal_data,
+                        min_chars=when.min_chars,
+                        max_chars=when.max_chars,
+                    ),
+                    route=targets[rule.target],
+                )
+            )
+    if cloud_target is not None:
         rules.append(
             Rule(
                 name="moderate-or-complex-to-cloud",
@@ -182,4 +282,6 @@ def public_view(stored: StoredModels) -> dict[str, Any]:
         "cloud_enabled": stored.cloud_enabled,
         "cloud": masked(stored.cloud),
         "analysis_mode": stored.analysis_mode,
+        "extra": [masked(model) for model in stored.extra],
+        "rules": [rule.model_dump() for rule in stored.rules],
     }

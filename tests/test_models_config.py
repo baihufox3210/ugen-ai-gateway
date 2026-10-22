@@ -244,3 +244,87 @@ def test_a_separate_analysis_model_analyzes_requests() -> None:
     routing = to_routing(stored)
     assert routing.analysis.model == "qwen3:1.7b"
     assert routing.resolve(routing.defaults.local)[1].id == "qwen3:8b"
+
+
+CODER = {
+    "id": "coder",
+    "name": "Code model",
+    "locality": "cloud",
+    "base_url": "https://code.example.com/v1",
+    "api_key": "sk-coder-key-0001",
+    "model": "code-xl",
+}
+
+
+def test_rules_send_matching_requests_to_extra_models_first() -> None:
+    stored = StoredModels.model_validate(
+        {
+            "local": LOCAL,
+            "cloud_enabled": True,
+            "cloud": CLOUD,
+            "extra": [CODER],
+            "rules": [
+                {"name": "code", "when": {"task_type": ["coding"]}, "target": "coder"},
+                {"name": "short", "when": {"max_chars": 40}, "target": "local"},
+            ],
+        }
+    )
+    routing = to_routing(stored)
+    assert [rule.name for rule in routing.rules] == [
+        "code",
+        "short",
+        "moderate-or-complex-to-cloud",
+    ]
+    provider = routing.provider("extra-coder")
+    assert provider is not None and provider.locality == "cloud"
+    assert provider.models[0].id == "code-xl"
+
+
+def test_rules_to_a_disabled_cloud_are_skipped() -> None:
+    stored = StoredModels.model_validate(
+        {
+            "local": LOCAL,
+            "rules": [
+                {"name": "big", "when": {"complexity": ["complex"]}, "target": "cloud"}
+            ],
+        }
+    )
+    assert to_routing(stored).rules == []
+
+
+def test_rules_must_point_at_a_known_model() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown model"):
+        StoredModels.model_validate(
+            {"local": LOCAL, "rules": [{"name": "x", "target": "nope"}]}
+        )
+
+
+def test_extra_models_save_keep_their_keys_and_route(monkeypatch) -> None:
+    env = ModelsEnv(monkeypatch)
+    rules = [{"name": "code", "when": {"complexity": ["complex"]}, "target": "coder"}]
+    saved = env.put(body(extra=[CODER], rules=rules))
+    assert saved.status_code == 200, saved.text
+    view = env.get().json()["config"]
+    assert view["extra"][0]["api_key_hint"] == "…0001" and "sk-coder" not in str(view)
+    assert view["rules"][0]["target"] == "coder"
+
+    # Saving again without the key keeps it.
+    env.put(
+        body(extra=[{k: v for k, v in CODER.items() if k != "api_key"}], rules=rules)
+    )
+    assert (
+        dependencies.current_models(env.store)[0].extra[0].api_key
+        == "sk-coder-key-0001"
+    )
+    assert "extra-coder" in dependencies.get_gateway_service().engine.available
+
+
+def test_incomplete_extra_models_and_bad_rules_are_refused(monkeypatch) -> None:
+    env = ModelsEnv(monkeypatch)
+    missing_key = {k: v for k, v in CODER.items() if k != "api_key"}
+    response = env.put(body(extra=[missing_key]))
+    assert response.status_code == 422 and "API key" in response.json()["detail"]
+    bad = env.put(body(rules=[{"name": "x", "target": "ghost"}]))
+    assert bad.status_code == 422 and "unknown model" in bad.json()["detail"]

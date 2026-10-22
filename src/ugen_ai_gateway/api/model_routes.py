@@ -4,7 +4,7 @@ import time
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ugen_ai_gateway.api.access import audit_admin, check_admin_access
 from ugen_ai_gateway.config import get_settings
@@ -16,7 +16,12 @@ from ugen_ai_gateway.dependencies import (
     models_changed,
 )
 from ugen_ai_gateway.providers.openai_client import create_openai_client
-from ugen_ai_gateway.services.model_config import StoredModels, public_view, sealed
+from ugen_ai_gateway.services.model_config import (
+    RouteRule,
+    StoredModels,
+    public_view,
+    sealed,
+)
 from ugen_ai_gateway.services.usage import UsageStore
 
 router = APIRouter(prefix="/v1/ugen/models")
@@ -55,18 +60,26 @@ class CloudUpdate(_Connection):
     output_cost_per_million: float = Field(default=0, ge=0, le=10_000)
 
 
+class ExtraUpdate(CloudUpdate):
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")
+    name: str = Field(min_length=1, max_length=60)
+    locality: Literal["local", "cloud"] = "cloud"
+
+
 class ModelsUpdate(BaseModel):
     local: LocalUpdate = Field(default_factory=LocalUpdate)
     cloud_enabled: bool = False
     cloud: CloudUpdate = Field(default_factory=CloudUpdate)
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
+    extra: list[ExtraUpdate] = Field(default_factory=list, max_length=20)
+    rules: list[RouteRule] = Field(default_factory=list, max_length=50)
 
 
 class Probe(BaseModel):
     """A connection to try: ``target`` names whose saved key to use when
     ``api_key`` is not given."""
 
-    target: Literal["local", "cloud"]
+    target: str = Field(pattern=r"^(local|cloud|extra:[a-z0-9][a-z0-9-]{0,31})$")
     base_url: str = Field(default="", max_length=500)
     api_key: str | None = Field(default=None, max_length=500)
     model: str = Field(default="", max_length=200)
@@ -121,12 +134,37 @@ async def save_models(
     if body.cloud.api_key is not None:
         cloud.api_key = body.cloud.api_key.strip()
 
-    models = StoredModels(
-        local=local,
-        cloud_enabled=body.cloud_enabled,
-        cloud=cloud,
-        analysis_mode=body.analysis_mode,
-    )
+    saved_extra = {model.id: model for model in saved.extra}
+    extra = []
+    for update in body.extra:
+        data = _strip(update)
+        previous = saved_extra.get(update.id)
+        key = (
+            update.api_key.strip()
+            if update.api_key is not None
+            else (previous.api_key if previous else "")
+        )
+        extra.append({**data, "api_key": key})
+
+    try:
+        models = StoredModels(
+            local=local,
+            cloud_enabled=body.cloud_enabled,
+            cloud=cloud,
+            analysis_mode=body.analysis_mode,
+            extra=extra,
+            rules=body.rules,
+        )
+    except ValidationError as exc:
+        message = exc.errors()[0]["msg"].removeprefix("Value error, ")
+        raise HTTPException(status_code=422, detail=message) from exc
+    for model in models.extra:
+        if not model.usable():
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{model.name}' needs a base URL and a model"
+                + (" and an API key" if model.locality == "cloud" else ""),
+            )
     if models.cloud_enabled and not models.active_cloud():
         raise HTTPException(
             status_code=422,
@@ -146,6 +184,11 @@ async def save_models(
         cloud_base_url=models.cloud.base_url,
         cloud_model=models.cloud.model,
         analysis_mode=models.analysis_mode,
+        extra=[
+            {"name": m.name, "locality": m.locality, "model": m.model}
+            for m in models.extra
+        ],
+        rules=[{"name": r.name, "target": r.target} for r in models.rules],
     )
     return {"source": "database", "config": public_view(models)}
 
@@ -154,8 +197,15 @@ def _probe_client(probe: Probe, store: UsageStore | None):
     saved, _ = current_models(store)
     if probe.target == "local":
         saved_key, fallback = saved.local.api_key, "local"
-    else:
+    elif probe.target == "cloud":
         saved_key, fallback = saved.cloud.api_key, ""
+    else:
+        match = next(
+            (m for m in saved.extra if m.id == probe.target.removeprefix("extra:")),
+            None,
+        )
+        saved_key = match.api_key if match else ""
+        fallback = "local" if match and match.locality == "local" else ""
     key = probe.api_key.strip() if probe.api_key is not None else saved_key
     if not key and not fallback:
         raise HTTPException(status_code=422, detail="Enter the API key first")

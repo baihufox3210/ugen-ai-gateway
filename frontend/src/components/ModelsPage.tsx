@@ -2,20 +2,27 @@ import { useEffect, useState } from 'react';
 import { apiFetch, errorMessage } from '../api';
 import NumberStepper from './NumberStepper';
 
-type Target = 'local' | 'cloud';
+type Locality = 'local' | 'cloud';
 type SavedConnection = {
   base_url: string; model: string; alias: string; has_api_key: boolean; api_key_hint: string;
   analysis_model?: string; embedding_model?: string;
   input_cost_per_million?: number; output_cost_per_million?: number;
 };
+type SavedExtra = SavedConnection & { id: string; name: string; locality: Locality };
+type Condition = { complexity: string[]; task_type: string[]; contains_personal_data: boolean | null; min_chars: number | null; max_chars: number | null };
+type Rule = { name: string; when: Condition; target: string };
 type ModelsResponse = {
   source: 'database' | 'env' | 'routing_file';
-  config: { local: SavedConnection; cloud_enabled: boolean; cloud: SavedConnection; analysis_mode: 'hybrid' | 'llm' };
+  config: { local: SavedConnection; cloud_enabled: boolean; cloud: SavedConnection; analysis_mode: 'hybrid' | 'llm'; extra: SavedExtra[]; rules: Rule[] };
 };
 /** A connection being edited. ``apiKey`` undefined keeps the saved key; '' removes it. */
 type Draft = { baseUrl: string; model: string; alias: string; apiKey?: string; hasKey: boolean; keyHint: string; inputCost: string; outputCost: string; analysisModel: string; embeddingModel: string };
+type Extra = { id: string; name: string; locality: Locality; draft: Draft };
 type Probe = { state: 'idle' | 'working' | 'ok' | 'error'; message?: string };
 
+const COMPLEXITY = ['simple', 'moderate', 'complex'];
+const TASK_TYPES = ['general', 'coding', 'reasoning', 'summarization', 'translation', 'other'];
+const blankDraft: Draft = { baseUrl: '', model: '', alias: '', hasKey: false, keyHint: '', inputCost: '', outputCost: '', analysisModel: '', embeddingModel: '' };
 const toDraft = (saved: SavedConnection): Draft => ({
   baseUrl: saved.base_url, model: saved.model, alias: saved.alias, hasKey: saved.has_api_key, keyHint: saved.api_key_hint,
   inputCost: saved.input_cost_per_million ? String(saved.input_cost_per_million) : '',
@@ -23,12 +30,15 @@ const toDraft = (saved: SavedConnection): Draft => ({
   analysisModel: saved.analysis_model ?? '', embeddingModel: saved.embedding_model ?? '',
 });
 const costStep = (current: number, direction: 1 | -1) => (direction === 1 ? current < 10 : current <= 10) ? 0.1 : 1;
+const newModelId = () => `m${Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join('')}`;
+const toggle = (list: string[], value: string) => list.includes(value) ? list.filter(item => item !== value) : [...list, value];
 
-function ConnectionFields({ target, draft, onChange, models, probe, onProbe }: {
-  target: Target; draft: Draft; onChange: (draft: Draft) => void; models: string[]; probe: Probe; onProbe: (kind: 'test' | 'list') => void;
+function ConnectionFields({ id, locality, isMain, draft, onChange, models, probe, onProbe }: {
+  id: string; locality: Locality; isMain: boolean; draft: Draft; onChange: (draft: Draft) => void; models: string[]; probe: Probe; onProbe: (kind: 'test' | 'list') => void;
 }) {
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
-  const isCloud = target === 'cloud';
+  const isCloud = locality === 'cloud';
+  const listId = `${id.replace(':', '-')}-models`;
   const keyPlaceholder = draft.apiKey === '' ? 'Key will be removed' : draft.hasKey ? `Saved (${draft.keyHint}). Type to replace` : isCloud ? 'Paste your API key' : 'Optional';
   return <div className="model-fields">
     <label>Base URL<input value={draft.baseUrl} onChange={event => set({ baseUrl: event.target.value })}
@@ -41,17 +51,17 @@ function ConnectionFields({ target, draft, onChange, models, probe, onProbe }: {
     </label>
     <label>Model
       <span className="field-row">
-        <input value={draft.model} onChange={event => set({ model: event.target.value })} list={`${target}-models`} placeholder="Type or load the model name" spellCheck={false}/>
+        <input value={draft.model} onChange={event => set({ model: event.target.value })} list={listId} placeholder="Type or load the model name" spellCheck={false}/>
         <button type="button" className="cancel-button" onClick={() => onProbe('list')} disabled={probe.state === 'working' || !draft.baseUrl}>Load models</button>
       </span>
-      <datalist id={`${target}-models`}>{models.map(model => <option key={model} value={model}/>)}</datalist>
+      <datalist id={listId}>{models.map(model => <option key={model} value={model}/>)}</datalist>
     </label>
     <label>Alias <small>Shown instead of the model name (optional)</small><input value={draft.alias} onChange={event => set({ alias: event.target.value })} placeholder={draft.model || 'e.g. House model'}/></label>
-    {!isCloud && <>
+    {isMain && !isCloud && <>
       <label>Analysis model <small>A smaller model here makes routing faster (optional; the model above is used otherwise)</small>
-        <input value={draft.analysisModel} onChange={event => set({ analysisModel: event.target.value })} list={`${target}-models`} placeholder={draft.model || 'e.g. qwen3:1.7b'} spellCheck={false}/></label>
+        <input value={draft.analysisModel} onChange={event => set({ analysisModel: event.target.value })} list={listId} placeholder={draft.model || 'e.g. qwen3:1.7b'} spellCheck={false}/></label>
       <label>Embedding model <small>Serves /v1/embeddings, always on this machine (optional)</small>
-        <input value={draft.embeddingModel} onChange={event => set({ embeddingModel: event.target.value })} list={`${target}-models`} placeholder="e.g. nomic-embed-text" spellCheck={false}/></label>
+        <input value={draft.embeddingModel} onChange={event => set({ embeddingModel: event.target.value })} list={listId} placeholder="e.g. nomic-embed-text" spellCheck={false}/></label>
     </>}
     {isCloud && <div className="cost-row">
       <label>Input $ / 1M tokens<NumberStepper value={draft.inputCost} onChange={inputCost => set({ inputCost })} step={costStep} min={0} decimals={2} placeholder="0" label="Input price"/></label>
@@ -65,14 +75,48 @@ function ConnectionFields({ target, draft, onChange, models, probe, onProbe }: {
   </div>;
 }
 
+function RuleEditor({ rule, targets, onChange, onMove, onRemove, first, last }: {
+  rule: Rule; targets: { id: string; label: string }[]; onChange: (rule: Rule) => void; onMove: (step: -1 | 1) => void; onRemove: () => void; first: boolean; last: boolean;
+}) {
+  const when = rule.when;
+  const setWhen = (patch: Partial<Condition>) => onChange({ ...rule, when: { ...when, ...patch } });
+  const number = (value: string) => value === '' ? null : Math.max(0, Math.floor(Number(value)));
+  return <div className="rule-card">
+    <div className="rule-head">
+      <input value={rule.name} onChange={event => onChange({ ...rule, name: event.target.value })} placeholder="Rule name, e.g. Code to the code model" aria-label="Rule name" maxLength={60}/>
+      <button type="button" className="icon-button" onClick={() => onMove(-1)} disabled={first} aria-label="Move up" title="Move up">↑</button>
+      <button type="button" className="icon-button" onClick={() => onMove(1)} disabled={last} aria-label="Move down" title="Move down">↓</button>
+      <button type="button" className="text-action danger" onClick={onRemove}>Remove</button>
+    </div>
+    <div className="rule-row"><span>Difficulty</span><div className="chips">{COMPLEXITY.map(value => <button type="button" key={value} className={when.complexity.includes(value) ? 'selected' : ''} onClick={() => setWhen({ complexity: toggle(when.complexity, value) })}>{value}</button>)}</div></div>
+    <div className="rule-row"><span>Task</span><div className="chips">{TASK_TYPES.map(value => <button type="button" key={value} className={when.task_type.includes(value) ? 'selected' : ''} onClick={() => setWhen({ task_type: toggle(when.task_type, value) })}>{value}</button>)}</div></div>
+    <div className="rule-row"><span>Personal data</span>
+      <select value={when.contains_personal_data === null ? 'any' : when.contains_personal_data ? 'yes' : 'no'} onChange={event => setWhen({ contains_personal_data: event.target.value === 'any' ? null : event.target.value === 'yes' })} aria-label="Personal data">
+        <option value="any">Any</option><option value="yes">Contains personal data</option><option value="no">No personal data</option>
+      </select>
+    </div>
+    <div className="rule-row"><span>Length</span>
+      <span className="field-row"><input type="number" min={0} value={when.min_chars ?? ''} onChange={event => setWhen({ min_chars: number(event.target.value) })} placeholder="Min characters" aria-label="Minimum characters"/>
+        <input type="number" min={0} value={when.max_chars ?? ''} onChange={event => setWhen({ max_chars: number(event.target.value) })} placeholder="Max characters" aria-label="Maximum characters"/></span>
+    </div>
+    <div className="rule-row"><span>Send to</span>
+      <select value={rule.target} onChange={event => onChange({ ...rule, target: event.target.value })} aria-label="Send to">
+        {targets.map(target => <option key={target.id} value={target.id}>{target.label}</option>)}
+      </select>
+    </div>
+  </div>;
+}
+
 function ModelsPage({ onSaved }: { onSaved: () => void }) {
   const [source, setSource] = useState<ModelsResponse['source'] | null>(null);
   const [loadError, setLoadError] = useState('');
-  const [drafts, setDrafts] = useState<Record<Target, Draft> | null>(null);
+  const [drafts, setDrafts] = useState<{ local: Draft; cloud: Draft } | null>(null);
+  const [extras, setExtras] = useState<Extra[]>([]);
+  const [rules, setRules] = useState<Rule[]>([]);
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<'hybrid' | 'llm'>('hybrid');
-  const [models, setModels] = useState<Partial<Record<Target, string[]>>>({});
-  const [probes, setProbes] = useState<Partial<Record<Target, Probe>>>({});
+  const [models, setModels] = useState<Record<string, string[]>>({});
+  const [probes, setProbes] = useState<Record<string, Probe>>({});
   const [saving, setSaving] = useState(false);
   const [saveState, setSaveState] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -80,6 +124,8 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     const { config } = response;
     setSource(response.source);
     setDrafts({ local: toDraft(config.local), cloud: toDraft(config.cloud) });
+    setExtras((config.extra ?? []).map(extra => ({ id: extra.id, name: extra.name, locality: extra.locality, draft: toDraft(extra) })));
+    setRules(config.rules ?? []);
     setCloudEnabled(config.cloud_enabled); setAnalysisMode(config.analysis_mode);
   }
 
@@ -92,10 +138,11 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
   if (loadError) return <div className="settings-section first"><div className="error-box" role="alert"><span>{loadError}</span></div></div>;
   if (!drafts || !source) return <div className="settings-section first"><p>Loading…</p></div>;
   const readOnly = source === 'routing_file';
-  const setProbe = (target: Target, probe: Probe) => setProbes(current => ({ ...current, [target]: probe }));
+  const setProbe = (target: string, probe: Probe) => setProbes(current => ({ ...current, [target]: probe }));
+  const draftFor = (target: string) => target === 'local' ? drafts!.local : target === 'cloud' ? drafts!.cloud : extras.find(extra => `extra:${extra.id}` === target)?.draft ?? blankDraft;
 
-  async function probe(target: Target, kind: 'test' | 'list') {
-    const draft = drafts![target];
+  async function probe(target: string, kind: 'test' | 'list') {
+    const draft = draftFor(target);
     setProbe(target, { state: 'working' });
     try {
       const response = await apiFetch(`/v1/ugen/models/${kind}`, {
@@ -113,12 +160,12 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     } catch { setProbe(target, { state: 'error', message: 'Cannot reach the gateway' }); }
   }
 
-  function connection(draft: Draft, withCosts: boolean) {
+  function connection(draft: Draft, kind: 'local' | 'cloud' | 'extra') {
     return {
       base_url: draft.baseUrl.trim(), model: draft.model.trim(), alias: draft.alias.trim(),
       ...(draft.apiKey !== undefined ? { api_key: draft.apiKey } : {}),
-      ...(withCosts ? {} : { analysis_model: draft.analysisModel.trim(), embedding_model: draft.embeddingModel.trim() }),
-      ...(withCosts ? { input_cost_per_million: Number(draft.inputCost || 0), output_cost_per_million: Number(draft.outputCost || 0) } : {}),
+      ...(kind === 'local' ? { analysis_model: draft.analysisModel.trim(), embedding_model: draft.embeddingModel.trim() } : {}),
+      ...(kind !== 'local' ? { input_cost_per_million: Number(draft.inputCost || 0), output_cost_per_million: Number(draft.outputCost || 0) } : {}),
     };
   }
 
@@ -127,7 +174,11 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     try {
       const response = await apiFetch('/v1/ugen/models', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ local: connection(drafts!.local, false), cloud: connection(drafts!.cloud, true), cloud_enabled: cloudEnabled, analysis_mode: analysisMode }),
+        body: JSON.stringify({
+          local: connection(drafts!.local, 'local'), cloud: connection(drafts!.cloud, 'cloud'), cloud_enabled: cloudEnabled, analysis_mode: analysisMode,
+          extra: extras.map(extra => ({ id: extra.id, name: extra.name.trim() || 'Model', locality: extra.locality, ...connection(extra.draft, 'extra') })),
+          rules: rules.map(rule => ({ ...rule, name: rule.name.trim() || 'Rule' })),
+        }),
       });
       if (!response.ok) { setSaveState({ ok: false, message: await errorMessage(response) }); return; }
       apply(await response.json() as ModelsResponse);
@@ -136,8 +187,13 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     } catch { setSaveState({ ok: false, message: 'Cannot reach the gateway' }); } finally { setSaving(false); }
   }
 
-  const fields = (target: Target) => <ConnectionFields target={target} draft={drafts[target]} onChange={draft => setDrafts(current => current && { ...current, [target]: draft })}
+  const fields = (target: 'local' | 'cloud') => <ConnectionFields id={target} locality={target} isMain draft={drafts[target]} onChange={draft => setDrafts(current => current && { ...current, [target]: draft })}
     models={models[target] ?? []} probe={probes[target] ?? { state: 'idle' }} onProbe={kind => void probe(target, kind)}/>;
+  const updateExtra = (id: string, patch: Partial<Extra>) => setExtras(current => current.map(extra => extra.id === id ? { ...extra, ...patch } : extra));
+  const targets = [{ id: 'local', label: 'Local model' }, { id: 'cloud', label: 'Cloud model' }, ...extras.map(extra => ({ id: extra.id, label: extra.name || 'Unnamed model' }))];
+  const moveRule = (index: number, step: -1 | 1) => setRules(current => {
+    const next = [...current]; const [rule] = next.splice(index, 1); next.splice(index + step, 0, rule); return next;
+  });
 
   return <fieldset className="models-page" disabled={readOnly}>
     {source === 'env' && (drafts.local.model
@@ -160,10 +216,35 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     </div>
 
     <div className="settings-section">
-      <h3>Routing</h3>
+      <h3>More models</h3>
+      <p>Extra local or cloud models that routing rules can use, for example a code model or a cheaper cloud model for summaries. Cloud models only ever receive redacted text.</p>
+      <div className="rule-list">{extras.map(extra => <div className="rule-card" key={extra.id}>
+        <div className="rule-head">
+          <input value={extra.name} onChange={event => updateExtra(extra.id, { name: event.target.value })} placeholder="Name, e.g. Code model" aria-label="Model name" maxLength={60}/>
+          <div className="segmented" role="radiogroup" aria-label="Where it runs">
+            {(['local', 'cloud'] as const).map(value => <button type="button" key={value} role="radio" aria-checked={extra.locality === value} className={extra.locality === value ? 'selected' : ''} onClick={() => updateExtra(extra.id, { locality: value })}>{value === 'local' ? 'Local' : 'Cloud'}</button>)}
+          </div>
+          <button type="button" className="text-action danger" onClick={() => { setExtras(current => current.filter(item => item.id !== extra.id)); setRules(current => current.filter(rule => rule.target !== extra.id)); }}>Remove</button>
+        </div>
+        <ConnectionFields id={`extra:${extra.id}`} locality={extra.locality} isMain={false} draft={extra.draft} onChange={draft => updateExtra(extra.id, { draft })}
+          models={models[`extra:${extra.id}`] ?? []} probe={probes[`extra:${extra.id}`] ?? { state: 'idle' }} onProbe={kind => void probe(`extra:${extra.id}`, kind)}/>
+      </div>)}</div>
+      <button type="button" className="cancel-button add-rule" onClick={() => setExtras(current => [...current, { id: newModelId(), name: '', locality: 'cloud', draft: { ...blankDraft } }])}>+ Add a model</button>
+    </div>
+
+    <div className="settings-section">
+      <h3>Routing rules</h3>
+      <p>Checked from the top in Auto mode; the first rule whose conditions all match picks the model. Requests no rule matches go to the cloud model when they are moderate or complex, otherwise stay local. Privacy rules still win: personal data that must stay local never goes to a cloud model.</p>
+      <div className="rule-list">{rules.map((rule, index) => <RuleEditor key={index} rule={rule} targets={targets} first={index === 0} last={index === rules.length - 1}
+        onChange={next => setRules(current => current.map((item, i) => i === index ? next : item))} onMove={step => moveRule(index, step)} onRemove={() => setRules(current => current.filter((_, i) => i !== index))}/>)}</div>
+      <button type="button" className="cancel-button add-rule" onClick={() => setRules(current => [...current, { name: '', when: { complexity: [], task_type: [], contains_personal_data: null, min_chars: null, max_chars: null }, target: 'local' }])}>+ Add a rule</button>
+    </div>
+
+    <div className="settings-section">
+      <h3>Difficulty check</h3>
       <div className="mode-options" role="radiogroup" aria-label="How requests are judged">
         <label className={analysisMode === 'hybrid' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'hybrid'} onChange={() => setAnalysisMode('hybrid')}/><span><b>Fast</b><small>Rules spot complex requests (length, keywords such as “compare” or “design”, lists). Short plain questions stay local without an extra model call.</small></span></label>
-        <label className={analysisMode === 'llm' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'llm'} onChange={() => setAnalysisMode('llm')}/><span><b>Thorough</b><small>The local model judges every request’s difficulty first. Catches short hard questions, at the cost of one extra local call each time.</small></span></label>
+        <label className={analysisMode === 'llm' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'llm'} onChange={() => setAnalysisMode('llm')}/><span><b>Thorough</b><small>The local model judges every request’s difficulty and task first. Catches short hard questions and makes task-based rules reliable, at the cost of one extra local call each time.</small></span></label>
       </div>
     </div>
 

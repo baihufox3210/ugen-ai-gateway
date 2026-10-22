@@ -666,3 +666,12 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .preview-box{display:grid;gap:5px;margin-top:10px;border:1px solid #dcebe3;border-radius:10px;padding:10px 12px;background:#f5faf7}
 .preview-box code{overflow-wrap:anywhere;color:#25443a;font:11.5px/1.6 var(--mono);white-space:pre-wrap}
 .preview-box small{color:#6d887c;font-size:9.5px}
+.rule-row{display:grid;grid-template-columns:96px 1fr;align-items:center;gap:8px}
+.rule-row>span:first-child{color:#4f6a60;font-size:10px;font-weight:600}
+.rule-row .field-row input{min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chips button,.segmented button{border:1px solid #e1e9e6;border-radius:20px;padding:4px 10px;background:#fff;color:#5f7c70;font-size:10px;cursor:pointer;transition:border-color .2s,background .2s,color .2s}
+.chips button.selected,.segmented button.selected{border-color:#5aa584;background:#f0f8f4;color:#20594b;font-weight:600}
+.segmented{display:flex;gap:4px}
+.rule-head .icon-button{width:24px;height:24px;font-size:13px}
+@media(max-width:560px){.rule-row{grid-template-columns:1fr}.rule-head{flex-wrap:wrap}}
