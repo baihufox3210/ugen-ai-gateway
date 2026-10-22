@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiFetch, apiUrl, errorMessage, type User } from '../api';
+import { apiFetch, apiUrl, errorMessage, startSsoLink, type AuthStatus, type User } from '../api';
 import Avatar from './Avatar';
 import AvatarCropper from './AvatarCropper';
 import ModelsPage from './ModelsPage';
@@ -39,6 +39,50 @@ function AppearanceSection() {
         {(['system', 'light', 'dark'] as const).map(value => <button type="button" key={value} role="radio" aria-checked={theme === value} className={theme === value ? 'selected' : ''}
           onClick={() => { applyTheme(value); setTheme(value); }}>{value === 'system' ? 'System' : value === 'light' ? 'Light' : 'Dark'}</button>)}
       </div>
+    </div>
+  </div>;
+}
+
+function SsoAccountSection({ user, onUserChange }: { user: User; onUserChange: (user: User) => void }) {
+  const [sso, setSso] = useState<AuthStatus['sso']>(null);
+  const [state, setState] = useState<{ ok: boolean; message: string } | null>(null);
+  const [working, setWorking] = useState(false);
+  useEffect(() => {
+    apiFetch('/v1/ugen/auth/status', {}, '').then(async response => { if (response.ok) setSso((await response.json() as AuthStatus).sso ?? null); }).catch(() => undefined);
+  }, []);
+  // Nothing to link to until an administrator sets up single sign-on.
+  if (!sso && !user.sso) return null;
+  const provider = sso?.provider === 'google' ? 'Google' : 'single sign-on';
+
+  async function link() {
+    setWorking(true); setState(null);
+    const error = await startSsoLink().catch(() => 'Cannot reach the gateway');
+    // On success the browser has left for the provider.
+    if (error) { setState({ ok: false, message: error }); setWorking(false); }
+  }
+
+  async function unlink() {
+    if (!window.confirm(`Unlink ${provider}? You will sign in with your username and password.`)) return;
+    setWorking(true); setState(null);
+    try {
+      const response = await apiFetch('/v1/ugen/auth/me/sso', { method: 'DELETE' });
+      if (!response.ok) { setState({ ok: false, message: await errorMessage(response) }); return; }
+      onUserChange(await response.json() as User);
+      setState({ ok: true, message: 'Unlinked.' });
+    } catch { setState({ ok: false, message: 'Cannot reach the gateway' }); } finally { setWorking(false); }
+  }
+
+  return <div className="settings-section">
+    <h3>Single sign-on</h3>
+    {user.sso
+      ? <p>Linked{user.email ? ` to ${user.email}` : ''}. You can sign in with {provider}{user.has_password ? ' or your password' : ''}.</p>
+      : <p>Link your {provider} account to sign in to this account with it. If you already signed in with {provider} once, that created a separate account: an administrator must delete it first.</p>}
+    <div className="probe-row">
+      {user.sso
+        ? <button type="button" className="cancel-button" onClick={() => void unlink()} disabled={working || !user.has_password} title={user.has_password ? undefined : 'Set a password first'}>Unlink</button>
+        : sso && <button type="button" className="cancel-button sso-link-button" onClick={() => void link()} disabled={working}>{working ? 'Opening…' : `Link ${provider === 'Google' ? 'Google account' : provider}`}</button>}
+      {user.sso && !user.has_password && <span className="probe">Set a password below before unlinking.</span>}
+      {state && <span className={`probe ${state.ok ? 'ok' : 'error'}`} role="status">{state.message}</span>}
     </div>
   </div>;
 }
@@ -132,6 +176,8 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
     </div>
 
     <AppearanceSection/>
+
+    <SsoAccountSection user={user} onUserChange={onUserChange}/>
 
     <PasswordSection hasPassword={user.has_password !== false} onPasswordSet={() => onUserChange({ ...user, has_password: true })}/>
 

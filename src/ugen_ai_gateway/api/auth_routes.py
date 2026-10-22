@@ -35,6 +35,7 @@ from ugen_ai_gateway.services.oidc import (
 )
 from ugen_ai_gateway.services.usage import (
     AccountDisabled,
+    IdentityTaken,
     UsageStore,
     UsernameTaken,
 )
@@ -223,10 +224,12 @@ async def auth_status(store: UsageStoreDependency) -> dict[str, Any]:
 
 @router.get("/oidc/start")
 async def oidc_start(
-    store: UsageStoreDependency, request: Request, browser: str = ""
+    store: UsageStoreDependency, request: Request, browser: str = "", link: str = ""
 ) -> Response:
     """Send the browser to the identity provider to sign in. ``browser`` is a
-    random value the dashboard keeps and expects back with the session."""
+    random value the dashboard keeps and expects back with the session;
+    ``link`` is a ticket from ``/oidc/link`` to link the identity to the
+    signed-in account instead."""
     store = _require_store(store)
     _limit_attempts(request)
     settings = oidc_settings(store)
@@ -235,9 +238,15 @@ async def oidc_start(
         return _sso_failed(redirect_uri, "Single sign-on is not set up")
     if not re.fullmatch(r"[A-Za-z0-9_-]{16,64}", browser):
         return _sso_failed(redirect_uri, "Start signing in from the sign-in page")
+    client = get_oidc_client()
+    link_user = ""
+    if link:
+        link_user = client.redeem_link_ticket(link) or ""
+        if not link_user:
+            return _sso_failed(redirect_uri, "The link request expired; try again")
     try:
-        target = await get_oidc_client().authorization_url(
-            settings, redirect_uri, browser
+        target = await client.authorization_url(
+            settings, redirect_uri, browser, link_user
         )
     except OidcError as exc:
         return _sso_failed(redirect_uri, str(exc))
@@ -260,10 +269,23 @@ async def oidc_callback(
     client = get_oidc_client()
     redirect_uri = client.take_redirect_uri(state) or callback_url(request, settings)
     browser = client.browser_for(state)
+    link_user = client.link_user_for(state)
     if error:
         return _sso_failed(redirect_uri, error_description or error)
     if not settings.ready:
         return _sso_failed(redirect_uri, "Single sign-on is not set up")
+    if link_user:
+        try:
+            identity = await client.finish(settings, code, state)
+        except OidcError as exc:
+            return _sso_failed(redirect_uri, str(exc))
+        # The dashboard finishes the link with its own session (see
+        # /oidc/link/complete), so a link started elsewhere cannot land here.
+        result = client.store_link_result(link_user, identity)
+        fragment = urlencode({"sso_link": result, "browser": browser})
+        return RedirectResponse(
+            f"{_dashboard_url(redirect_uri)}#{fragment}", status_code=302
+        )
     try:
         identity = await client.finish(settings, code, state)
         user = await store.sso_user(
@@ -299,6 +321,63 @@ async def oidc_callback(
     return RedirectResponse(
         f"{_dashboard_url(redirect_uri)}#{fragment}", status_code=302
     )
+
+
+@router.post("/oidc/link")
+async def oidc_link_ticket(
+    store: UsageStoreDependency, request: Request
+) -> dict[str, str]:
+    """A one-time ticket to link a single sign-on identity to the signed-in
+    account; pass it to /oidc/start as ``link``."""
+    store = _require_store(store)
+    _, user = await _session_user(request, store)
+    if not oidc_settings(store).ready:
+        raise HTTPException(status_code=409, detail="Single sign-on is not set up")
+    return {"ticket": get_oidc_client().issue_link_ticket(user["id"])}
+
+
+class LinkCompletion(BaseModel):
+    code: str = Field(min_length=1, max_length=100)
+
+
+@router.post("/oidc/link/complete")
+async def oidc_link_complete(
+    body: LinkCompletion, store: UsageStoreDependency, request: Request
+) -> dict[str, Any]:
+    """Link the identity from a finished sign-in to the signed-in account.
+    Only the account that started the link can finish it."""
+    store = _require_store(store)
+    _, user = await _session_user(request, store)
+    identity = get_oidc_client().redeem_link_result(body.code, user["id"])
+    if identity is None:
+        raise HTTPException(
+            status_code=400, detail="The link request expired; try again"
+        )
+    try:
+        updated = await store.link_sso(user["id"], identity.subject, identity.email)
+    except IdentityTaken as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This sign-in already belongs to the account '{exc}'. Delete that "
+            "account (or unlink it there) first.",
+        ) from exc
+    await audit_admin(request, store, "sso_linked", user_id=user["id"])
+    return updated
+
+
+@router.delete("/me/sso")
+async def unlink_sso(store: UsageStoreDependency, request: Request) -> dict[str, Any]:
+    """Unlink single sign-on; the account then signs in with its password."""
+    store = _require_store(store)
+    _, user = await _session_user(request, store)
+    if not user["has_password"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Set a password first, or you could no longer sign in",
+        )
+    updated = await store.unlink_sso(user["id"])
+    await audit_admin(request, store, "sso_unlinked", user_id=user["id"])
+    return updated
 
 
 def _sso_failed(redirect_uri: str, message: str) -> Response:

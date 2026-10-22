@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Footer from './Footer';
 import { apiFetch, errorMessage, startSso, type AuthStatus, type Session } from '../api';
 
 type Mode = 'login' | 'register';
@@ -50,7 +51,7 @@ function AuthScreen({ status, onSignedIn, initialError = '' }: { status: AuthSta
         <button type="button" role="tab" aria-selected={registering} className={registering ? 'selected' : ''} onClick={() => switchMode('register')}>Create account</button>
       </div>}
       {status.sso && <>
-        <button type="button" className="cancel-button sso-button" onClick={startSso}>{status.sso.provider === 'google' && <GoogleLogo/>}{status.sso.label}</button>
+        <button type="button" className="cancel-button sso-button" onClick={() => startSso()}>{status.sso.provider === 'google' && <GoogleLogo/>}{status.sso.label}</button>
         <div className="auth-divider"><span>or use a username</span></div>
       </>}
       <form className="auth-form" onSubmit={submit}>
@@ -63,6 +64,7 @@ function AuthScreen({ status, onSignedIn, initialError = '' }: { status: AuthSta
       </form>
       {!status.registration_open && <small className="auth-hint">Sign-up is closed. Ask an administrator for an account.</small>}
     </section>
+    <Footer/>
   </main>;
 }
 

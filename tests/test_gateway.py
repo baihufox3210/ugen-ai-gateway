@@ -10,7 +10,7 @@ from ugen_ai_gateway.analysis.schemas import RequestAnalysis
 from ugen_ai_gateway.api.schemas import ChatRequest
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.services.errors import ModelNotFound
-from ugen_ai_gateway.services.gateway import GatewayService
+from ugen_ai_gateway.services.gateway import ANALYSIS_BATCH_SEPARATOR, GatewayService
 
 
 class FakeProvider:
@@ -335,8 +335,88 @@ def test_chat_analyzes_user_text_from_strings_and_text_parts() -> None:
 
     asyncio.run(service.chat(request))
 
-    # Each user and system message is analyzed on its own (and cached).
-    assert analyzer.inputs == ["system prompt", "first", "from a part", "second"]
+    # The latest message on its own; older ones together in one call.
+    assert analyzer.inputs == [
+        "second",
+        ANALYSIS_BATCH_SEPARATOR.join(["system prompt", "first", "from a part"]),
+    ]
+
+
+class ValueAnalyzer(FakeAnalyzer):
+    """Reports a name when the text mentions it, like the analysis model."""
+
+    async def analyze(self, user_input: str) -> RequestAnalysis:
+        self.inputs.append(user_input)
+        found = "Alex Chen" in user_input
+        return self.analysis.model_copy(
+            update={
+                "contains_personal_data": found,
+                "personal_data_types": ["name"] if found else [],
+                "personal_data_values": ["Alex Chen"] if found else [],
+            }
+        )
+
+
+def test_long_conversations_need_at_most_two_analysis_calls() -> None:
+    analyzer = ValueAnalyzer()
+    service, local, _, _ = make_service(analyzer=analyzer, analysis_cache_size=64)
+    messages: list[dict[str, str]] = []
+    for number in range(8):
+        text = "Please email Alex Chen" if number == 2 else f"question {number}"
+        messages += [
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": "ok"},
+        ]
+    messages.append({"role": "user", "content": "and now?"})
+
+    response = asyncio.run(service.chat(ChatRequest(messages=messages)))
+
+    assert len(analyzer.inputs) == 2
+    # A name found by the combined call is still redacted.
+    assert "Alex Chen" not in str(local.calls[0]["messages"])
+    assert response.routing.contains_personal_data is True
+
+    # Each older message was cached on its own: a follow-up costs one call.
+    asyncio.run(
+        service.chat(
+            ChatRequest(
+                messages=[
+                    *messages,
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "one more"},
+                ]
+            )
+        )
+    )
+    assert analyzer.inputs[2:] == ["one more"]
+
+
+def test_personal_data_without_values_in_a_batch_keeps_requests_local() -> None:
+    class AddressAnalyzer(FakeAnalyzer):
+        # An address it can tell is there but cannot quote, only in the old message.
+        async def analyze(self, user_input: str) -> RequestAnalysis:
+            self.inputs.append(user_input)
+            found = "corner" in user_input
+            return analysis(complexity="complex").model_copy(
+                update={
+                    "contains_personal_data": found,
+                    "personal_data_types": ["address"] if found else [],
+                }
+            )
+
+    analyzer = AddressAnalyzer()
+    service, _local, cloud, _ = make_service(analyzer=analyzer)
+    request = ChatRequest(
+        messages=[
+            {"role": "user", "content": "I live on the corner near the station"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "design a system for me"},
+        ]
+    )
+
+    response = asyncio.run(service.chat(request))
+
+    assert response.provider == "local" and cloud.calls == []
 
 
 def test_difficulty_comes_from_the_latest_message_only() -> None:
@@ -729,3 +809,61 @@ def test_memory_is_summarized_by_the_local_model_only() -> None:
         "- user is Alex" in sent[1]["content"]
         and "USER: I prefer Python" in sent[1]["content"]
     )
+
+
+def test_slow_detection_does_not_block_other_requests() -> None:
+    import re
+    import time
+
+    from ugen_ai_gateway.analysis.pii import (
+        PersonalDataMatch,
+        clear_registered_finders,
+        register_finder,
+    )
+
+    scans: list[str] = []
+
+    def slow_names(text: str) -> list[PersonalDataMatch]:
+        scans.append(text)
+        time.sleep(0.02)  # like a spaCy model
+        return [
+            PersonalDataMatch(
+                "person_name", "PERSON_NAME", m.start(), m.end(), m.group()
+            )
+            for m in re.finditer("Bob Lee", text)
+        ]
+
+    register_finder(slow_names, types=["person_name"])
+    try:
+        words = "Ask Bob Lee about it. Then write the report and send it today. " * 4
+        local = FakeProvider()
+        local.chunks = [text_chunk(word + " ") for word in words.split(" ")]
+        service, _, _, _ = make_service(local_provider=local)
+        request = ChatRequest(messages=[{"role": "user", "content": "plan my day"}])
+
+        async def run() -> tuple[list, int]:
+            ticks = 0
+            done = False
+
+            async def heartbeat() -> None:
+                nonlocal ticks
+                while not done:
+                    ticks += 1
+                    await asyncio.sleep(0.005)
+
+            beat = asyncio.create_task(heartbeat())
+            events = await collect(service, request)
+            done = True
+            await beat
+            return events, ticks
+
+        events, ticks = asyncio.run(run())
+    finally:
+        clear_registered_finders()
+
+    text = events[-1].response.content
+    # Names the user never gave are still redacted.
+    assert "Bob Lee" not in text and "[PERSON_NAME]" in text
+    # Scanned per sentence, not per token, and the loop kept running meanwhile.
+    assert len(scans) < len(local.chunks) / 2
+    assert ticks >= len(scans)

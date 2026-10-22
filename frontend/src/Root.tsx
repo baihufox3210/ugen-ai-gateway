@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import App from './App';
 import AuthScreen from './components/AuthScreen';
-import { apiFetch, loadSession, takeSsoBrowser, saveSession, SIGNED_OUT_EVENT, type AuthStatus, type Session, type User } from './api';
+import SharedView from './components/SharedView';
+import { apiFetch, errorMessage, loadSession, takeSsoBrowser, saveSession, SIGNED_OUT_EVENT, type AuthStatus, type Session, type User } from './api';
 
 /** Shows the sign-in screen until there is a session, then the dashboard. */
 function Root() {
@@ -12,6 +13,12 @@ function Root() {
   const [sso] = useState(readSsoResult);
   const ssoToken = sso.token;
   const [ssoError, setSsoError] = useState(sso.error);
+  // A share link: ?share=<id> opens that conversation read-only.
+  const [shareId, setShareId] = useState(() => new URLSearchParams(window.location.search).get('share'));
+  const [shareSignIn, setShareSignIn] = useState(false);
+  // Shown in the dashboard: the outcome of linking single sign-on, or an
+  // error that came back while signed in.
+  const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(() => session && sso.error ? { ok: false, message: sso.error } : null);
 
   const updateSession = useCallback((next: Session | null) => {
     saveSession(next); setSession(next);
@@ -29,6 +36,18 @@ function Root() {
   }, []);
 
   useEffect(() => { void loadStatus(); }, [loadStatus]);
+
+  useEffect(() => {
+    if (!sso.linkCode || !session) return;
+    apiFetch('/v1/ugen/auth/oidc/link/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: sso.linkCode }) }, session.token)
+      .then(async response => {
+        if (!response.ok) { setNotice({ ok: false, message: await errorMessage(response) }); return; }
+        updateSession({ ...session, user: await response.json() as User });
+        setNotice({ ok: true, message: 'Single sign-on is linked. You can now sign in with it.' });
+      })
+      .catch(() => setNotice({ ok: false, message: 'Cannot reach the gateway.' }));
+    // Once, for the result in the address bar.
+  }, []);
 
   useEffect(() => {
     if (!ssoToken) return;
@@ -74,24 +93,30 @@ function Root() {
         : <span className="spinner dark" aria-label="Loading"/>}
     </section></main>;
   }
+  if (shareId) {
+    const openApp = () => { window.history.replaceState(null, '', window.location.pathname); setShareId(null); setShareSignIn(false); };
+    if (shareSignIn && status.accounts_enabled && !session) return <AuthScreen key="share" status={status} onSignedIn={next => { updateSession(next); setShareSignIn(false); }}/>;
+    return <SharedView key={session?.token ?? 'signed-out'} id={shareId} signedIn={Boolean(session)} onSignIn={() => setShareSignIn(true)} onOpenApp={openApp}/>;
+  }
   if (status.accounts_enabled && !session) {
     if (ssoToken && !ssoError) return <main className="auth-page"><section className="auth-card auth-loading"><span className="spinner dark" aria-label="Signing in"/></section></main>;
     return <AuthScreen key={String(status.has_users)} status={status} onSignedIn={updateSession} initialError={ssoError ?? ''}/>;
   }
   // key: each account gets a fresh dashboard with its own saved history.
-  return <App key={session?.user.id ?? 'open'} user={session?.user ?? null} onSignOut={signOut}
+  return <App key={session?.user.id ?? 'open'} user={session?.user ?? null} onSignOut={signOut} notice={notice} onDismissNotice={() => setNotice(null)}
     onUserChange={user => session && updateSession({ ...session, user })}
     onAccountDeleted={() => { updateSession(null); void loadStatus(); }}/>;
 }
 
 /** A single sign-on result, accepted only in the tab that started it. */
-function readSsoResult(): { token: string | null; error: string | null } {
+function readSsoResult(): { token: string | null; linkCode: string | null; error: string | null } {
   const token = readFragment('sso');
+  const linkCode = readFragment('sso_link');
   const browser = readFragment('browser');
   const error = readFragment('sso_error');
   const expected = takeSsoBrowser();
-  if (token && (!expected || browser !== expected)) return { token: null, error: 'This sign-in was not started in this browser tab. Sign in again here.' };
-  return { token, error };
+  if ((token || linkCode) && (!expected || browser !== expected)) return { token: null, linkCode: null, error: 'This sign-in was not started in this browser tab. Try again here.' };
+  return { token, linkCode, error };
 }
 
 /** Read and remove one value from the URL fragment, so a token is not left in the address bar or history. */

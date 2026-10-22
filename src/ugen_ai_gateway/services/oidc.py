@@ -26,6 +26,7 @@ GOOGLE_ISSUER = "https://accounts.google.com"
 CALLBACK_PATH = "/v1/ugen/auth/oidc/callback"
 # How long a sign-in may take between leaving for the provider and returning.
 PENDING_TTL_SECONDS = 600
+LINK_TTL_SECONDS = 300
 _MAX_PENDING = 1000
 _DISCOVERY_TTL_SECONDS = 3600
 _TIMEOUT = httpx.Timeout(10.0)
@@ -99,6 +100,8 @@ class _Pending:
     # Random value from the browser that started the sign-in, handed back with
     # the session so a session in a link from someone else is refused.
     browser: str = ""
+    # Set when an account that is already signed in links this identity.
+    link_user: str = ""
 
 
 @dataclass
@@ -132,6 +135,11 @@ class OidcClient:
         self._transport = transport
         self._pending: dict[str, _Pending] = {}
         self._discovery: dict[str, tuple[float, dict[str, Any]]] = {}
+        # Linking an identity to an existing account: a ticket (issued to the
+        # signed-in account) starts it, a result code (redeemed by that same
+        # account) finishes it. Both are single use and short-lived.
+        self._link_tickets: dict[str, tuple[str, float]] = {}
+        self._link_results: dict[str, tuple[str, Identity, float]] = {}
 
     def _http(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -164,7 +172,11 @@ class OidcClient:
         return document
 
     async def authorization_url(
-        self, settings: OidcSettings, redirect_uri: str, browser: str = ""
+        self,
+        settings: OidcSettings,
+        redirect_uri: str,
+        browser: str = "",
+        link_user: str = "",
     ) -> str:
         document = await self.discover(settings.issuer)
         now = time.time()
@@ -175,7 +187,7 @@ class OidcClient:
             del self._pending[next(iter(self._pending))]
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         self._pending[state] = _Pending(
-            verifier, nonce, redirect_uri, now + PENDING_TTL_SECONDS, browser
+            verifier, nonce, redirect_uri, now + PENDING_TTL_SECONDS, browser, link_user
         )
         challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
         query = urlencode(
@@ -202,6 +214,37 @@ class OidcClient:
         """The browser value the sign-in with this state started with."""
         pending = self._pending.get(state)
         return pending.browser if pending else ""
+
+    def link_user_for(self, state: str) -> str:
+        """The account this sign-in links an identity to, if it is a link."""
+        pending = self._pending.get(state)
+        return pending.link_user if pending else ""
+
+    def issue_link_ticket(self, user_id: str) -> str:
+        now = time.time()
+        self._link_tickets = {t: v for t, v in self._link_tickets.items() if v[1] > now}
+        ticket = secrets.token_urlsafe(24)
+        self._link_tickets[ticket] = (user_id, now + LINK_TTL_SECONDS)
+        return ticket
+
+    def redeem_link_ticket(self, ticket: str) -> str | None:
+        user_id, expires_at = self._link_tickets.pop(ticket, ("", 0.0))
+        return user_id if expires_at > time.time() else None
+
+    def store_link_result(self, user_id: str, identity: Identity) -> str:
+        now = time.time()
+        self._link_results = {c: v for c, v in self._link_results.items() if v[2] > now}
+        code = secrets.token_urlsafe(24)
+        self._link_results[code] = (user_id, identity, now + LINK_TTL_SECONDS)
+        return code
+
+    def redeem_link_result(self, code: str, user_id: str) -> Identity | None:
+        """The identity behind ``code``, only for the account that started it."""
+        owner, identity, expires_at = self._link_results.get(code, ("", None, 0.0))
+        if identity is None or expires_at <= time.time() or owner != user_id:
+            return None
+        del self._link_results[code]
+        return identity
 
     async def finish(self, settings: OidcSettings, code: str, state: str) -> Identity:
         pending = self._pending.pop(state, None)

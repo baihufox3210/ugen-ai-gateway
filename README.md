@@ -359,7 +359,14 @@ The sign-in screen then shows the button. The gateway uses the authorization
 code flow with PKCE, and checks the ID token's issuer, audience, nonce and
 expiry. Accounts are linked by the provider's subject identifier; usernames
 come from the provider's preferred username or email. An SSO account can set
-a password on the Account page to also sign in with it. The client secret is
+a password on the Account page to also sign in with it.
+
+**Linking an existing account**: on the **Account** page, *Link Google
+account* (or *Link single sign-on*) connects the provider to the account you
+are signed in to, so an administrator who registered with a password can then
+sign in with Google too. If that Google account already signed in here once,
+it created a separate account: delete that one on the **Users** page first.
+*Unlink* is available to accounts that also have a password. The client secret is
 encrypted like provider keys. Serve the gateway over HTTPS, and if a proxy
 changes the address the gateway sees, set the callback URL override under
 **Advanced**.
@@ -480,6 +487,8 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
   are highlighted and have a copy button; Markdown tables and LaTeX math
   (`$…$`, `$$…$$`) are rendered.
 - **Theme**: System, Light or Dark, on the Account page.
+- **Share** a conversation as a link or chat in it together; see
+  [Sharing](#sharing).
 
 ### Saved conversations
 
@@ -505,18 +514,50 @@ With accounts, each person's conversations are stored on the gateway:
 
 Without accounts (no database), conversations stay in the browser.
 
+### Sharing
+
+The **Share** button above a conversation offers two things:
+
+- **Share a link**: a snapshot of the messages and answers (not the
+  conversation's memory or routing details), opened with `/?share=<id>`.
+  Signed-in people who open it get **their own copy** in their conversation
+  list and continue it right away; you never see what they add, and they do
+  not see what you add later (opening the link again reopens their copy).
+  Choose who can open it: *people signed in here* (default) or *anyone with
+  the link* (people without an account can read it and sign in to continue).
+  *Update link* refreshes the snapshot under the same address and *Stop
+  sharing* turns it off.
+- **Chat together**: invite accounts by username. The conversation becomes a
+  shared chat that every member sees in their list (marked 👥) and can
+  continue; each message shows who sent it, and other members' messages
+  appear within a few seconds. Members' changes are merged message by message,
+  so two people writing at once do not overwrite each other. Requests are
+  analyzed, routed and counted against whoever sends them. The owner adds and
+  removes members; a member deleting it from the list leaves it, and the owner
+  deleting it deletes it for everyone. *Clear all* never touches shared chats.
+
+Snapshots and shared chats are encrypted like saved conversations. API:
+`POST /v1/ugen/shares` (`conversation`, `visibility`), `GET /v1/ugen/shares`,
+`GET`/`DELETE /v1/ugen/shares/{id}`; `POST /v1/ugen/shared-chats`
+(`conversation`, `members`), `PATCH /v1/ugen/shared-chats/{id}` (`add`,
+`remove`), `DELETE /v1/ugen/shared-chats/{id}`.
+
 ### Conversation memory
 
-Long conversations are not cut off. When a conversation's text passes about
-20,000 characters, the dashboard asks the gateway to fold the oldest turns
-into the conversation's **memory**: the local model writes down the facts,
-decisions, preferences, names and open tasks worth keeping, merged with the
-memory so far. Recent turns (about 10,000 characters, at least the last two)
-are sent as they are, and the memory is sent before them as a system message,
-so it is analyzed and redacted like any other text. The memory never leaves
-the local model while it is written, and is saved with the conversation. A
-marker in the conversation shows how many earlier messages it
-covers.
+Conversations keep their context without sending the whole history. The
+model receives the conversation's **memory** plus only the last two exchanges
+word for word. Once three more older exchanges have built up (or about 4,000
+characters of them), the dashboard asks the gateway to fold them into the
+memory: the local model writes down the facts, decisions, preferences, names
+and open tasks worth keeping, merged with the memory so far. So a request
+carries at most the memory and four exchanges, however long the conversation,
+and the summary is rewritten every few messages rather than on every one.
+Exchanges that are very long on their own are folded too.
+
+The memory is sent as a system message, so it is analyzed and redacted like
+any other text. It never leaves the local model while it is written, and is
+saved with the conversation. The full history stays visible in the
+conversation; a marker shows how many earlier messages the memory covers.
 
 ### Guards
 
@@ -603,7 +644,12 @@ and cached results never leave the process. `routing.analysis_source` and the
 Complexity is judged from the latest user message, so a short follow-up in a
 long conversation is not sent to the cloud just because of the history, while
 personal data is checked in every user and system message. Each message's
-analysis is cached, so earlier turns are not analyzed again.
+analysis is cached, so earlier turns are not analyzed again. When cached
+results have expired (for example after a break in a long conversation), the
+latest message is analyzed on its own while all the older ones share a single
+call that only looks for personal data, run alongside it: however long the
+conversation, a request needs at most two model calls, and the values found
+are cached per message again.
 
 The analysis model classifies each request. Moderate and complex tasks use the cloud
 provider when cloud routing is enabled. Strong complexity cues in the prompt,
@@ -698,17 +744,29 @@ only the value is replaced and the keyword stays readable. The analysis model
 can also report additional exact personal-data values, which are redacted from
 text message content. Matching works inside Chinese text without spaces.
 
-Names and places can optionally be detected with
-[Presidio](https://microsoft.github.io/presidio/) named-entity recognition:
+Names and places are also detected with
+[Presidio](https://microsoft.github.io/presidio/) named-entity recognition
+(spaCy models), so "王小明", "台北市" or "John Smith in Seattle" are redacted
+even when the analysis model misses them. The Docker image includes it for
+Chinese and English and turns it on (`PII_NER=presidio`,
+`PII_NER_LANGUAGE=zh,en`, `PII_NER_SPACY_MODEL=zh_core_web_sm,en_core_web_sm`):
+each language's model only runs on text in its script. Set `PII_NER=none` in
+`.env` to turn it off, or build with `--build-arg PII_NER=none` for an image
+about 300 MB smaller without it. The small models catch common names and
+places but not every one; the analysis model remains the main detector.
+Outside Docker:
 
 ```sh
 uv sync --extra ner
-uv run python -m spacy download zh_core_web_sm
+uv pip install https://github.com/explosion/spacy-models/releases/download/zh_core_web_sm-3.8.0/zh_core_web_sm-3.8.0-py3-none-any.whl \
+  https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 ```
 
-Then set `PII_NER=presidio` (`PII_NER_LANGUAGE`, default `zh`;
-`PII_NER_SPACY_MODEL`, default `zh_core_web_sm`; `PII_NER_SCORE_THRESHOLD`,
-default `0.5`).
+then set the three variables above (`PII_NER_SCORE_THRESHOLD`, default `0.5`,
+tunes how sure a match must be). The spaCy model takes milliseconds per scan, so with it on the
+gateway redacts input on a worker thread and checks streamed replies once per
+sentence (rather than per token), also on a worker thread; other requests keep
+streaming meanwhile. Replies then arrive a sentence at a time.
 
 Redaction is reversible. Each value is replaced with a numbered placeholder such
 as `[EMAIL_1]`; the same value gets the same placeholder across every message in

@@ -403,3 +403,97 @@ def test_sign_on_must_start_from_the_dashboard(monkeypatch) -> None:
     # Without the browser value (for example a link made by someone else).
     start = env.client.get("/v1/ugen/auth/oidc/start", follow_redirects=False)
     assert "sso_error=" in start.headers["location"]
+
+
+def _link(env: "SsoEnv", token: str) -> Any:
+    """Run a link from the Account page; return the completion response."""
+    ticket = env.client.post("/v1/ugen/auth/oidc/link", headers=bearer(token))
+    assert ticket.status_code == 200, ticket.text
+    start = env.client.get(
+        "/v1/ugen/auth/oidc/start",
+        params={"browser": BROWSER, "link": ticket.json()["ticket"]},
+        follow_redirects=False,
+    )
+    query = parse_qs(urlparse(start.headers["location"]).query)
+    env.provider.nonce = query["nonce"][0]
+    done = env.client.get(
+        "/v1/ugen/auth/oidc/callback",
+        params={"code": "good-code", "state": query["state"][0]},
+        follow_redirects=False,
+    )
+    result = parse_qs(urlparse(done.headers["location"]).fragment)
+    assert result["browser"] == [BROWSER] and "sso" not in result
+    return env.client.post(
+        "/v1/ugen/auth/oidc/link/complete",
+        json={"code": result["sso_link"][0]},
+        headers=bearer(token),
+    )
+
+
+def test_link_sso_to_an_existing_account(monkeypatch) -> None:
+    env = SsoEnv(monkeypatch)
+    admin = env.token("alice")
+    env.configure(admin, auto_create=False)
+    linked = _link(env, admin)
+    assert linked.status_code == 200, linked.text
+    assert linked.json()["sso"] is True and linked.json()["has_password"] is True
+
+    # Signing in with the provider now opens the existing account.
+    token = env.sign_in().removeprefix("sso=")
+    me = env.client.get("/v1/ugen/auth/me", headers=bearer(token)).json()
+    assert me["username"] == "alice" and me["is_admin"] is True
+
+    # Unlinking works because the account has a password.
+    unlinked = env.client.delete("/v1/ugen/auth/me/sso", headers=bearer(admin))
+    assert unlinked.status_code == 200 and unlinked.json()["sso"] is False
+    assert "No account" in unquote(env.sign_in())
+
+
+def test_link_refuses_an_identity_used_by_another_account(monkeypatch) -> None:
+    env = SsoEnv(monkeypatch)
+    admin = env.token("alice")
+    env.configure(admin)
+    env.sign_in()  # creates "dana" for the provider identity
+    taken = _link(env, admin)
+    assert taken.status_code == 409 and "'dana'" in taken.json()["detail"]
+
+
+def test_link_result_only_works_for_the_account_that_started_it(monkeypatch) -> None:
+    env = SsoEnv(monkeypatch)
+    admin = env.token("alice")
+    bob = env.token("bob")
+    env.configure(admin)
+    ticket = env.client.post("/v1/ugen/auth/oidc/link", headers=bearer(bob))
+    start = env.client.get(
+        "/v1/ugen/auth/oidc/start",
+        params={"browser": BROWSER, "link": ticket.json()["ticket"]},
+        follow_redirects=False,
+    )
+    query = parse_qs(urlparse(start.headers["location"]).query)
+    env.provider.nonce = query["nonce"][0]
+    done = env.client.get(
+        "/v1/ugen/auth/oidc/callback",
+        params={"code": "good-code", "state": query["state"][0]},
+        follow_redirects=False,
+    )
+    code = parse_qs(urlparse(done.headers["location"]).fragment)["sso_link"][0]
+    # Alice cannot redeem Bob's link, and tickets are single use.
+    stolen = env.client.post(
+        "/v1/ugen/auth/oidc/link/complete", json={"code": code}, headers=bearer(admin)
+    )
+    assert stolen.status_code == 400
+    reused = env.client.get(
+        "/v1/ugen/auth/oidc/start",
+        params={"browser": BROWSER, "link": ticket.json()["ticket"]},
+        follow_redirects=False,
+    )
+    assert "expired" in unquote(reused.headers["location"])
+
+
+def test_password_less_accounts_cannot_unlink(monkeypatch) -> None:
+    env = SsoEnv(monkeypatch)
+    admin = env.token("alice")
+    env.configure(admin)
+    token = env.sign_in().removeprefix("sso=")
+    refused = env.client.delete("/v1/ugen/auth/me/sso", headers=bearer(token))
+    assert refused.status_code == 409

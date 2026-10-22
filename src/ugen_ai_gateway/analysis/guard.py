@@ -1,11 +1,12 @@
 """Input and output guards: prompt-injection signals and personal data the model
 produced on its own."""
 
+import asyncio
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from ugen_ai_gateway.analysis.pii import find_personal_data
+from ugen_ai_gateway.analysis.pii import find_personal_data, has_slow_finders
 
 _INJECTION_SIGNALS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -80,6 +81,10 @@ def check_injection(texts: Iterable[str]) -> InjectionCheck:
 _BOUNDARY = re.compile(r"[\s，。、；：！？「」『』（）()]")
 # Spaced numbers (cards, phones) contain whitespace but are at most this long.
 _HOLD_BACK = 24
+# With slow detection, text is scanned at sentence ends or every this many
+# characters.
+_SENTENCE_END = re.compile(r"[.!?。！？\n]")
+_SLOW_SCAN_CHARACTERS = 400
 
 
 def _comparable(value: str) -> str:
@@ -111,6 +116,36 @@ class OutputGuard:
         self._redact = redact
         self._pending = ""
         self.findings: list[str] = []
+        # With named-entity recognition, each scan takes milliseconds: scan
+        # once per sentence rather than per token, on a worker thread.
+        self._slow = has_slow_finders()
+
+    async def feed_async(self, text: str) -> str:
+        """``feed`` without blocking the event loop when detection is slow."""
+        if not self._slow:
+            return self.feed(text)
+        self._pending += text
+        if not self._sentence_ready():
+            return ""
+        return await asyncio.to_thread(self.feed, "")
+
+    async def flush_async(self) -> str:
+        if not self._slow:
+            return self.flush()
+        return await asyncio.to_thread(self.flush)
+
+    async def check_async(self, text: str) -> str:
+        if not self._slow:
+            return self.check(text)
+        return await asyncio.to_thread(self.check, text)
+
+    def _sentence_ready(self) -> bool:
+        """Enough held text for a slow scan: a sentence end before the
+        hold-back, or a long stretch without one."""
+        body = self._pending[: max(0, len(self._pending) - _HOLD_BACK)]
+        return len(self._pending) >= _SLOW_SCAN_CHARACTERS or bool(
+            _SENTENCE_END.search(body)
+        )
 
     def check(self, text: str) -> str:
         """Process a complete text at once."""

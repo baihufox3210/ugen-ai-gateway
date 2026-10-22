@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
 import type { User } from '../api';
 import { copyText } from '../clipboard';
-import type { ConversationMemory, ConversationTurn } from '../types';
+import type { ConversationMemory, ConversationTurn, SharedInfo } from '../types';
 import Avatar from './Avatar';
 
 // The Markdown and LaTeX renderer is large, so it loads with the first reply instead of the page.
@@ -30,9 +30,13 @@ type Props = {
   onExport: (format: 'markdown' | 'json') => void;
   /** Who sees the first-run guide when no model is set up yet. */
   setup: 'admin' | 'member' | null; onOpenModels: () => void;
+  /** Set for a shared chat. */
+  shared?: SharedInfo;
+  /** Opens sharing; absent without an account. */
+  onShare?: () => void;
 };
 
-function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, onFeedback, onDeleteTurn, onRegenerate, onEdit, onExport, setup, onOpenModels }: Props) {
+function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, onFeedback, onDeleteTurn, onRegenerate, onEdit, onExport, setup, onOpenModels, shared, onShare }: Props) {
   const threadRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<{ turnId: string; text: string } | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -44,11 +48,15 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
     if (threadRef.current && followRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
   }, [turns.length, turns.at(-1)?.result?.content, streamingText]);
   const hasTurns = turns.length > 0;
+  // In a shared chat, messages from other members show their name.
+  const otherAuthor = (turn: ConversationTurn) => shared && turn.author && turn.author.toLowerCase() !== user?.username.toLowerCase() ? turn.author : null;
 
   return <article className="panel response-panel">
     <div className="panel-heading">
       <div><span className="eyebrow">02 / CONVERSATION</span><h2><span className="channel-hash">#</span> Conversation</h2><p>Context is kept, so you can keep asking follow-ups.</p></div>
       <span className="panel-tools">
+        {shared && <button className="shared-badge" onClick={onShare} title={`Shared chat: ${shared.members.join(', ')}`}>👥 {shared.members.length}</button>}
+        {hasTurns && onShare && !shared && <button className="text-action share-button" onClick={onShare}>Share</button>}
         {hasTurns && <details className="export-menu">
           <summary>Export</summary>
           <div role="menu"><button role="menuitem" onClick={event => { onExport('markdown'); event.currentTarget.closest('details')?.removeAttribute('open'); }}>Markdown (.md)</button>
@@ -72,8 +80,9 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
           {memoryOpen && <div className="memory-text"><Markdown text={memory.text}/></div>}
         </div>}
         <article className="chat-message user-message">
-          {user ? <Avatar user={user} className="message-avatar user-avatar"/> : <span className="message-avatar user-avatar">You</span>}
-          <div className="message-body"><div className="message-author"><b>You</b>
+          {otherAuthor(turn) ? <span className="message-avatar user-avatar">{otherAuthor(turn)!.slice(0, 1).toUpperCase()}</span>
+            : user ? <Avatar user={user} className="message-avatar user-avatar"/> : <span className="message-avatar user-avatar">You</span>}
+          <div className="message-body"><div className="message-author"><b className={otherAuthor(turn) ? 'turn-author' : undefined}>{otherAuthor(turn) ?? 'You'}</b>
             {!isEditing && <span className="message-actions">
               <CopyButton text={turn.user}/>
               <button className="message-action" onClick={() => setEditing({ turnId: turn.id, text: turn.user })} disabled={busy} title="Edit and send again">Edit</button>

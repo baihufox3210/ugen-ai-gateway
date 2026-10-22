@@ -80,3 +80,32 @@ def test_missing_presidio_gives_an_install_hint(monkeypatch) -> None:
 
     with pytest.raises(GatewayConfigurationError, match="--extra ner"):
         ner.build_presidio_finder(language="en", spacy_model="m", score_threshold=0.5)
+
+
+def test_several_languages_run_only_on_their_script(fake_presidio: Any) -> None:
+    find = ner.build_presidio_finder(
+        language="zh,en",
+        spacy_model="zh_core_web_sm,en_core_web_sm",
+        score_threshold=0.5,
+    )
+    assert fake_presidio["nlp_configuration"]["models"] == [
+        {"lang_code": "zh", "model_name": "zh_core_web_sm"},
+        {"lang_code": "en", "model_name": "en_core_web_sm"},
+    ]
+    engine = fake_presidio["engine"]
+
+    find("王小明住在台北")
+    assert [call["language"] for call in engine.calls] == ["zh"]
+    engine.calls.clear()
+    find("王小明 met Alex in 台北")
+    assert [call["language"] for call in engine.calls] == ["zh", "en"]
+    engine.calls.clear()
+    find("just English here")
+    assert [call["language"] for call in engine.calls] == ["en"]
+
+
+def test_language_and_model_lists_must_match(fake_presidio: Any) -> None:
+    with pytest.raises(GatewayConfigurationError, match="same number"):
+        ner.build_presidio_finder(
+            language="zh,en", spacy_model="zh_core_web_sm", score_threshold=0.5
+        )

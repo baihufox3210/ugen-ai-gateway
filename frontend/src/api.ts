@@ -13,10 +13,19 @@ const SSO_BROWSER_STORAGE = 'ugen-sso-browser';
 /** Start single sign-on: the gateway sends the browser to the identity
  * provider. A random value kept in this tab must come back with the session,
  * so a session handed over in someone else's link is refused. */
-export function startSso(): void {
+export function startSso(linkTicket?: string): void {
   const value = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
   try { sessionStorage.setItem(SSO_BROWSER_STORAGE, value); } catch { /* the result will be refused; nothing else to do */ }
-  window.location.assign(`${apiUrl}/v1/ugen/auth/oidc/start?browser=${value}`);
+  const link = linkTicket ? `&link=${encodeURIComponent(linkTicket)}` : '';
+  window.location.assign(`${apiUrl}/v1/ugen/auth/oidc/start?browser=${value}${link}`);
+}
+
+/** Link single sign-on to the signed-in account: get a ticket, then sign in. */
+export async function startSsoLink(): Promise<string | null> {
+  const response = await apiFetch('/v1/ugen/auth/oidc/link', { method: 'POST' });
+  if (!response.ok) return errorMessage(response);
+  startSso((await response.json() as { ticket: string }).ticket);
+  return null;
 }
 
 /** The value startSso kept, once. */

@@ -12,7 +12,11 @@ from openai.types.chat import ChatCompletionMessageParam
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.cache import AnalysisCache
 from ugen_ai_gateway.analysis.guard import OutputGuard, check_injection
-from ugen_ai_gateway.analysis.pii import find_personal_data, supported_types
+from ugen_ai_gateway.analysis.pii import (
+    find_personal_data,
+    has_slow_finders,
+    supported_types,
+)
 from ugen_ai_gateway.analysis.policy import RoutingPolicy
 from ugen_ai_gateway.analysis.prompts import MEMORY_SYSTEM_PROMPT
 from ugen_ai_gateway.analysis.redaction import (
@@ -427,7 +431,14 @@ class GatewayService:
         record.personal_data_types = list(analysis.personal_data_types)
         record.analysis_ms = analysis_ms
 
-        prepared = self._prepare(request, analysis, analysis_ms)
+        # Redaction scans every message; slow detection (NER) runs off the
+        # event loop so other requests keep streaming meanwhile.
+        if has_slow_finders():
+            prepared = await asyncio.to_thread(
+                self._prepare, request, analysis, analysis_ms
+            )
+        else:
+            prepared = self._prepare(request, analysis, analysis_ms)
         if force_local and prepared.route.rule != "privacy.never_cloud":
             reason, rule = force_local
             prepared.route = replace(prepared.route, reason=reason, rule=rule)
@@ -653,13 +664,13 @@ class GatewayService:
                         if text and restorer is not None:
                             text = restorer.feed(text)
                         if text and guard is not None:
-                            text = guard.feed(text)
+                            text = await guard.feed_async(text)
                         if text:
                             parts.append(text)
                             yield GatewayEvent("delta", {"content": text})
                 rest = restorer.flush() if restorer is not None else ""
                 if guard is not None:
-                    rest = guard.feed(rest) + guard.flush()
+                    rest = await guard.feed_async(rest) + await guard.flush_async()
                 if rest:
                     parts.append(rest)
                     yield GatewayEvent("delta", {"content": rest})
@@ -686,7 +697,7 @@ class GatewayService:
         if restore:
             content = prepared.vault.restore(content)  # type: ignore[union-attr]
         if guard is not None:
-            content = guard.check(content)
+            content = await guard.check_async(content)
         yield _Generated(
             content,
             completion.model,
@@ -828,17 +839,31 @@ class GatewayService:
                 results[text] = cached
             else:
                 missing.append(text)
+        # Hybrid: the latest message gets its own full analysis; older
+        # messages whose cached result expired only need their personal data,
+        # so they share one call, run alongside it. A long conversation costs
+        # at most two model calls however many messages it has.
+        latest_missing = latest in missing
+        older = [text for text in missing if text != latest]
+        calls = []
+        if latest_missing:
+            calls.append(self._analyzer.analyze(latest))
+        if older:
+            calls.append(self._analyzer.analyze(ANALYSIS_BATCH_SEPARATOR.join(older)))
         try:
-            fresh = await asyncio.gather(
-                *(self._analyzer.analyze(text) for text in missing)
-            )
+            fresh = await asyncio.gather(*calls)
         except TimeoutError as exc:
             raise ProviderTimeout("Analysis provider timed out") from exc
         except Exception as exc:
             raise ProviderRequestError(f"Request analysis failed: {exc}") from exc
-        for text, result in zip(missing, fresh, strict=True):
-            self._analysis_cache.put(text, result)
-            results[text] = result
+        if latest_missing:
+            results[latest] = fresh[0]
+            self._analysis_cache.put(latest, fresh[0])
+        if older:
+            for text in older:
+                result = _share_of_batch(text, fresh[-1])
+                results[text] = result
+                self._analysis_cache.put(text, result)
         source = "llm" if missing else "cache"
 
         analysis = _merge(results[latest], list(results.values()))
@@ -965,6 +990,41 @@ def _analysis_texts(messages: list[ChatCompletionMessageParam]) -> list[str]:
     (conversation memory). Assistant replies only repeat what users wrote."""
     return _message_texts(
         [message for message in messages if message["role"] in ("user", "system")]
+    )
+
+
+# Joins older messages analyzed together; analysis only reports values found
+# in the text, so nothing can match across the join.
+ANALYSIS_BATCH_SEPARATOR = "\n\n-----\n\n"
+
+
+def _share_of_batch(text: str, batch: RequestAnalysis) -> RequestAnalysis:
+    """One message's part of a combined analysis: the reported values that
+    occur in it, with the batch's types when it has any (plus what the rules
+    find in it on their own)."""
+    rules = rule_analysis(text)
+    values = [value for value in batch.personal_data_values if value in text]
+    # Personal data reported without values cannot be traced to a message, so
+    # every message in the batch keeps it (and the request stays redactable
+    # only if the values were found some other way).
+    unplaced = batch.contains_personal_data and not batch.personal_data_values
+    types = list(
+        dict.fromkeys(
+            [
+                *(batch.personal_data_types if values or unplaced else []),
+                *rules.personal_data_types,
+            ]
+        )
+    )
+    return rules.model_copy(
+        update={
+            "contains_personal_data": bool(values or types or unplaced),
+            "personal_data_types": types,
+            "personal_data_values": list(
+                dict.fromkeys([*values, *rules.personal_data_values])
+            ),
+            "usage": None,
+        }
     )
 
 

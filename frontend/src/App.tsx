@@ -4,6 +4,9 @@ import MonitorPanel from './components/MonitorPanel';
 import RequestFlow from './components/RequestFlow';
 import ResponsePanel from './components/ResponsePanel';
 import SettingsDialog, { type SettingsPage } from './components/SettingsDialog';
+import Footer from './components/Footer';
+import ShareDialog from './components/ShareDialog';
+import { IMPORT_STORAGE } from './components/SharedView';
 import Sidebar from './components/Sidebar';
 import { apiFetch, errorMessage, type User } from './api';
 import { forgetLocalHistory, useConversations } from './conversationStore';
@@ -30,9 +33,10 @@ function loadProviderSelection(): ProviderSelection {
   } catch { return 'auto'; }
 }
 
-type Props = { user: User | null; onSignOut: () => void; onAccountDeleted: () => void; onUserChange: (user: User) => void };
+type Notice = { ok: boolean; message: string };
+type Props = { user: User | null; onSignOut: () => void; onAccountDeleted: () => void; onUserChange: (user: User) => void; notice?: Notice | null; onDismissNotice?: () => void };
 
-function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
+function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismissNotice }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -54,7 +58,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [providerSelection, setProviderSelection] = useState<ProviderSelection>(loadProviderSelection);
   const busy = !['idle', 'complete', 'failed'].includes(phase);
-  const { conversations, setConversations, status: syncStatus, syncError, flush } = useConversations(user, busy);
+  const { conversations, setConversations, status: syncStatus, syncError, flush, refreshNow } = useConversations(user, busy);
+  const [shareOpen, setShareOpen] = useState(false);
   const activeConversation = conversations.find(item => item.id === activeId) ?? null;
   const turns = activeConversation?.turns ?? [];
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
@@ -63,6 +68,27 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { try { localStorage.setItem(PROVIDER_SELECTION_KEY, providerSelection); } catch { /* selection simply resets next visit */ } }, [providerSelection]);
+  // A copy of someone's share link to continue, added once history has
+  // loaded so opening the same link again reuses the earlier copy.
+  const [pendingCopy] = useState<Conversation | null>(() => {
+    try {
+      const stored = sessionStorage.getItem(IMPORT_STORAGE);
+      sessionStorage.removeItem(IMPORT_STORAGE);
+      const copy = stored ? JSON.parse(stored) as Conversation : null;
+      return copy?.id && Array.isArray(copy.turns) ? copy : null;
+    } catch { return null; }
+  });
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const copyHandled = useRef(false);
+  useEffect(() => {
+    if (!pendingCopy || copyHandled.current || syncStatus === 'loading') return;
+    copyHandled.current = true;
+    const earlier = conversations.find(item => item.sharedFrom && item.sharedFrom.id === pendingCopy.sharedFrom?.id);
+    if (earlier) { selectConversation(earlier.id); setCopyNotice('You already have a copy of this conversation; it is open below.'); return; }
+    setConversations(current => [pendingCopy, ...current]);
+    setActiveId(pendingCopy.id); setPhase(pendingCopy.turns.at(-1)?.result ? 'complete' : 'idle');
+    setCopyNotice(`This is your own copy of ${pendingCopy.sharedFrom?.owner ?? 'a shared'}’s conversation. Continue it below; ${pendingCopy.sharedFrom?.owner ?? 'they'} will not see what you add.`);
+  }, [pendingCopy, syncStatus, conversations]);
   useEffect(() => {
     let active = true;
     const loadModels = async () => {
@@ -115,10 +141,14 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
     setProvider(latest ? latest.provider === 'cloud' ? 'cloud' : 'local' : null); setModel(latest?.model ?? '');
     setPii(latest ? piiFromResult(latest) : null); setAnalysisSource(latest?.routing.analysis_source ?? null); setFallbackFrom(latest?.routing.fallback_from ?? null); setInjectionSignals(latest?.routing.injection_signals ?? []);
   }
+  const deletingShared = deleteAction && deleteAction.type !== 'all' ? conversations.find(item => item.id === deleteAction.conversationId)?.shared : undefined;
+
   function performDelete() {
     if (!deleteAction || busy) return;
     if (deleteAction.type === 'all') {
-      setConversations([]); restoreConversation(undefined);
+      // Shared chats stay: clearing your history never deletes them for others.
+      const kept = conversations.filter(item => item.shared);
+      setConversations(kept); restoreConversation(kept[0]);
     } else if (deleteAction.type === 'conversation') {
       const remaining = conversations.filter(item => item.id !== deleteAction.conversationId);
       setConversations(remaining);
@@ -127,7 +157,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       const target = conversations.find(item => item.id === deleteAction.conversationId);
       if (target) {
         const turnsAfterDelete = target.turns.filter(turn => turn.id !== deleteAction.turnId);
-        if (turnsAfterDelete.length) {
+        // A shared chat stays even when empty; leaving it is a separate step.
+        if (turnsAfterDelete.length || target.shared) {
           const updated = { ...target, turns: turnsAfterDelete, updatedAt: Date.now() };
           setConversations(current => current.map(item => item.id === target.id ? updated : item));
           if (activeId === target.id) restoreConversation(updated);
@@ -178,7 +209,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
     const keptTurns = replaceFrom === undefined ? base.turns : base.turns.slice(0, replaceFrom);
     // Editing a turn that is already in memory makes that memory stale.
     let conversation: Conversation = { ...base, turns: keptTurns, memory: base.memory && base.memory.coveredTurns <= keptTurns.length ? base.memory : undefined };
-    const turn: ConversationTurn = { id: turnId, user: userText };
+    const turn: ConversationTurn = { id: turnId, user: userText, ...(base.shared && user ? { author: user.username } : {}) };
     const save = (next: Conversation) => setConversations(current => [{ ...next, updatedAt: Date.now() }, ...current.filter(item => item.id !== conversationId)]);
 
     save({ ...conversation, turns: [...keptTurns, turn] });
@@ -293,12 +324,23 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>Chat{turns.length > 0 && <small>{turns.length}</small>}</button>
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
-    <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section></main>
-    <section className="chat-column"><ResponsePanel setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
+    <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section><Footer/></main>
+    <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
     {settingsPage && <SettingsDialog user={user} page={settingsPage} onPageChange={setSettingsPage} onUserChange={onUserChange} onSignOut={() => void flush().finally(onSignOut)} onClose={() => setSettingsPage(null)} onModelsSaved={() => setModelsVersion(version => version + 1)}
       onAccountDeleted={() => { forgetLocalHistory(user); onAccountDeleted(); }}/>}
-    {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all'
-      ? user ? 'Every conversation in your account will be permanently deleted, on every device.' : 'Every conversation saved on this device will be permanently deleted.'
+    {shareOpen && activeConversation && user && <ShareDialog conversation={activeConversation} user={user} onClose={() => setShareOpen(false)}
+      onSharedChat={chatId => {
+        // The shared chat replaces this conversation in everyone's list.
+        setConversations(current => current.filter(item => item.id !== activeConversation.id));
+        setActiveId(chatId); setShareOpen(false);
+        void refreshNow();
+      }}
+      onMembershipChanged={() => void refreshNow()}/>}
+    {notice && <div className={`toast ${notice.ok ? 'ok' : 'error'}`} role="status"><span>{notice.message}</span><button className="icon-button" onClick={onDismissNotice} aria-label="Dismiss">×</button></div>}
+    {!notice && copyNotice && <div className="toast ok" role="status"><span>{copyNotice}</span><button className="icon-button" onClick={() => setCopyNotice(null)} aria-label="Dismiss">×</button></div>}
+    {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : deletingShared ? deletingShared.role === 'owner' ? 'Delete this shared chat for everyone?' : 'Leave this shared chat?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all'
+      ? user ? 'Every conversation in your account will be permanently deleted, on every device. Shared chats are kept.' : 'Every conversation saved on this device will be permanently deleted.'
+      : deletingShared && deleteAction.type === 'conversation' ? deletingShared.role === 'owner' ? `It is removed for ${deletingShared.members.length - 1} other member(s) too.` : 'It disappears from your list; the others keep it.'
       : user ? 'This removes it from your history on every device.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}
   </div>;
 }

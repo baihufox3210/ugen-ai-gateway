@@ -53,7 +53,7 @@ function Sidebar({ conversations, syncStatus, syncError, activeId, busy, onNew, 
                   onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setRenaming(null); } }}/>
               </form>
             : <button className="history-select" title={conversation.title} onClick={() => onSelect(conversation.id)} onDoubleClick={() => setRenaming({ id: conversation.id, title: conversation.title })} disabled={busy}>
-                <span className="history-icon">▤</span><span className="history-copy"><b>{conversation.title}</b><small>{messages} {messages === 1 ? 'message' : 'messages'}</small></span>
+                <span className={`history-icon ${conversation.shared ? 'shared' : ''}`} title={conversation.shared ? `Shared with ${conversation.shared.members.join(', ')}` : undefined}>{conversation.shared ? '👥' : '▤'}</span><span className="history-copy"><b>{conversation.title}</b><small>{messages} {messages === 1 ? 'message' : 'messages'}</small></span>
               </button>}
           <button className="icon-button history-rename-button" aria-label={`Rename conversation: ${conversation.title}`} title="Rename" onClick={() => setRenaming({ id: conversation.id, title: conversation.title })} disabled={busy}>✎</button>
           <button className="icon-button history-delete" aria-label={`Delete conversation: ${conversation.title}`} title="Delete conversation" onClick={() => onDelete(conversation.id)} disabled={busy}>×</button>

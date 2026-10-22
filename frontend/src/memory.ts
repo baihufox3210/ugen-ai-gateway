@@ -1,14 +1,17 @@
 import type { Conversation, ConversationTurn } from './types';
 
-// When the text sent for a conversation passes MEMORY_TRIGGER characters, the
-// oldest turns are folded into the conversation's memory until about
-// KEEP_RECENT characters of recent turns remain (at least MIN_RECENT_TURNS).
-// The gateway's request limit is 32,000 characters.
-export const MEMORY_TRIGGER = 20_000;
-const KEEP_RECENT = 10_000;
-const MIN_RECENT_TURNS = 2;
-// Recent turns are folded too when they alone would exceed the request limit.
-const HARD_LIMIT = 28_000;
+// The model sees the conversation's memory plus only the last few exchanges.
+// Older exchanges are folded into the memory (a summary written by the local
+// model) a few at a time, so the summary is not rewritten on every message.
+// KEEP_RECENT_TURNS exchanges are always sent word for word; once
+// FOLD_BATCH_TURNS more older ones have built up (or FOLD_BATCH_CHARS of
+// text), they are folded together.
+const KEEP_RECENT_TURNS = 2;
+const FOLD_BATCH_TURNS = 3;
+const FOLD_BATCH_CHARS = 4_000;
+// Recent exchanges are folded too when they alone would exceed this; the
+// gateway's request limit is 32,000 characters.
+const HARD_LIMIT = 12_000;
 // Text folded per memory update, below the endpoint's limit.
 export const FOLD_CHUNK = 40_000;
 
@@ -26,14 +29,15 @@ export const size = (turn: ConversationTurn) => turn.user.length + (turn.result?
 /** The turns to fold into memory before sending, as [from, to), or null. */
 export function turnsToRemember(conversation: Conversation, pending: ConversationTurn): [number, number] | null {
   const from = conversation.memory?.coveredTurns ?? 0;
-  const turns = [...conversation.turns.slice(from), pending];
-  const total = turns.reduce((sum, turn) => sum + size(turn), conversation.memory?.text.length ?? 0);
-  if (total <= MEMORY_TRIGGER) return null;
+  const count = conversation.turns.length;
+  const keepFrom = Math.max(from, count - KEEP_RECENT_TURNS);
+  const older = conversation.turns.slice(from, keepFrom);
+  const olderChars = older.reduce((sum, turn) => sum + size(turn), 0);
   let to = from;
-  let remaining = total - (conversation.memory?.text.length ?? 0);
-  // Never fold the turn being sent, and keep a few recent completed turns.
-  const last = conversation.turns.length - MIN_RECENT_TURNS;
-  while (to < conversation.turns.length && (remaining > HARD_LIMIT || (to < last && remaining > KEEP_RECENT))) {
+  if (older.length >= FOLD_BATCH_TURNS || olderChars >= FOLD_BATCH_CHARS) to = keepFrom;
+  // Never fold the turn being sent; fold recent ones only when they are huge.
+  let remaining = conversation.turns.slice(to).reduce((sum, turn) => sum + size(turn), size(pending));
+  while (to < count && remaining > HARD_LIMIT) {
     remaining -= size(conversation.turns[to]);
     to += 1;
   }
