@@ -82,12 +82,12 @@ function ShareDialog({ conversation, user, onClose, onSharedChat, onMembershipCh
 
       <div className="settings-section first">
         <h3>Share a link</h3>
-        <p>A read-only copy of the messages and answers as they are when you create or update the link. The conversation’s memory and routing details are not included.</p>
+        <p>People who open the link get their own copy of the messages and answers, as they are when you create or update it, and can continue it. You will not see what they add, and they will not see what you add later. The conversation’s memory and routing details are not included.</p>
         <div className="segmented share-visibility" role="radiogroup" aria-label="Who can open the link">
           <button type="button" role="radio" aria-checked={visibility === 'accounts'} className={visibility === 'accounts' ? 'selected' : ''} onClick={() => { setVisibility('accounts'); if (share) void saveLink('accounts'); }}>People signed in here</button>
           <button type="button" role="radio" aria-checked={visibility === 'public'} className={visibility === 'public' ? 'selected' : ''} onClick={() => { setVisibility('public'); if (share) void saveLink('public'); }}>Anyone with the link</button>
         </div>
-        {visibility === 'public' && <small className="settings-hint">Anyone who gets the link can read it without signing in. Check the conversation for personal data first.</small>}
+        {visibility === 'public' && <small className="settings-hint">Anyone who gets the link can read it without signing in (continuing it needs an account here). Check the conversation for personal data first.</small>}
         {share === undefined ? <p>Loading…</p> : share
           ? <>
               <div className="callback-row"><code>{shareUrl(share.id)}</code>

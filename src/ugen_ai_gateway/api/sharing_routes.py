@@ -1,10 +1,11 @@
-"""Sharing conversations: read-only links, and shared chats several accounts
-take part in.
+"""Sharing conversations: links others continue on their own, and shared
+chats several accounts take part in.
 
 A share link holds a snapshot of a conversation's messages and answers
 (without its memory or routing details), encrypted like saved conversations.
 It opens for people signed in to this gateway, or, if its owner chooses, for
-anyone with the link. A shared chat is one conversation that every member can
+anyone with the link; signed-in viewers continue it as their own copy, which
+its owner never sees. A shared chat is one conversation that every member can
 read and continue; see ``conversation_routes`` for how members' saves merge.
 """
 

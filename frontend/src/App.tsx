@@ -67,19 +67,27 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { try { localStorage.setItem(PROVIDER_SELECTION_KEY, providerSelection); } catch { /* selection simply resets next visit */ } }, [providerSelection]);
-  // A conversation copied from a share link ("Continue in my conversations").
-  useEffect(() => {
-    let copy: Conversation | null = null;
+  // A copy of someone's share link to continue, added once history has
+  // loaded so opening the same link again reuses the earlier copy.
+  const [pendingCopy] = useState<Conversation | null>(() => {
     try {
       const stored = sessionStorage.getItem(IMPORT_STORAGE);
       sessionStorage.removeItem(IMPORT_STORAGE);
-      copy = stored ? JSON.parse(stored) as Conversation : null;
-    } catch { copy = null; }
-    if (!copy?.id || !Array.isArray(copy.turns)) return;
-    const imported = copy;
-    setConversations(current => [imported, ...current.filter(item => item.id !== imported.id)]);
-    setActiveId(imported.id);
-  }, []);
+      const copy = stored ? JSON.parse(stored) as Conversation : null;
+      return copy?.id && Array.isArray(copy.turns) ? copy : null;
+    } catch { return null; }
+  });
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const copyHandled = useRef(false);
+  useEffect(() => {
+    if (!pendingCopy || copyHandled.current || syncStatus === 'loading') return;
+    copyHandled.current = true;
+    const earlier = conversations.find(item => item.sharedFrom && item.sharedFrom.id === pendingCopy.sharedFrom?.id);
+    if (earlier) { selectConversation(earlier.id); setCopyNotice('You already have a copy of this conversation; it is open below.'); return; }
+    setConversations(current => [pendingCopy, ...current]);
+    setActiveId(pendingCopy.id); setPhase(pendingCopy.turns.at(-1)?.result ? 'complete' : 'idle');
+    setCopyNotice(`This is your own copy of ${pendingCopy.sharedFrom?.owner ?? 'a shared'}’s conversation. Continue it below; ${pendingCopy.sharedFrom?.owner ?? 'they'} will not see what you add.`);
+  }, [pendingCopy, syncStatus, conversations]);
   useEffect(() => {
     let active = true;
     const loadModels = async () => {
@@ -328,6 +336,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       }}
       onMembershipChanged={() => void refreshNow()}/>}
     {notice && <div className={`toast ${notice.ok ? 'ok' : 'error'}`} role="status"><span>{notice.message}</span><button className="icon-button" onClick={onDismissNotice} aria-label="Dismiss">×</button></div>}
+    {!notice && copyNotice && <div className="toast ok" role="status"><span>{copyNotice}</span><button className="icon-button" onClick={() => setCopyNotice(null)} aria-label="Dismiss">×</button></div>}
     {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : deletingShared ? deletingShared.role === 'owner' ? 'Delete this shared chat for everyone?' : 'Leave this shared chat?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all'
       ? user ? 'Every conversation in your account will be permanently deleted, on every device. Shared chats are kept.' : 'Every conversation saved on this device will be permanently deleted.'
       : deletingShared && deleteAction.type === 'conversation' ? deletingShared.role === 'owner' ? `It is removed for ${deletingShared.members.length - 1} other member(s) too.` : 'It disappears from your list; the others keep it.'

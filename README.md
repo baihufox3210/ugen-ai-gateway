@@ -518,12 +518,15 @@ Without accounts (no database), conversations stay in the browser.
 
 The **Share** button above a conversation offers two things:
 
-- **Share a link**: a read-only snapshot of the messages and answers (not the
-  conversation's memory or routing details), opened with
-  `/?share=<id>`. Choose who can open it: *people signed in here* (default) or
-  *anyone with the link*. *Update link* refreshes the snapshot under the same
-  address and *Stop sharing* turns it off. Signed-in viewers can *Continue in my
-  conversations* to get their own copy.
+- **Share a link**: a snapshot of the messages and answers (not the
+  conversation's memory or routing details), opened with `/?share=<id>`.
+  Signed-in people who open it get **their own copy** in their conversation
+  list and continue it right away; you never see what they add, and they do
+  not see what you add later (opening the link again reopens their copy).
+  Choose who can open it: *people signed in here* (default) or *anyone with
+  the link* (people without an account can read it and sign in to continue).
+  *Update link* refreshes the snapshot under the same address and *Stop
+  sharing* turns it off.
 - **Chat together**: invite accounts by username. The conversation becomes a
   shared chat that every member sees in their list (marked 👥) and can
   continue; each message shows who sent it, and other members' messages
@@ -541,16 +544,20 @@ Snapshots and shared chats are encrypted like saved conversations. API:
 
 ### Conversation memory
 
-Long conversations are not cut off. When a conversation's text passes about
-20,000 characters, the dashboard asks the gateway to fold the oldest turns
-into the conversation's **memory**: the local model writes down the facts,
-decisions, preferences, names and open tasks worth keeping, merged with the
-memory so far. Recent turns (about 10,000 characters, at least the last two)
-are sent as they are, and the memory is sent before them as a system message,
-so it is analyzed and redacted like any other text. The memory never leaves
-the local model while it is written, and is saved with the conversation. A
-marker in the conversation shows how many earlier messages it
-covers.
+Conversations keep their context without sending the whole history. The
+model receives the conversation's **memory** plus only the last two exchanges
+word for word. Once three more older exchanges have built up (or about 4,000
+characters of them), the dashboard asks the gateway to fold them into the
+memory: the local model writes down the facts, decisions, preferences, names
+and open tasks worth keeping, merged with the memory so far. So a request
+carries at most the memory and four exchanges, however long the conversation,
+and the summary is rewritten every few messages rather than on every one.
+Exchanges that are very long on their own are folded too.
+
+The memory is sent as a system message, so it is analyzed and redacted like
+any other text. It never leaves the local model while it is written, and is
+saved with the conversation. The full history stays visible in the
+conversation; a marker shows how many earlier messages the memory covers.
 
 ### Guards
 
@@ -737,17 +744,26 @@ only the value is replaced and the keyword stays readable. The analysis model
 can also report additional exact personal-data values, which are redacted from
 text message content. Matching works inside Chinese text without spaces.
 
-Names and places can optionally be detected with
-[Presidio](https://microsoft.github.io/presidio/) named-entity recognition:
+Names and places are also detected with
+[Presidio](https://microsoft.github.io/presidio/) named-entity recognition
+(spaCy models), so "王小明", "台北市" or "John Smith in Seattle" are redacted
+even when the analysis model misses them. The Docker image includes it for
+Chinese and English and turns it on (`PII_NER=presidio`,
+`PII_NER_LANGUAGE=zh,en`, `PII_NER_SPACY_MODEL=zh_core_web_sm,en_core_web_sm`):
+each language's model only runs on text in its script. Set `PII_NER=none` in
+`.env` to turn it off, or build with `--build-arg PII_NER=none` for an image
+about 300 MB smaller without it. The small models catch common names and
+places but not every one; the analysis model remains the main detector.
+Outside Docker:
 
 ```sh
 uv sync --extra ner
-uv run python -m spacy download zh_core_web_sm
+uv pip install https://github.com/explosion/spacy-models/releases/download/zh_core_web_sm-3.8.0/zh_core_web_sm-3.8.0-py3-none-any.whl \
+  https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 ```
 
-Then set `PII_NER=presidio` (`PII_NER_LANGUAGE`, default `zh`;
-`PII_NER_SPACY_MODEL`, default `zh_core_web_sm`; `PII_NER_SCORE_THRESHOLD`,
-default `0.5`). The spaCy model takes milliseconds per scan, so with it on the
+then set the three variables above (`PII_NER_SCORE_THRESHOLD`, default `0.5`,
+tunes how sure a match must be). The spaCy model takes milliseconds per scan, so with it on the
 gateway redacts input on a worker thread and checks streamed replies once per
 sentence (rather than per token), also on a worker thread; other requests keep
 streaming meanwhile. Replies then arrive a sentence at a time.

@@ -13,9 +13,9 @@ export const IMPORT_STORAGE = 'ugen-import-conversation';
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
 const date = (seconds: number) => new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(seconds * 1000);
 
-function asConversation(shared: Shared): Conversation {
+function asConversation(shared: Shared, shareId: string): Conversation {
   return {
-    id: newId(), title: shared.title, updatedAt: Date.now(),
+    id: newId(), title: shared.title, updatedAt: Date.now(), sharedFrom: { id: shareId, owner: shared.owner },
     turns: shared.turns.map(turn => ({
       id: newId(), user: turn.user,
       ...(turn.answer ? { result: {
@@ -26,7 +26,9 @@ function asConversation(shared: Shared): Conversation {
   };
 }
 
-/** A conversation opened from a share link, read-only. */
+/** A conversation opened from a share link. Signed-in people get their own
+ * copy to continue right away (its author does not see what they add);
+ * others can read a public link and sign in to continue it. */
 function SharedView({ id, signedIn, onSignIn, onOpenApp }: { id: string; signedIn: boolean; onSignIn: () => void; onOpenApp: () => void }) {
   const [shared, setShared] = useState<Shared | null>(null);
   const [error, setError] = useState<{ message: string; signIn: boolean } | null>(null);
@@ -34,23 +36,28 @@ function SharedView({ id, signedIn, onSignIn, onOpenApp }: { id: string; signedI
   useEffect(() => {
     apiFetch(`/v1/ugen/shares/${encodeURIComponent(id)}`)
       .then(async response => {
-        if (response.ok) { setShared(await response.json() as Shared); return; }
+        if (response.ok) {
+          const data = await response.json() as Shared;
+          setShared(data);
+          // Straight into the viewer's own copy, unless it is their own link.
+          if (signedIn && !data.is_owner) continueCopy(data);
+          return;
+        }
         setError({ message: await errorMessage(response), signIn: response.status === 401 && !signedIn });
       })
       .catch(() => setError({ message: 'Cannot reach the gateway.', signIn: false }));
   }, [id, signedIn]);
 
-  function saveCopy() {
-    if (!shared) return;
-    try { sessionStorage.setItem(IMPORT_STORAGE, JSON.stringify(asConversation(shared))); } catch { /* nothing to carry over */ }
+  function continueCopy(data: Shared) {
+    try { sessionStorage.setItem(IMPORT_STORAGE, JSON.stringify(asConversation(data, id))); } catch { /* nothing to carry over */ }
     onOpenApp();
   }
 
   return <main className="shared-page">
     <header className="shared-header">
       <a className="brand" href={window.location.pathname} onClick={event => { event.preventDefault(); onOpenApp(); }}><span className="brand-mark"><svg viewBox="0 0 40 40" aria-hidden="true"><path className="brand-gate" d="M11 27V15a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v12"/><path className="brand-route" d="M20 30v-7m0 0-7-7m7 7 7-7"/><circle className="brand-node" cx="13" cy="16" r="2.3"/><circle className="brand-node" cx="27" cy="16" r="2.3"/><circle className="brand-core" cx="20" cy="30" r="2.2"/></svg></span><span>ugen<span className="brand-dot">.</span><small>AI GATEWAY</small></span></a>
-      {shared && signedIn && <button className="send-button" onClick={saveCopy}>Continue in my conversations</button>}
-      {!signedIn && <button className="cancel-button" onClick={onSignIn}>Sign in</button>}
+      {shared && signedIn && <button className="send-button" onClick={() => continueCopy(shared)}>Continue this conversation</button>}
+      {!signedIn && <button className="send-button" onClick={onSignIn}>Sign in to continue</button>}
     </header>
     <article className="shared-card">
       {error ? <div className="shared-empty"><b>{error.message}</b>{error.signIn && <button className="send-button" onClick={onSignIn}>Sign in to open it</button>}</div>
@@ -58,7 +65,8 @@ function SharedView({ id, signedIn, onSignIn, onOpenApp }: { id: string; signedI
         : <>
             <span className="eyebrow">SHARED CONVERSATION{shared.visibility === 'public' ? ' · PUBLIC LINK' : ''}</span>
             <h1>{shared.title}</h1>
-            <p className="shared-meta">Shared by {shared.owner}{shared.is_owner ? ' (you)' : ''} · {date(shared.updated_at)} · read-only</p>
+            <p className="shared-meta">Shared by {shared.owner}{shared.is_owner ? ' (you): people who open this link get their own copy to continue' : ''} · {date(shared.updated_at)}</p>
+            {!signedIn && <p className="shared-meta">Sign in to continue this conversation as your own; {shared.owner} will not see what you add.</p>}
             <div className="shared-thread">{shared.turns.map(turn => <section key={turn.id} className="shared-turn">
               <div className="shared-question"><b>{turn.author ?? shared.owner}</b><p>{turn.user}</p></div>
               {turn.answer && <div className="shared-answer"><b>UGen{turn.model ? ` · ${turn.provider === 'cloud' ? 'Cloud' : 'Local'}` : ''}{turn.stopped ? ' · stopped' : ''}</b>
