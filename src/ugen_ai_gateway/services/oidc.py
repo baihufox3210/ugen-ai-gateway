@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from ugen_ai_gateway.services.secret_box import SecretBox
 
 OIDC_SETTING = "oidc"
+GOOGLE_ISSUER = "https://accounts.google.com"
 CALLBACK_PATH = "/v1/ugen/auth/oidc/callback"
 # How long a sign-in may take between leaving for the provider and returning.
 PENDING_TTL_SECONDS = 600
@@ -61,6 +62,11 @@ class OidcSettings(BaseModel):
     def check_domains(cls, value: list[str]) -> list[str]:
         domains = [domain.strip().lower().lstrip("@") for domain in value]
         return [domain for domain in domains if domain]
+
+    @property
+    def provider(self) -> str:
+        """ "google" for Google accounts, otherwise "oidc"."""
+        return "google" if self.issuer == GOOGLE_ISSUER else "oidc"
 
     @property
     def ready(self) -> bool:
@@ -226,7 +232,11 @@ class OidcClient:
         claims = _claims(id_token)
         audience = claims.get("aud")
         audiences = audience if isinstance(audience, list) else [audience]
-        if str(claims.get("iss", "")).rstrip("/") != settings.issuer.rstrip("/"):
+        issuer = str(claims.get("iss", "")).rstrip("/")
+        # Google may name itself without the scheme in ID tokens.
+        if settings.provider == "google" and issuer == "accounts.google.com":
+            issuer = GOOGLE_ISSUER
+        if issuer != settings.issuer.rstrip("/"):
             raise OidcError("The ID token comes from a different issuer")
         if settings.client_id not in audiences:
             raise OidcError("The ID token was issued for a different application")

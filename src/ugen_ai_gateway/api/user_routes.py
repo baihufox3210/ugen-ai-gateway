@@ -131,7 +131,10 @@ async def save_gateway_settings(
 
 
 def _sso_view(request: Request, settings: OidcSettings) -> dict[str, Any]:
-    return settings.public_view() | {"callback_url": callback_url(request, settings)}
+    return settings.public_view() | {
+        "callback_url": callback_url(request, settings),
+        "provider": settings.provider,
+    }
 
 
 @router.get("/sso")

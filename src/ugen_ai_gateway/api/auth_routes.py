@@ -188,7 +188,9 @@ async def auth_status(store: UsageStoreDependency) -> dict[str, Any]:
         "has_users": has_users,
         # The first account can always be created, so the gateway gets an admin.
         "registration_open": registration_allowed(store) or not has_users,
-        "sso": {"label": sso.button_label} if sso.ready else None,
+        "sso": (
+            {"label": sso.button_label, "provider": sso.provider} if sso.ready else None
+        ),
     }
 
 

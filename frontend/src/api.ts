@@ -6,7 +6,7 @@ export const apiUrl = (import.meta.env.VITE_GATEWAY_URL || '/api').replace(/\/$/
 
 export type User = { id: string; username: string; is_admin: boolean; avatar?: string | null; sso?: boolean; has_password?: boolean; email?: string | null };
 export type Session = { token: string; user: User };
-export type AuthStatus = { accounts_enabled: boolean; has_users: boolean; registration_open: boolean; sso?: { label: string } | null };
+export type AuthStatus = { accounts_enabled: boolean; has_users: boolean; registration_open: boolean; sso?: { label: string; provider?: 'google' | 'oidc' } | null };
 
 /** Start single sign-on: the gateway sends the browser to the identity provider. */
 export const ssoStartUrl = () => `${apiUrl}/v1/ugen/auth/oidc/start`;

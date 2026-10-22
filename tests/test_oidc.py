@@ -29,15 +29,17 @@ class FakeProvider:
         self.claims: dict[str, Any] = {}
         self.nonce = ""
         self.token_form: dict[str, list[str]] = {}
+        self.issuer = ISSUER
+        self.token_issuer = ISSUER
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == "/.well-known/openid-configuration":
             return httpx.Response(
                 200,
                 json={
-                    "issuer": ISSUER,
-                    "authorization_endpoint": f"{ISSUER}/authorize",
-                    "token_endpoint": f"{ISSUER}/token",
+                    "issuer": self.issuer,
+                    "authorization_endpoint": f"{self.issuer}/authorize",
+                    "token_endpoint": f"{self.issuer}/token",
                 },
             )
         if request.url.path == "/token":
@@ -45,7 +47,7 @@ class FakeProvider:
             if self.token_form.get("code") != ["good-code"]:
                 return httpx.Response(400, json={"error": "invalid_grant"})
             claims = {
-                "iss": ISSUER,
+                "iss": self.token_issuer,
                 "aud": "ugen",
                 "nonce": self.nonce,
                 "exp": time.time() + 300,
@@ -84,7 +86,7 @@ class SsoEnv(AccountEnv):
         start = self.client.get("/v1/ugen/auth/oidc/start", follow_redirects=False)
         assert start.status_code == 302
         target = urlparse(start.headers["location"])
-        if target.netloc != "id.example.com":
+        if target.netloc not in ("id.example.com", "accounts.google.com"):
             return target.fragment
         query = parse_qs(target.query)
         self.provider.nonce = query["nonce"][0]
@@ -109,7 +111,8 @@ def test_sso_creates_an_account_and_signs_it_in(monkeypatch) -> None:
     assert saved.json()["callback_url"] == CALLBACK
     assert "shh" not in json.dumps(env.store.load_setting("oidc"))
     assert env.client.get("/v1/ugen/auth/status").json()["sso"] == {
-        "label": "Sign in with Corp"
+        "label": "Sign in with Corp",
+        "provider": "oidc",
     }
 
     start = env.client.get("/v1/ugen/auth/oidc/start", follow_redirects=False)
@@ -325,3 +328,27 @@ def test_first_account_can_come_from_sso(monkeypatch) -> None:
 )
 def test_username_from(hint: str, expected: str) -> None:
     assert username_from(hint) == expected
+
+
+def test_google_preset(monkeypatch) -> None:
+    env = SsoEnv(monkeypatch)
+    admin = env.token("alice")
+    env.provider.issuer = "https://accounts.google.com"
+    # Google may write its issuer without the scheme in ID tokens.
+    env.provider.token_issuer = "accounts.google.com"
+    saved = env.configure(
+        admin, issuer="https://accounts.google.com", button_label="Sign in with Google"
+    )
+    assert saved.json()["provider"] == "google"
+    assert env.client.get("/v1/ugen/auth/status").json()["sso"] == {
+        "label": "Sign in with Google",
+        "provider": "google",
+    }
+    token = env.sign_in().removeprefix("sso=")
+    assert env.client.get("/v1/ugen/auth/me", headers=bearer(token)).json()["sso"]
+
+    # Other providers must match exactly.
+    env.provider.issuer = env.provider.token_issuer = ISSUER
+    env.configure(admin, issuer=ISSUER)
+    env.provider.token_issuer = "id.example.com"
+    assert "different issuer" in unquote(env.sign_in())

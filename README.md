@@ -322,8 +322,27 @@ database, accounts are off and the dashboard opens without sign-in.
 
 ### Single sign-on
 
-People can sign in with any OpenID Connect provider: Google, Microsoft Entra
-ID, Okta, Keycloak, Authentik and others. On the **Users** page:
+People can sign in with Google, or with any OpenID Connect provider such as
+Microsoft Entra ID, Okta, Keycloak or Authentik.
+
+**Google**: on the **Users** page choose **Google** under *Single sign-on*,
+then:
+
+1. In [Google Cloud Console → APIs & Services →
+   Credentials](https://console.cloud.google.com/apis/credentials), set up the
+   OAuth consent screen if asked (*Internal* limits sign-in to your Google
+   Workspace; *External* allows any Google account, and while the app is in
+   testing only the test users you add).
+2. **Create credentials → OAuth client ID**, application type **Web
+   application**, and add the page's **Callback URL** (for example
+   `https://gateway.example.com/api/v1/ugen/auth/oidc/callback`) under
+   **Authorized redirect URIs**. Google requires `https://` except for
+   `localhost`.
+3. Paste the **Client ID** and **Client secret**, optionally limit sign-in to
+   your **email domains**, turn it on and save. The sign-in screen then shows
+   **Sign in with Google**.
+
+**Other providers**: choose **Other OpenID provider** on the **Users** page:
 
 1. Copy the **Callback URL** shown there and register it with your provider
    as a redirect URI of a new web application (OAuth client).

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { apiFetch, errorMessage } from '../api';
 import { copyText } from '../clipboard';
 
+const GOOGLE_ISSUER = 'https://accounts.google.com';
+
 type Sso = {
   enabled: boolean; issuer: string; client_id: string; client_secret_set: boolean; button_label: string;
   auto_create: boolean; allowed_domains: string[]; redirect_uri: string; callback_url: string;
@@ -22,6 +24,7 @@ function SsoSection() {
   const [status, setStatus] = useState<Status>(null);
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
+  const google = form?.issuer.trim().replace(/\/$/, '') === GOOGLE_ISSUER;
 
   useEffect(() => {
     apiFetch('/v1/ugen/sso')
@@ -59,16 +62,32 @@ function SsoSection() {
     if (result) setStatus(result);
   }
 
+  function choose(provider: 'google' | 'oidc') {
+    if (!form || (provider === 'google') === google) return;
+    set(provider === 'google' ? { issuer: GOOGLE_ISSUER, button_label: 'Sign in with Google' } : { issuer: '', button_label: 'Sign in with SSO' });
+  }
+
   const secretPlaceholder = form.clear_secret ? 'Secret will be removed' : saved.client_secret_set ? 'Saved. Type to replace' : 'From your provider (optional for public clients)';
   return <div className="settings-section sso-section">
     <div className="section-head"><h3>Single sign-on</h3>
       <label className="switch"><input type="checkbox" checked={form.enabled} onChange={event => set({ enabled: event.target.checked })}/><span aria-hidden="true"/>{form.enabled ? 'On' : 'Off'}</label>
     </div>
-    <p>Let people sign in with an OpenID Connect provider such as Google, Microsoft Entra ID, Okta, Keycloak or Authentik. Register the callback URL below with the provider, then copy its issuer URL and client credentials here.</p>
+    <div className="segmented sso-provider" role="radiogroup" aria-label="Sign-in provider">
+      <button type="button" role="radio" aria-checked={google} className={google ? 'selected' : ''} onClick={() => choose('google')}>Google</button>
+      <button type="button" role="radio" aria-checked={!google} className={!google ? 'selected' : ''} onClick={() => choose('oidc')}>Other OpenID provider</button>
+    </div>
+    {google
+      ? <ol className="sso-steps">
+          <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">Google Cloud Console → APIs &amp; Services → Credentials</a>. If asked, set up the OAuth consent screen first (<i>Internal</i> limits sign-in to your Google Workspace).</li>
+          <li><b>Create credentials → OAuth client ID</b>, application type <b>Web application</b>.</li>
+          <li>Under <b>Authorized redirect URIs</b>, add the callback URL below. Google needs an <code>https://</code> address (or <code>localhost</code>).</li>
+          <li>Copy the <b>Client ID</b> and <b>Client secret</b> here, turn single sign-on on and save.</li>
+        </ol>
+      : <p>Let people sign in with an OpenID Connect provider such as Microsoft Entra ID, Okta, Keycloak or Authentik. Register the callback URL below with the provider, then copy its issuer URL and client credentials here.</p>}
     <div className="callback-row"><span>Callback URL</span><code>{saved.callback_url}</code>
       <button type="button" className="text-action" onClick={async () => setCopied(await copyText(saved.callback_url))}>{copied ? 'Copied' : 'Copy'}</button></div>
     <div className="model-fields">
-      <label>Issuer URL<input value={form.issuer} onChange={event => set({ issuer: event.target.value })} placeholder="https://accounts.google.com" spellCheck={false}/></label>
+      {!google && <label>Issuer URL<input value={form.issuer} onChange={event => set({ issuer: event.target.value })} placeholder="https://login.microsoftonline.com/<tenant-id>/v2.0" spellCheck={false}/></label>}
       <label>Client ID<input value={form.client_id} onChange={event => set({ client_id: event.target.value })} spellCheck={false}/></label>
       <label>Client secret
         <span className="field-row">
@@ -76,9 +95,9 @@ function SsoSection() {
           {saved.client_secret_set && !form.clear_secret && !form.client_secret && <button type="button" className="text-action" onClick={() => set({ clear_secret: true })}>Remove</button>}
         </span>
       </label>
-      <label>Button label<input value={form.button_label} onChange={event => set({ button_label: event.target.value })} maxLength={40} placeholder="Sign in with SSO"/></label>
+      <label>Button label<input value={form.button_label} onChange={event => set({ button_label: event.target.value })} maxLength={40} placeholder={google ? 'Sign in with Google' : 'Sign in with SSO'}/></label>
       <label>Allowed email domains <small>Comma-separated; leave empty to allow anyone the provider signs in</small>
-        <input value={form.domains} onChange={event => set({ domains: event.target.value })} placeholder="example.com" spellCheck={false}/></label>
+        <input value={form.domains} onChange={event => set({ domains: event.target.value })} placeholder={google ? 'your-company.com (empty: any Google account)' : 'example.com'} spellCheck={false}/></label>
       <label className="check-row"><input type="checkbox" checked={form.auto_create} onChange={event => set({ auto_create: event.target.checked })}/> Create an account the first time someone signs in</label>
       <details className="advanced">
         <summary>Advanced</summary>

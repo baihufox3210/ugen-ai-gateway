@@ -702,3 +702,8 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .model-fields .advanced label{display:grid;gap:5px;margin-top:8px;color:#4f6a60;font-size:10px;font-weight:600}
 .model-fields .advanced label small{color:#8a9c95;font-weight:400}
 .sso-section .probe-row{margin-top:14px}
+.sso-logo{flex:none;width:16px;height:16px}
+.sso-provider{margin:4px 0 12px}
+.sso-steps{margin:0 0 12px;padding-left:18px;color:#5f776d;font-size:10.5px;line-height:1.7}
+.sso-steps a{color:#2f7a5f}
+.sso-steps code{font:10px var(--mono)}
