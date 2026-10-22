@@ -10,9 +10,14 @@ uncertain and left to the analysis model. A short follow-up ("第二點再詳細
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 Complexity = Literal["simple", "moderate", "complex"]
+
+# Labeled requests for checking the rules (tests) and the analysis model
+# (python -m ugen_ai_gateway.cli check-routing).
+CASES_FILE = Path(__file__).with_name("complexity_cases.json")
 
 
 @dataclass(frozen=True)
@@ -76,7 +81,8 @@ _LIGHT_TASK = _any(
 _COMPOSITION = _any(
     r"\b(?:e-?mail|letter|cover letter|report|essay|article|proposal|speech|"
     r"announcement|press release|blog post|resume|cv)\b|"
-    r"一封|信件|求職信|自傳|履歷|報告|文章|企劃|提案|講稿|演講稿|公告|新聞稿|心得|讀書心得",
+    r"一封|信件|求職信|自傳|履歷|報告|文章|企劃|提案|講稿|演講稿|公告|新聞稿|心得|讀書心得|"
+    r"文案|貼文|廣告|宣傳|介紹|簡介|\b(?:post|copy|ad|ads|product description|bio)\b",
 )
 # Asking what something is: simple even when the topic is not.
 # A definition question that also asks for more ("…並舉例說明").
@@ -89,6 +95,8 @@ _DEFINITION = _any(
     r"^\s*(?:what(?:'s| is| are| does)|who (?:is|was)|define|meaning of)\b(?!.*"
     r"\b(?:difference|between|compare|versus|vs\.?)\b)",
     r"^\s*(?:什麼是|甚麼是|何謂|請問什麼是)",
+    r"(?:由來|起源|典故|怎麼來的|字源|縮寫)",
+    r"\b(?:origin|etymology|stands? for|abbreviation)\b",
     r"(?:是什麼|是甚麼|是誰|的意思|什麼意思|甚麼意思|的定義)\s*[?？。!！]*\s*$",
 )
 _CHITCHAT = _any(
@@ -169,7 +177,13 @@ def assess_complexity(text: str, previous: str | None = None) -> Assessment:
     if _CHITCHAT.search(stripped) or _ACKNOWLEDGEMENT.search(stripped):
         return Assessment("simple", True, "Small talk.")
 
-    hard = _HARD.search(stripped)
+    # With a pasted passage after the instruction, only the instruction says
+    # what is asked ("translate this: <text mentioning distributed systems>").
+    first_line, _, rest = stripped.partition("\n")
+    instruction = (
+        first_line if rest.strip() and len(rest) > len(first_line) else stripped
+    )
+    hard = _HARD.search(instruction)
     has_code = bool(_CODE.search(stripped))
     # Only when nothing else is asked ("什麼是 CAP 定理？請舉例說明取捨" is more).
     definition = (

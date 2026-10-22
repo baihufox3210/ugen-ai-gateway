@@ -670,9 +670,15 @@ complex). Everything else is left to the local model, whose prompt defines the
 levels by what a 7-9B model answers well, with examples. When the rules are
 sure, the model's opinion does not override them. A short follow-up
 ("第二點再詳細一點", "continue") is judged together with the request before it.
-`tests/data/complexity_cases.json` holds 360 labeled Chinese and English
-requests, many deliberately tricky; the tests require that the rules are never
-wrong about local versus cloud on the ones they settle.
+`src/ugen_ai_gateway/analysis/complexity_cases.json` holds 600 labeled
+Chinese and English requests from two separately written batches, many
+deliberately tricky; the tests require that the rules are never wrong about
+local versus cloud on the ones they settle (about a third). To measure the
+whole judgement with your own analysis model, run
+`python -m ugen_ai_gateway.cli check-routing` (with Docker:
+`docker compose exec gateway python -m ugen_ai_gateway.cli check-routing`); it
+prints the share judged right and lists the misses. It calls the analysis
+model for about two thirds of the requests, so it takes a few minutes.
 
 Rule-based analysis only detects the structured personal data listed under
 [Personal-data handling](#personal-data-handling); names and addresses need the
