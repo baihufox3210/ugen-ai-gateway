@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from ugen_ai_gateway.api.access import check_admin_access
+from ugen_ai_gateway.api.access import audit_admin, check_admin_access
 from ugen_ai_gateway.config import get_settings
 from ugen_ai_gateway.dependencies import (
     MODELS_SETTING,
@@ -134,6 +134,18 @@ async def save_models(
 
     await store.save_setting(MODELS_SETTING, models.model_dump())
     models_changed()
+    # What changed, never the keys.
+    await audit_admin(
+        request,
+        store,
+        "models_updated",
+        local_base_url=models.local.base_url,
+        local_model=models.local.model,
+        cloud_enabled=models.cloud_enabled,
+        cloud_base_url=models.cloud.base_url,
+        cloud_model=models.cloud.model,
+        analysis_mode=models.analysis_mode,
+    )
     return {"source": "database", "config": public_view(models)}
 
 

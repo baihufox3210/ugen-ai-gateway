@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ugen_ai_gateway.api.access import authenticate, check_admin_access
+from ugen_ai_gateway.api.access import audit_admin, authenticate, check_admin_access
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.config import get_settings
@@ -209,6 +209,15 @@ async def create_api_key(
     """Create an API key. The returned ``key`` is shown only this once."""
     await check_admin_access(http_request, store)
     view, secret = await _require_store(store).create_key(**body.model_dump())
+    await audit_admin(
+        http_request,
+        store,
+        "api_key_created",
+        key_id=view["id"],
+        allow_cloud=view["allow_cloud"],
+        monthly_budget_usd=view["monthly_budget_usd"],
+        rate_limit_per_minute=view["rate_limit_per_minute"],
+    )
     return {**view, "key": secret}
 
 
@@ -228,6 +237,7 @@ async def revoke_api_key(
     await check_admin_access(http_request, store)
     if not await _require_store(store).revoke_key(key_id):
         raise HTTPException(status_code=404, detail="Unknown or already revoked key")
+    await audit_admin(http_request, store, "api_key_revoked", key_id=key_id)
     return Response(status_code=204)
 
 

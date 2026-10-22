@@ -519,6 +519,14 @@ class GatewayService:
             >= principal.monthly_budget_usd
         ):
             return ("Monthly cloud budget for this API key is used up.", "key.budget")
+        if (
+            principal.monthly_budget_usd is not None
+            and principal.user_id
+            and self._usage_store is not None
+            and await self._usage_store.user_month_spend(principal.user_id)
+            >= principal.monthly_budget_usd
+        ):
+            return ("Your monthly cloud budget is used up.", "user.budget")
         return None
 
     def _fill_record(

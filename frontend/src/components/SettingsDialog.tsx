@@ -4,8 +4,9 @@ import Avatar from './Avatar';
 import AvatarCropper from './AvatarCropper';
 import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
+import UsersPage from './UsersPage';
 
-export type SettingsPage = 'account' | 'models' | 'keys';
+export type SettingsPage = 'account' | 'users' | 'models' | 'keys';
 type Props = {
   user: User | null;
   page: SettingsPage;
@@ -27,6 +28,37 @@ const date = (seconds: number | null) => seconds ? new Intl.DateTimeFormat('en-U
 // Budget arrows move in cents-scale steps for small budgets and whole dollars from $10 up.
 const budgetStep = (current: number, direction: 1 | -1) => (direction === 1 ? current < 10 : current <= 10) ? 0.1 : 1;
 const AVATAR_SIZE = 160;
+
+function PasswordSection() {
+  const [form, setForm] = useState({ current: '', next: '', confirm: '' });
+  const [state, setState] = useState<{ ok: boolean; message: string } | null>(null);
+  const [working, setWorking] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (form.next.length < 8) { setState({ ok: false, message: 'Use a new password of at least 8 characters.' }); return; }
+    if (form.next !== form.confirm) { setState({ ok: false, message: 'The new passwords do not match.' }); return; }
+    setWorking(true); setState(null);
+    try {
+      const response = await apiFetch('/v1/ugen/auth/me/password', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: form.current, new_password: form.next }),
+      });
+      if (!response.ok) { setState({ ok: false, message: await errorMessage(response) }); return; }
+      setForm({ current: '', next: '', confirm: '' });
+      setState({ ok: true, message: 'Password changed. Other browsers signed in to this account were signed out.' });
+    } catch { setState({ ok: false, message: 'Cannot reach the gateway' }); } finally { setWorking(false); }
+  }
+
+  return <form className="settings-section password-form" onSubmit={submit}>
+    <h3>Password</h3>
+    <input type="password" value={form.current} onChange={event => setForm({ ...form, current: event.target.value })} placeholder="Current password" aria-label="Current password" autoComplete="current-password" required/>
+    <input type="password" value={form.next} onChange={event => setForm({ ...form, next: event.target.value })} placeholder="New password (8+ characters)" aria-label="New password" autoComplete="new-password" required/>
+    <input type="password" value={form.confirm} onChange={event => setForm({ ...form, confirm: event.target.value })} placeholder="Confirm new password" aria-label="Confirm new password" autoComplete="new-password" required/>
+    <div className="probe-row"><button className="cancel-button" type="submit" disabled={working}>{working ? 'Changing…' : 'Change password'}</button>
+      {state && <span className={`probe ${state.ok ? 'ok' : 'error'}`} role="status">{state.message}</span>}</div>
+  </form>;
+}
 
 function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user: User; onUserChange: (user: User) => void; onSignOut: () => void; onAccountDeleted: () => void }) {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -81,6 +113,8 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
       {avatarError && !cropping && <div className="error-box" role="alert"><span>{avatarError}</span></div>}
       {cropping && <AvatarCropper file={cropping} outputSize={AVATAR_SIZE} saving={saving} saveError={avatarError} onCancel={() => { setCropping(null); setAvatarError(''); }} onSave={image => void saveAvatar(image)}/>}
     </div>
+
+    <PasswordSection/>
 
     <div className="settings-section">
       <h3>Session</h3>
@@ -193,7 +227,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
   const canManage = user ? user.is_admin : true;
   const pages: { id: SettingsPage; label: string }[] = [
     ...(user ? [{ id: 'account' as const, label: 'Account' }] : []),
-    ...(canManage ? [{ id: 'models' as const, label: 'Models' }, { id: 'keys' as const, label: 'API keys' }] : []),
+    ...(canManage ? [...(user ? [{ id: 'users' as const, label: 'Users' }] : []), { id: 'models' as const, label: 'Models' }, { id: 'keys' as const, label: 'API keys' }] : []),
   ];
   const current = pages.some(item => item.id === page) ? page : pages[0]?.id;
 
@@ -207,6 +241,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
         {pages.map(item => <button key={item.id} type="button" role="tab" aria-selected={current === item.id} className={current === item.id ? 'selected' : ''} onClick={() => onPageChange(item.id)}>{item.label}</button>)}
       </div>}
       {current === 'account' && user && <AccountPage user={user} onUserChange={onUserChange} onSignOut={onSignOut} onAccountDeleted={onAccountDeleted}/>}
+      {current === 'users' && <UsersPage currentUserId={user?.id ?? null}/>}
       {current === 'models' && <ModelsPage onSaved={onModelsSaved}/>}
       {current === 'keys' && <ApiKeysPage/>}
     </section>

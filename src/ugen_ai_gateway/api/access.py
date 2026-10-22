@@ -2,7 +2,7 @@ import hmac
 import time
 from collections import defaultdict, deque
 from threading import Lock
-from typing import Protocol
+from typing import Any, Protocol
 
 from fastapi import HTTPException, Request
 
@@ -150,3 +150,19 @@ async def check_admin_access(request: Request, store: UsageStore | None) -> None
             detail="Sign in as an administrator, or set ADMIN_API_KEY "
             "(or GATEWAY_API_KEY), to manage the gateway",
         )
+
+
+async def audit_admin(
+    request: Request, store: UsageStore | None, event: str, **detail: Any
+) -> None:
+    """Record an account or configuration change in the audit log, with who
+    made it (an account id, an API key id, or the fixed admin key)."""
+    if store is None:
+        return
+    principal = await identify(request, store)
+    actor = (
+        principal.user_id or principal.api_key_id or "admin_key"
+        if principal
+        else "anonymous"
+    )
+    await store.append_audit(event, request_id=None, detail={"actor": actor, **detail})

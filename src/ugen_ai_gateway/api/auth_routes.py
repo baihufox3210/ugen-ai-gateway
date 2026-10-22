@@ -14,16 +14,31 @@ from pydantic import BaseModel, Field, field_validator
 
 from ugen_ai_gateway.api.access import (
     SESSION_PREFIX,
+    audit_admin,
     presented_api_key,
     rate_limiter,
 )
 from ugen_ai_gateway.config import get_settings
 from ugen_ai_gateway.dependencies import get_usage_store
-from ugen_ai_gateway.services.usage import UsageStore, UsernameTaken
+from ugen_ai_gateway.services.usage import (
+    AccountDisabled,
+    UsageStore,
+    UsernameTaken,
+)
 
 router = APIRouter(prefix="/v1/ugen/auth")
 
 UsageStoreDependency = Annotated[UsageStore | None, Depends(get_usage_store)]
+
+GATEWAY_SETTING = "gateway"
+
+
+def registration_allowed(store: UsageStore) -> bool:
+    """Whether new accounts may sign up: the dashboard's setting once an
+    administrator saved one, ALLOW_REGISTRATION before that."""
+    saved = store.load_setting(GATEWAY_SETTING) or {}
+    return bool(saved.get("allow_registration", get_settings().allow_registration))
+
 
 _USERNAME = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
 # Sign-in and sign-up attempts per client IP per minute.
@@ -132,7 +147,7 @@ async def auth_status(store: UsageStoreDependency) -> dict[str, Any]:
         "accounts_enabled": True,
         "has_users": has_users,
         # The first account can always be created, so the gateway gets an admin.
-        "registration_open": get_settings().allow_registration or not has_users,
+        "registration_open": registration_allowed(store) or not has_users,
     }
 
 
@@ -142,12 +157,21 @@ async def register(
 ) -> dict[str, Any]:
     store = _require_store(store)
     _limit_attempts(request)
-    if not get_settings().allow_registration and await store.has_users():
+    if not registration_allowed(store) and await store.has_users():
         raise HTTPException(status_code=403, detail="Sign-up is closed")
     try:
         user = await store.create_user(body.username, body.password)
     except UsernameTaken as exc:
         raise HTTPException(status_code=409, detail="That username is taken") from exc
+    await store.append_audit(
+        "account_created",
+        request_id=None,
+        detail={
+            "actor": user["id"],
+            "user_id": user["id"],
+            "is_admin": user["is_admin"],
+        },
+    )
     return await _signed_in(store, user)
 
 
@@ -157,7 +181,12 @@ async def login(
 ) -> dict[str, Any]:
     store = _require_store(store)
     _limit_attempts(request)
-    user = await store.verify_login(body.username, body.password)
+    try:
+        user = await store.verify_login(body.username, body.password)
+    except AccountDisabled as exc:
+        raise HTTPException(
+            status_code=403, detail="This account is disabled; ask an administrator"
+        ) from exc
     if user is None:
         raise HTTPException(status_code=401, detail="Wrong username or password")
     return await _signed_in(store, user)
@@ -189,6 +218,26 @@ async def update_avatar(
     return updated
 
 
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+@router.put("/me/password", status_code=204)
+async def change_password(
+    body: PasswordChange, store: UsageStoreDependency, request: Request
+) -> Response:
+    """Change the password; other browsers signed in to the account are signed out."""
+    store = _require_store(store)
+    _limit_attempts(request)
+    token, user = await _session_user(request, store)
+    if await store.verify_login(user["username"], body.current_password) is None:
+        raise HTTPException(status_code=403, detail="The current password is wrong")
+    await store.change_password(user["id"], body.new_password, keep_session=token)
+    await audit_admin(request, store, "password_changed", user_id=user["id"])
+    return Response(status_code=204)
+
+
 @router.delete("/me", status_code=204)
 async def delete_account(
     body: PasswordConfirmation, store: UsageStoreDependency, request: Request
@@ -199,5 +248,6 @@ async def delete_account(
     _, user = await _session_user(request, store)
     if await store.verify_login(user["username"], body.password) is None:
         raise HTTPException(status_code=403, detail="Wrong password")
+    await audit_admin(request, store, "account_deleted", user_id=user["id"])
     await store.delete_user(user["id"])
     return Response(status_code=204)

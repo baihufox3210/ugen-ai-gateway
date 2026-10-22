@@ -629,3 +629,21 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .hljs-meta,.hljs-tag,.hljs-name{color:#4f6a60}
 .hljs-addition{color:#2f7a3f;background:#eaf6ee}
 .hljs-deletion{color:#a1574f;background:#fbeeec}
+.password-form{display:grid;gap:8px}
+.password-form h3{margin-bottom:2px}
+.user-list{display:grid;gap:8px;margin:12px 0 0;padding:0;list-style:none}
+.user-list li{display:grid;gap:9px;border:1px solid #e3ebe7;border-radius:11px;padding:10px 12px}
+.user-list li.disabled{background:#f7f9f8}
+.user-list li.disabled .user-main{opacity:.6}
+.user-main{display:flex;align-items:center;gap:10px;min-width:0}
+.user-name{display:grid;flex:1;gap:2px;min-width:0}
+.user-name b{color:#203c34;font-size:11.5px}
+.user-name small,.user-usage small{overflow:hidden;color:#8a9c95;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.user-usage{display:grid;gap:2px;text-align:right}
+.user-usage b{color:#2c4a3f;font-size:11.5px}
+.user-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.user-budget{display:flex;align-items:center;gap:6px;width:min(100%,250px)}
+.user-budget .stepper{flex:1}
+.user-actions{display:flex;flex-wrap:wrap;gap:2px 8px}
+.user-actions .text-action{margin-left:0}
+.text-action.danger{color:#b4574d}

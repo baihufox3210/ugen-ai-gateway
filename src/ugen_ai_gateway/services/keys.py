@@ -44,4 +44,5 @@ class Principal:
             user_id=user["id"],
             username=user["username"],
             is_admin=bool(user["is_admin"]),
+            monthly_budget_usd=user.get("monthly_budget_usd"),
         )

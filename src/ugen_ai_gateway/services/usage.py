@@ -80,7 +80,9 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     last_login_at REAL,
-    avatar TEXT
+    avatar TEXT,
+    disabled INTEGER NOT NULL DEFAULT 0,
+    monthly_budget_usd REAL
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -143,7 +145,11 @@ _ADDED_COLUMNS = {
         "output_redactions": "INTEGER NOT NULL DEFAULT 0",
         "user_id": "TEXT",
     },
-    "users": {"avatar": "TEXT"},
+    "users": {
+        "avatar": "TEXT",
+        "disabled": "INTEGER NOT NULL DEFAULT 0",
+        "monthly_budget_usd": "REAL",
+    },
 }
 _GENESIS_HASH = "0" * 64
 
@@ -640,6 +646,122 @@ class UsageStore:
         """Store (or with None, remove) a user's avatar image as a data URL."""
         return await asyncio.to_thread(self._set_avatar, user_id, avatar)
 
+    async def change_password(
+        self, user_id: str, password: str, *, keep_session: str | None = None
+    ) -> None:
+        """Set a new password and end every other session of the account."""
+        password_hash = await asyncio.to_thread(hash_password, password)
+        await asyncio.to_thread(
+            self._set_password, user_id, password_hash, keep_session
+        )
+
+    def set_password_sync(self, user_id: str, password: str) -> None:
+        """For the command line: set a password and end every session."""
+        self._set_password(user_id, hash_password(password), None)
+
+    def _set_password(
+        self, user_id: str, password_hash: str, keep_session: str | None
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
+            )
+            self._connection.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                (user_id, _key_hash(keep_session) if keep_session else ""),
+            )
+
+    async def get_user(self, user_id: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self.get_user_sync, user_id)
+
+    def get_user_sync(self, user_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE id = ? OR username = ?", (user_id, user_id)
+            ).fetchone()
+        return _user_view(dict(row)) if row else None
+
+    async def list_users(self) -> list[dict[str, Any]]:
+        """Every account with this month's requests and cloud cost, most
+        expensive first."""
+        return await asyncio.to_thread(self._list_users)
+
+    def _list_users(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT users.*, COUNT(requests.id) AS month_requests,
+                       COALESCE(SUM(requests.cost_usd), 0) AS month_cost_usd,
+                       COALESCE(SUM(requests.provider = 'cloud'), 0) AS month_cloud
+                FROM users LEFT JOIN requests
+                  ON requests.user_id = users.id AND requests.created_at >= ?
+                GROUP BY users.id
+                ORDER BY month_cost_usd DESC, month_requests DESC, users.created_at
+                """,
+                (_month_start(),),
+            ).fetchall()
+        return [
+            _user_view(dict(row))
+            | {
+                "month_requests": row["month_requests"],
+                "month_cost_usd": row["month_cost_usd"],
+                "month_cloud": row["month_cloud"],
+            }
+            for row in rows
+        ]
+
+    async def update_user(
+        self, user_id: str, changes: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Change is_admin, disabled or monthly_budget_usd.
+
+        Raises ``LastAdministrator`` when the change would leave no active
+        administrator, and ``KeyError`` for an unknown account.
+        """
+        return await asyncio.to_thread(self._update_user, user_id, changes)
+
+    def _update_user(self, user_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"is_admin", "disabled", "monthly_budget_usd"}
+        updates = {k: v for k, v in changes.items() if k in allowed}
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            if updates:
+                assignments = ", ".join(f"{name} = :{name}" for name in updates)
+                cursor = self._connection.execute(
+                    f"UPDATE users SET {assignments} WHERE id = :id",
+                    {**updates, "id": user_id},
+                )
+                if cursor.rowcount == 0:
+                    raise KeyError(user_id)
+                admins = self._connection.execute(
+                    "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND disabled = 0"
+                ).fetchone()[0]
+                if admins == 0:
+                    raise LastAdministrator(user_id)
+                if updates.get("disabled"):
+                    self._connection.execute(
+                        "DELETE FROM sessions WHERE user_id = ?", (user_id,)
+                    )
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(user_id)
+        return _user_view(dict(row))
+
+    async def user_month_spend(self, user_id: str) -> float:
+        return await asyncio.to_thread(self._user_month_spend, user_id)
+
+    def _user_month_spend(self, user_id: str) -> float:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) AS spend FROM requests "
+                "WHERE user_id = ? AND created_at >= ?",
+                (user_id, _month_start()),
+            ).fetchone()
+        return float(row["spend"])
+
     async def delete_user(self, user_id: str) -> bool:
         """Delete an account with its sessions, request metadata and feedback.
 
@@ -694,6 +816,8 @@ class UsageStore:
             return None
         if not verify_password(password, row["password_hash"]):
             return None
+        if row["disabled"]:
+            raise AccountDisabled(row["username"])
         now = time.time()
         with self._lock, self._connection:
             self._connection.execute(
@@ -720,7 +844,8 @@ class UsageStore:
         with self._lock:
             row = self._connection.execute(
                 "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id "
-                "WHERE sessions.token_hash = ? AND sessions.expires_at > ?",
+                "WHERE sessions.token_hash = ? AND sessions.expires_at > ? "
+                "AND users.disabled = 0",
                 (_key_hash(token), time.time()),
             ).fetchone()
         return _user_view(dict(row)) if row else None
@@ -761,8 +886,8 @@ class UsageStore:
             if deleted:
                 self._connection.execute(
                     "UPDATE users SET is_admin = 1 WHERE id = "
-                    "(SELECT id FROM users ORDER BY created_at LIMIT 1) "
-                    "AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)"
+                    "(SELECT id FROM users WHERE disabled = 0 ORDER BY created_at LIMIT 1) "
+                    "AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1 AND disabled = 0)"
                 )
             return deleted > 0
 
@@ -781,6 +906,14 @@ class UsernameTaken(ValueError):
     pass
 
 
+class AccountDisabled(PermissionError):
+    pass
+
+
+class LastAdministrator(ValueError):
+    """The change would leave the gateway without an active administrator."""
+
+
 def _user_view(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -789,6 +922,8 @@ def _user_view(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row["created_at"],
         "last_login_at": row.get("last_login_at"),
         "avatar": row.get("avatar"),
+        "disabled": bool(row.get("disabled") or 0),
+        "monthly_budget_usd": row.get("monthly_budget_usd"),
     }
 
 

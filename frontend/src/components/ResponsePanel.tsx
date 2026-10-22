@@ -14,6 +14,7 @@ const POLICY_RULES: Record<string, string> = {
   'privacy.unredactable': 'Cannot redact safely: kept local',
   'key.local_only': 'Key restriction: local only',
   'key.budget': 'Budget used up: switched to local',
+  'user.budget': 'Your budget is used up: switched to local',
   'guard.injection': 'Possible injection: kept local',
 };
 
