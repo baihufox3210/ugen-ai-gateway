@@ -63,6 +63,7 @@ async def gateway_config(gateway: GatewayDependency) -> dict[str, Any]:
     local = engine.default("local")
     cloud = engine.default("cloud")
     return {
+        "configured": gateway.configured,
         "local_model": local.model.public_id if local else "",
         "cloud_model": cloud.model.public_id if cloud else "",
         "cloud_enabled": cloud is not None,

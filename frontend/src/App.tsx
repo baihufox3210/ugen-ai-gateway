@@ -6,6 +6,7 @@ import ResponsePanel from './components/ResponsePanel';
 import SettingsDialog, { type SettingsPage } from './components/SettingsDialog';
 import Sidebar from './components/Sidebar';
 import { apiFetch, errorMessage, type User } from './api';
+import { downloadConversation } from './exportConversation';
 import { FOLD_CHUNK, requestMessages, size, turnMessages, turnsToRemember } from './memory';
 import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from './types';
 
@@ -59,6 +60,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
   const [fallbackFrom, setFallbackFrom] = useState<Provider | null>(null);
   const [injectionSignals, setInjectionSignals] = useState<string[]>([]);
   const [configuredModels, setConfiguredModels] = useState({ local: '', cloud: '' });
+  // False only once the gateway reports that no local model is set up yet.
+  const [modelsReady, setModelsReady] = useState(true);
   const [modelsStatus, setModelsStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [error, setError] = useState('');
   const [deleteAction, setDeleteAction] = useState<DeleteAction | null>(null);
@@ -82,9 +85,10 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       try {
         const response = await apiFetch('/v1/ugen/config');
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
-          const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown };
+          const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown; configured?: unknown };
           if (typeof candidate.local_model === 'string' && typeof candidate.cloud_model === 'string') {
             data = { local_model: candidate.local_model, cloud_model: candidate.cloud_model };
+            if (active) setModelsReady(candidate.configured !== false);
           }
         }
       } catch {
@@ -289,14 +293,14 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
       <button className="icon-button new-chat-mini" onClick={newConversation} disabled={busy} aria-label="New conversation" title="New conversation">+</button>
     </header>
     <Sidebar conversations={conversations} activeId={activeId} busy={busy} onNew={newConversation} onSelect={selectConversation}
-      onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)} user={user} onOpenSettings={page => { setSettingsPage(page); setDrawerOpen(false); }}/>
+      onDelete={id => setDeleteAction({ type: 'conversation', conversationId: id })} onRename={(id, title) => setConversations(current => current.map(item => item.id === id ? { ...item, title } : item))} onClearAll={() => setDeleteAction({ type: 'all' })} onClose={() => setDrawerOpen(false)} user={user} onOpenSettings={page => { setSettingsPage(page); setDrawerOpen(false); }}/>
     <div className="drawer-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true"/>
     <nav className="view-tabs" role="tablist" aria-label="Switch view">
       <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>Chat{turns.length > 0 && <small>{turns.length}</small>}</button>
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
     <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section></main>
-    <section className="chat-column"><ResponsePanel user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
+    <section className="chat-column"><ResponsePanel setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
     {settingsPage && <SettingsDialog user={user} page={settingsPage} onPageChange={setSettingsPage} onUserChange={onUserChange} onSignOut={onSignOut} onClose={() => setSettingsPage(null)} onModelsSaved={() => setModelsVersion(version => version + 1)}
       onAccountDeleted={() => { try { localStorage.removeItem(storageKey); } catch { /* nothing saved */ } onAccountDeleted(); }}/>}
     {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all' ? 'Every conversation saved on this device will be permanently deleted.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}

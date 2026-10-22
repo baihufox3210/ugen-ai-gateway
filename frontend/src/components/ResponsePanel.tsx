@@ -27,9 +27,12 @@ type Props = {
   user: User | null; turns: ConversationTurn[]; memory?: ConversationMemory; busy: boolean; memoryBusy: boolean; streamingText: string;
   onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void;
   onRegenerate: (turnId: string) => void; onEdit: (turnId: string, text: string) => void;
+  onExport: (format: 'markdown' | 'json') => void;
+  /** Who sees the first-run guide when no model is set up yet. */
+  setup: 'admin' | 'member' | null; onOpenModels: () => void;
 };
 
-function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, onFeedback, onDeleteTurn, onRegenerate, onEdit }: Props) {
+function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, onFeedback, onDeleteTurn, onRegenerate, onEdit, onExport, setup, onOpenModels }: Props) {
   const threadRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<{ turnId: string; text: string } | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -41,7 +44,14 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
   return <article className="panel response-panel">
     <div className="panel-heading">
       <div><span className="eyebrow">02 / CONVERSATION</span><h2><span className="channel-hash">#</span> Conversation</h2><p>Context is kept, so you can keep asking follow-ups.</p></div>
-      <span className="conversation-live"><i/> Live</span>
+      <span className="panel-tools">
+        {hasTurns && <details className="export-menu">
+          <summary>Export</summary>
+          <div role="menu"><button role="menuitem" onClick={event => { onExport('markdown'); event.currentTarget.closest('details')?.removeAttribute('open'); }}>Markdown (.md)</button>
+            <button role="menuitem" onClick={event => { onExport('json'); event.currentTarget.closest('details')?.removeAttribute('open'); }}>JSON (.json)</button></div>
+        </details>}
+        <span className="conversation-live"><i/> Live</span>
+      </span>
     </div>
     {hasTurns ? <div className="conversation-thread" ref={threadRef}>{turns.map((turn, index) => {
       const result = turn.result;
@@ -102,7 +112,13 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
             : <p>{busy && index === turns.length - 1 ? (memoryBusy ? 'Saving older messages to memory…' : 'Analyzing and generating a response…') : 'No response received for this message'}</p>}</div>
         </article>}
       </section>;
-    })}</div> : <div className="response-empty"><span className="empty-glyph">✳</span><b>{busy ? 'The model is working on your request' : 'Start a new conversation'}</b><p>{busy ? 'Once the request is analyzed, the gateway shows where it was routed.' : 'Ask follow-up questions; the gateway sends the conversation context to the model.'}</p></div>}
+    })}</div> : setup ? <div className="response-empty setup-guide"><span className="empty-glyph">⚙</span>
+      <b>{setup === 'admin' ? 'Set up a model to start chatting' : 'Almost ready'}</b>
+      <p>{setup === 'admin'
+        ? 'Point the gateway at your local model server (Ollama, LM Studio, vLLM…), and optionally a cloud model. It takes a minute.'
+        : 'An administrator needs to set up a model before conversations can start.'}</p>
+      {setup === 'admin' && <button className="send-button" onClick={onOpenModels}>Open Models</button>}
+    </div> : <div className="response-empty"><span className="empty-glyph">✳</span><b>{busy ? 'The model is working on your request' : 'Start a new conversation'}</b><p>{busy ? 'Once the request is analyzed, the gateway shows where it was routed.' : 'Ask follow-up questions; the gateway sends the conversation context to the model.'}</p></div>}
   </article>;
 }
 export default ResponsePanel;

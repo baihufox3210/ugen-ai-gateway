@@ -202,6 +202,11 @@ class GatewayService:
         return None
 
     @property
+    def configured(self) -> bool:
+        """Whether a local model is set up, so requests can be served."""
+        return self._configured
+
+    @property
     def embedding_model(self) -> str:
         return self._settings.embedding_model
 

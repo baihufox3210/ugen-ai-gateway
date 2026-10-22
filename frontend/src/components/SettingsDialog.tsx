@@ -6,6 +6,7 @@ import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
 import PrivacyPage from './PrivacyPage';
 import UsersPage from './UsersPage';
+import { applyTheme, loadTheme, type Theme } from '../theme';
 
 export type SettingsPage = 'account' | 'users' | 'models' | 'privacy' | 'keys';
 type Props = {
@@ -29,6 +30,18 @@ const date = (seconds: number | null) => seconds ? new Intl.DateTimeFormat('en-U
 // Budget arrows move in cents-scale steps for small budgets and whole dollars from $10 up.
 const budgetStep = (current: number, direction: 1 | -1) => (direction === 1 ? current < 10 : current <= 10) ? 0.1 : 1;
 const AVATAR_SIZE = 160;
+
+function AppearanceSection() {
+  const [theme, setTheme] = useState<Theme>(loadTheme);
+  return <div className="settings-section">
+    <div className="section-head"><h3>Appearance</h3>
+      <div className="segmented" role="radiogroup" aria-label="Theme">
+        {(['system', 'light', 'dark'] as const).map(value => <button type="button" key={value} role="radio" aria-checked={theme === value} className={theme === value ? 'selected' : ''}
+          onClick={() => { applyTheme(value); setTheme(value); }}>{value === 'system' ? 'System' : value === 'light' ? 'Light' : 'Dark'}</button>)}
+      </div>
+    </div>
+  </div>;
+}
 
 function PasswordSection() {
   const [form, setForm] = useState({ current: '', next: '', confirm: '' });
@@ -114,6 +127,8 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
       {avatarError && !cropping && <div className="error-box" role="alert"><span>{avatarError}</span></div>}
       {cropping && <AvatarCropper file={cropping} outputSize={AVATAR_SIZE} saving={saving} saveError={avatarError} onCancel={() => { setCropping(null); setAvatarError(''); }} onSave={image => void saveAvatar(image)}/>}
     </div>
+
+    <AppearanceSection/>
 
     <PasswordSection/>
 
