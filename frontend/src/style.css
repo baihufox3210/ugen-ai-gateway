@@ -69,13 +69,11 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .brand{display:flex;align-items:center;gap:11px;padding:0 8px 28px;color:#163b36;font-size:19px;font-weight:700;letter-spacing:-.8px;text-decoration:none}
 .brand small{display:block;margin-top:2px;color:#7b928a;font-size:8px;letter-spacing:1.55px}
 .brand-dot{color:#43a989}
-.brand-mark{display:grid;place-items:center;flex:none;width:42px;height:42px;border:1px solid #2d6355;border-radius:14px;background:linear-gradient(145deg,#245b4e,#143b35);box-shadow:0 6px 15px #173e3822,inset 0 1px 0 #ffffff1c}
-.brand-mark svg{width:30px;height:30px;overflow:visible}
-.brand-gate,.brand-route{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:2}
-.brand-gate{stroke:#a6e5c5}
-.brand-route{stroke:#e0f6ea}
-.brand-node{fill:#70d6a5;stroke:#245b4e;stroke-width:1.4}
-.brand-core{fill:#d4f4df}
+.brand-mark{display:grid;place-items:center;flex:none;width:42px;height:42px}
+.brand-mark svg{width:42px;height:42px}
+.logo-local{fill:#1f5c4e}
+.logo-cloud{fill:#7cc4a7}
+.logo-core{fill:#163b37}
 .drawer-close:hover{background:#eef5f1;color:#3b5a4e}
 .history-label{display:flex;align-items:center;gap:8px;margin:27px 7px 9px;color:#6e837a;font-size:10px;font-weight:600}
 .history-count{display:grid;place-items:center;min-width:19px;height:19px;border-radius:6px;background:#edf3f0;color:#80958b;font-size:9px}

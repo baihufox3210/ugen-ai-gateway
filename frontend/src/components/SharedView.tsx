@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { apiFetch, errorMessage } from '../api';
 import Footer from './Footer';
 import type { Conversation } from '../types';
+import LogoMark from './LogoMark';
 
 const Markdown = lazy(() => import('./Markdown'));
 
@@ -56,7 +57,7 @@ function SharedView({ id, signedIn, onSignIn, onOpenApp }: { id: string; signedI
 
   return <main className="shared-page">
     <header className="shared-header">
-      <a className="brand" href={window.location.pathname} onClick={event => { event.preventDefault(); onOpenApp(); }}><span className="brand-mark"><svg viewBox="0 0 40 40" aria-hidden="true"><path className="brand-gate" d="M11 27V15a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v12"/><path className="brand-route" d="M20 30v-7m0 0-7-7m7 7 7-7"/><circle className="brand-node" cx="13" cy="16" r="2.3"/><circle className="brand-node" cx="27" cy="16" r="2.3"/><circle className="brand-core" cx="20" cy="30" r="2.2"/></svg></span><span>ugen<span className="brand-dot">.</span><small>AI GATEWAY</small></span></a>
+      <a className="brand" href={window.location.pathname} onClick={event => { event.preventDefault(); onOpenApp(); }}><span className="brand-mark"><LogoMark/></span><span>ugen<span className="brand-dot">.</span><small>AI GATEWAY</small></span></a>
       {shared && signedIn && <button className="send-button" onClick={() => continueCopy(shared)}>Continue this conversation</button>}
       {!signedIn && <button className="send-button" onClick={onSignIn}>Sign in to continue</button>}
     </header>
