@@ -107,6 +107,35 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 CREATE INDEX IF NOT EXISTS conversations_updated
     ON conversations (user_id, updated_at);
+-- Read-only snapshots of a conversation, opened by link.
+CREATE TABLE IF NOT EXISTS shares (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    data BLOB NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    UNIQUE (owner_id, conversation_id)
+);
+-- Conversations several accounts take part in; data is encrypted like
+-- saved conversations.
+CREATE TABLE IF NOT EXISTS shared_chats (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    data BLOB NOT NULL,
+    size INTEGER NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shared_chat_members (
+    chat_id TEXT NOT NULL REFERENCES shared_chats (id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    added_at REAL NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS shared_chat_members_user
+    ON shared_chat_members (user_id);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -926,6 +955,264 @@ class UsageStore:
                 # Rolls the transaction back.
                 raise StorageFull(total)
         return now
+
+    # Share links: read-only snapshots, one per conversation and owner.
+
+    async def save_share(
+        self, owner_id: str, conversation_id: str, visibility: str, data: bytes
+    ) -> dict[str, Any]:
+        """Create or refresh the share of a conversation; its id stays the same."""
+        return await asyncio.to_thread(
+            self._save_share, owner_id, conversation_id, visibility, data
+        )
+
+    def _save_share(
+        self, owner_id: str, conversation_id: str, visibility: str, data: bytes
+    ) -> dict[str, Any]:
+        now = time.time()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO shares (id, owner_id, conversation_id, visibility, data, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (owner_id, conversation_id) DO UPDATE SET "
+                "visibility = excluded.visibility, data = excluded.data, "
+                "updated_at = excluded.updated_at",
+                (
+                    "shr_" + secrets.token_urlsafe(12),
+                    owner_id,
+                    conversation_id,
+                    visibility,
+                    data,
+                    now,
+                    now,
+                ),
+            )
+            row = self._connection.execute(
+                "SELECT id, conversation_id, visibility, created_at, updated_at "
+                "FROM shares WHERE owner_id = ? AND conversation_id = ?",
+                (owner_id, conversation_id),
+            ).fetchone()
+        return dict(row)
+
+    async def get_share(self, share_id: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._get_share, share_id)
+
+    def _get_share(self, share_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT shares.*, users.username AS owner FROM shares "
+                "JOIN users ON users.id = shares.owner_id "
+                "WHERE shares.id = ? AND users.disabled = 0",
+                (share_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    async def list_shares(self, owner_id: str) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_shares, owner_id)
+
+    def _list_shares(self, owner_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT id, conversation_id, visibility, created_at, updated_at "
+                "FROM shares WHERE owner_id = ? ORDER BY updated_at DESC",
+                (owner_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    async def delete_share(self, share_id: str, owner_id: str) -> bool:
+        return await asyncio.to_thread(self._delete_share, share_id, owner_id)
+
+    def _delete_share(self, share_id: str, owner_id: str) -> bool:
+        with self._lock, self._connection:
+            return (
+                self._connection.execute(
+                    "DELETE FROM shares WHERE id = ? AND owner_id = ?",
+                    (share_id, owner_id),
+                ).rowcount
+                > 0
+            )
+
+    # Shared chats: one encrypted conversation, readable and writable by its
+    # members (the owner is a member too).
+
+    async def find_usernames(self, usernames: list[str]) -> dict[str, str]:
+        """Active accounts by username (case-insensitive): username -> id."""
+        return await asyncio.to_thread(self._find_usernames, usernames)
+
+    def _find_usernames(self, usernames: list[str]) -> dict[str, str]:
+        found = {}
+        with self._lock:
+            for name in usernames:
+                row = self._connection.execute(
+                    "SELECT id, username FROM users WHERE username = ? AND disabled = 0",
+                    (name,),
+                ).fetchone()
+                if row:
+                    found[name] = row["id"]
+        return found
+
+    async def create_shared_chat(
+        self, chat_id: str, owner_id: str, data: bytes, member_ids: list[str]
+    ) -> None:
+        await asyncio.to_thread(
+            self._create_shared_chat, chat_id, owner_id, data, member_ids
+        )
+
+    def _create_shared_chat(
+        self, chat_id: str, owner_id: str, data: bytes, member_ids: list[str]
+    ) -> None:
+        now = time.time()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO shared_chats (id, owner_id, data, size, created_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (chat_id, owner_id, data, len(data), now, now),
+            )
+            self._connection.executemany(
+                "INSERT OR IGNORE INTO shared_chat_members (chat_id, user_id, added_at) "
+                "VALUES (?, ?, ?)",
+                [(chat_id, uid, now) for uid in dict.fromkeys([owner_id, *member_ids])],
+            )
+
+    async def shared_chats_for(
+        self, user_id: str, since: float | None = None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Shared chats of a member changed after ``since`` (with owner and
+        member names), and the ids of all of them."""
+        return await asyncio.to_thread(self._shared_chats_for, user_id, since)
+
+    def _shared_chats_for(
+        self, user_id: str, since: float | None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT chat.id, chat.owner_id, chat.data, chat.updated_at, "
+                "owner.username AS owner FROM shared_chats AS chat "
+                "JOIN shared_chat_members AS me ON me.chat_id = chat.id "
+                "JOIN users AS owner ON owner.id = chat.owner_id "
+                "WHERE me.user_id = ? AND (? IS NULL OR chat.updated_at > ?)",
+                (user_id, since, since),
+            ).fetchall()
+            ids = [
+                row["chat_id"]
+                for row in self._connection.execute(
+                    "SELECT chat_id FROM shared_chat_members WHERE user_id = ?",
+                    (user_id,),
+                )
+            ]
+            chats = []
+            for row in rows:
+                members = [
+                    member["username"]
+                    for member in self._connection.execute(
+                        "SELECT users.username FROM shared_chat_members AS m "
+                        "JOIN users ON users.id = m.user_id WHERE m.chat_id = ? "
+                        "ORDER BY m.user_id != ?, m.added_at, users.username",
+                        (row["id"], row["owner_id"]),
+                    )
+                ]
+                chats.append(dict(row) | {"members": members})
+        return chats, ids
+
+    async def update_shared_chat(
+        self, chat_id: str, user_id: str, merge: Any
+    ) -> float | None:
+        """Replace a shared chat's data with ``merge(current_data)`` in one
+        transaction; None when the user is not a member."""
+        return await asyncio.to_thread(
+            self._update_shared_chat, chat_id, user_id, merge
+        )
+
+    def _update_shared_chat(
+        self, chat_id: str, user_id: str, merge: Any
+    ) -> float | None:
+        now = time.time()
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT chat.data FROM shared_chats AS chat JOIN shared_chat_members "
+                "AS m ON m.chat_id = chat.id WHERE chat.id = ? AND m.user_id = ?",
+                (chat_id, user_id),
+            ).fetchone()
+            if row is None:
+                return None
+            data = merge(row["data"])
+            self._connection.execute(
+                "UPDATE shared_chats SET data = ?, size = ?, updated_at = ? WHERE id = ?",
+                (data, len(data), now, chat_id),
+            )
+        return now
+
+    async def is_shared_chat(self, chat_id: str) -> bool:
+        return await asyncio.to_thread(self._is_shared_chat, chat_id)
+
+    def _is_shared_chat(self, chat_id: str) -> bool:
+        with self._lock:
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM shared_chats WHERE id = ?", (chat_id,)
+                ).fetchone()
+                is not None
+            )
+
+    async def change_shared_chat_members(
+        self, chat_id: str, owner_id: str, add: list[str], remove: list[str]
+    ) -> bool:
+        """Add or remove members (by id); only the owner may, and the owner
+        cannot be removed. False when the chat is not this owner's."""
+        return await asyncio.to_thread(
+            self._change_shared_chat_members, chat_id, owner_id, add, remove
+        )
+
+    def _change_shared_chat_members(
+        self, chat_id: str, owner_id: str, add: list[str], remove: list[str]
+    ) -> bool:
+        now = time.time()
+        with self._lock, self._connection:
+            owned = self._connection.execute(
+                "SELECT 1 FROM shared_chats WHERE id = ? AND owner_id = ?",
+                (chat_id, owner_id),
+            ).fetchone()
+            if owned is None:
+                return False
+            self._connection.executemany(
+                "INSERT OR IGNORE INTO shared_chat_members (chat_id, user_id, added_at) "
+                "VALUES (?, ?, ?)",
+                [(chat_id, uid, now) for uid in add],
+            )
+            self._connection.executemany(
+                "DELETE FROM shared_chat_members WHERE chat_id = ? AND user_id = ?",
+                [(chat_id, uid) for uid in remove if uid != owner_id],
+            )
+            # Members' next refresh picks up the new member list.
+            self._connection.execute(
+                "UPDATE shared_chats SET updated_at = ? WHERE id = ?", (now, chat_id)
+            )
+        return True
+
+    async def leave_shared_chat(self, chat_id: str, user_id: str) -> str:
+        """The owner leaving deletes the chat for everyone: returns "deleted",
+        "left", or "" when the user was not a member."""
+        return await asyncio.to_thread(self._leave_shared_chat, chat_id, user_id)
+
+    def _leave_shared_chat(self, chat_id: str, user_id: str) -> str:
+        with self._lock, self._connection:
+            deleted = self._connection.execute(
+                "DELETE FROM shared_chats WHERE id = ? AND owner_id = ?",
+                (chat_id, user_id),
+            ).rowcount
+            if deleted:
+                return "deleted"
+            left = self._connection.execute(
+                "DELETE FROM shared_chat_members WHERE chat_id = ? AND user_id = ?",
+                (chat_id, user_id),
+            ).rowcount
+            if left:
+                self._connection.execute(
+                    "UPDATE shared_chats SET updated_at = ? WHERE id = ?",
+                    (time.time(), chat_id),
+                )
+        return "left" if left else ""
 
     async def link_sso(
         self, user_id: str, subject: str, email: str | None

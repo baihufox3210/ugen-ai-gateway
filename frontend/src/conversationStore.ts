@@ -13,6 +13,8 @@ import type { Conversation } from './types';
 const STORAGE_KEY = 'ugen-gateway-conversations-v1';
 const SAVE_DELAY_MS = 800;
 const REFRESH_MS = 30_000;
+// While the account is in a shared chat, others' messages arrive this often.
+const SHARED_REFRESH_MS = 5_000;
 const RETRY_MS = 10_000;
 
 export type SyncStatus = 'local' | 'loading' | 'synced' | 'saving' | 'error';
@@ -109,10 +111,20 @@ export function useConversations(user: User | null, busy: boolean) {
     if (saving.current) { saveAgain.current = true; return; }
     const { save, remove } = changes();
     if (!save.length && !remove.length) return;
+    // Shared chats merge turn by turn on the server: say which turns were
+    // removed here, or the merge would bring them back.
+    const removedTurns: Record<string, string[]> = {};
+    for (const item of save) {
+      const base = synced.current.get(item.id);
+      if (!item.shared || !base) continue;
+      const kept = new Set(item.turns.map(turn => turn.id));
+      const gone = base.turns.filter(turn => !kept.has(turn.id)).map(turn => turn.id);
+      if (gone.length) removedTurns[item.id] = gone;
+    }
     saving.current = true; setStatus('saving');
     try {
       const response = await apiFetch('/v1/ugen/conversations/sync', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ save, delete: remove }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ save, delete: remove, removed_turns: removedTurns }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       for (const item of save) synced.current.set(item.id, item);
@@ -161,7 +173,12 @@ export function useConversations(user: User | null, busy: boolean) {
       if (since.current === null) void pull().then(() => void push());
       else if (!save.length && !remove.length) void pull();
     };
-    const timer = window.setInterval(refresh, REFRESH_MS);
+    let ticks = 0;
+    const timer = window.setInterval(() => {
+      ticks += 1;
+      const shared = latest.current.some(item => item.shared);
+      if (shared || ticks * SHARED_REFRESH_MS >= REFRESH_MS) { ticks = 0; refresh(); }
+    }, SHARED_REFRESH_MS);
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
     // Leaving the page: send what is still waiting, if it fits a keepalive request.
@@ -187,8 +204,10 @@ export function useConversations(user: User | null, busy: boolean) {
 
   /** Save pending changes now, e.g. before signing out. */
   const flush = useCallback(async () => { if (account) await push(); }, [account, push]);
+  /** Save, then fetch changes now (after creating or leaving a shared chat). */
+  const refreshNow = useCallback(async () => { if (account) { await push(); await pull(); } }, [account, push, pull]);
 
-  return { conversations, setConversations, status, syncError, flush };
+  return { conversations, setConversations, status, syncError, flush, refreshNow };
 }
 
 /** Forget this browser's copy of an account's history. */

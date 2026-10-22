@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import App from './App';
 import AuthScreen from './components/AuthScreen';
+import SharedView from './components/SharedView';
 import { apiFetch, errorMessage, loadSession, takeSsoBrowser, saveSession, SIGNED_OUT_EVENT, type AuthStatus, type Session, type User } from './api';
 
 /** Shows the sign-in screen until there is a session, then the dashboard. */
@@ -12,6 +13,9 @@ function Root() {
   const [sso] = useState(readSsoResult);
   const ssoToken = sso.token;
   const [ssoError, setSsoError] = useState(sso.error);
+  // A share link: ?share=<id> opens that conversation read-only.
+  const [shareId, setShareId] = useState(() => new URLSearchParams(window.location.search).get('share'));
+  const [shareSignIn, setShareSignIn] = useState(false);
   // Shown in the dashboard: the outcome of linking single sign-on, or an
   // error that came back while signed in.
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(() => session && sso.error ? { ok: false, message: sso.error } : null);
@@ -88,6 +92,11 @@ function Root() {
         ? <><b>Cannot reach the gateway.</b><p>Check that the API is running, then try again.</p><button className="send-button" onClick={() => void loadStatus()}>Try again</button></>
         : <span className="spinner dark" aria-label="Loading"/>}
     </section></main>;
+  }
+  if (shareId) {
+    const openApp = () => { window.history.replaceState(null, '', window.location.pathname); setShareId(null); setShareSignIn(false); };
+    if (shareSignIn && status.accounts_enabled && !session) return <AuthScreen key="share" status={status} onSignedIn={next => { updateSession(next); setShareSignIn(false); }}/>;
+    return <SharedView key={session?.token ?? 'signed-out'} id={shareId} signedIn={Boolean(session)} onSignIn={() => setShareSignIn(true)} onOpenApp={openApp}/>;
   }
   if (status.accounts_enabled && !session) {
     if (ssoToken && !ssoError) return <main className="auth-page"><section className="auth-card auth-loading"><span className="spinner dark" aria-label="Signing in"/></section></main>;

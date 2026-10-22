@@ -487,6 +487,8 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
   are highlighted and have a copy button; Markdown tables and LaTeX math
   (`$…$`, `$$…$$`) are rendered.
 - **Theme**: System, Light or Dark, on the Account page.
+- **Share** a conversation as a link or chat in it together; see
+  [Sharing](#sharing).
 
 ### Saved conversations
 
@@ -511,6 +513,31 @@ With accounts, each person's conversations are stored on the gateway:
   and deletes. Both need a dashboard session.
 
 Without accounts (no database), conversations stay in the browser.
+
+### Sharing
+
+The **Share** button above a conversation offers two things:
+
+- **Share a link**: a read-only snapshot of the messages and answers (not the
+  conversation's memory or routing details), opened with
+  `/?share=<id>`. Choose who can open it: *people signed in here* (default) or
+  *anyone with the link*. *Update link* refreshes the snapshot under the same
+  address and *Stop sharing* turns it off. Signed-in viewers can *Continue in my
+  conversations* to get their own copy.
+- **Chat together**: invite accounts by username. The conversation becomes a
+  shared chat that every member sees in their list (marked 👥) and can
+  continue; each message shows who sent it, and other members' messages
+  appear within a few seconds. Members' changes are merged message by message,
+  so two people writing at once do not overwrite each other. Requests are
+  analyzed, routed and counted against whoever sends them. The owner adds and
+  removes members; a member deleting it from the list leaves it, and the owner
+  deleting it deletes it for everyone. *Clear all* never touches shared chats.
+
+Snapshots and shared chats are encrypted like saved conversations. API:
+`POST /v1/ugen/shares` (`conversation`, `visibility`), `GET /v1/ugen/shares`,
+`GET`/`DELETE /v1/ugen/shares/{id}`; `POST /v1/ugen/shared-chats`
+(`conversation`, `members`), `PATCH /v1/ugen/shared-chats/{id}` (`add`,
+`remove`), `DELETE /v1/ugen/shared-chats/{id}`.
 
 ### Conversation memory
 

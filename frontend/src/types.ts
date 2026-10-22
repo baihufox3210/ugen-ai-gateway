@@ -25,10 +25,13 @@ export type ChatResult = {
   /** The user stopped generation; ``content`` is the partial answer. */
   stopped?: boolean;
 };
-export type ConversationTurn = { id: string; user: string; result?: ChatResult; feedback?: 1 | -1 };
+/** ``author``: who asked, in a shared chat (a username). */
+export type ConversationTurn = { id: string; user: string; author?: string; result?: ChatResult; feedback?: 1 | -1 };
 /** Older turns folded into a summary by the local model; ``coveredTurns`` counts them from the start. */
 export type ConversationMemory = { text: string; coveredTurns: number; updatedAt: number };
-export type Conversation = { id: string; title: string; updatedAt: number; turns: ConversationTurn[]; memory?: ConversationMemory };
+/** Set by the gateway for a shared chat: its owner, members and the viewer's role. */
+export type SharedInfo = { owner: string; members: string[]; role: 'owner' | 'member' };
+export type Conversation = { id: string; title: string; updatedAt: number; turns: ConversationTurn[]; memory?: ConversationMemory; shared?: SharedInfo };
 export type GatewayEvent = { type: string; [key: string]: unknown };
 export type PiiState = { found: boolean; types: string[]; redacted?: number };
 export type AnalysisSource = 'llm' | 'rules' | 'cache';
