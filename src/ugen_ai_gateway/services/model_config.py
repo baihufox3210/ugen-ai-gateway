@@ -19,6 +19,7 @@ from ugen_ai_gateway.routing.config import (
     Rule,
     Target,
 )
+from ugen_ai_gateway.services.secret_box import SecretBox
 
 
 class LocalModel(BaseModel):
@@ -70,6 +71,21 @@ class StoredModels(BaseModel):
         if self.cloud_enabled and cloud.base_url and cloud.api_key and cloud.model:
             return cloud
         return None
+
+
+def sealed(stored: StoredModels, box: SecretBox) -> dict[str, Any]:
+    """The configuration as stored: API keys encrypted."""
+    data = stored.model_dump()
+    data["local"]["api_key"] = box.seal(stored.local.api_key)
+    data["cloud"]["api_key"] = box.seal(stored.cloud.api_key)
+    return data
+
+
+def unsealed(data: dict[str, Any], box: SecretBox) -> StoredModels:
+    stored = StoredModels.model_validate(data)
+    stored.local.api_key = box.open(stored.local.api_key)
+    stored.cloud.api_key = box.open(stored.cloud.api_key)
+    return stored
 
 
 def from_settings(settings: Settings) -> StoredModels:

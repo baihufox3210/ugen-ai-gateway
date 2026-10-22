@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     usage_db_path: str = "data/ugen.db"
 
     gateway_api_key: str = ""
+    # Encrypts provider API keys stored in the database. Empty: a key file is
+    # generated next to the database (secret.key); back it up with it.
+    secret_key: str = ""
     # Dashboard accounts. The first account is always allowed and becomes the
     # administrator; set ALLOW_REGISTRATION=false to stop further sign-ups.
     allow_registration: bool = True

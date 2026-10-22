@@ -6,7 +6,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ugen_ai_gateway.api.auth_routes import router as auth_router
 from ugen_ai_gateway.api.model_routes import router as model_router
@@ -46,6 +46,52 @@ class StripApiPrefix:
         await self.app(scope, receive, send)
 
 
+SECURITY_HEADERS = [
+    (
+        b"content-security-policy",
+        (
+            b"default-src 'self'; script-src 'self'; "
+            b"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            b"font-src 'self' https://fonts.gstatic.com data:; "
+            b"img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; "
+            b"base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        ),
+    ),
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+]
+
+
+class SecurityHeaders:
+    """Limit what a page can load or be embedded in, so injected markup in a
+    reply could not run scripts or exfiltrate the session token."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                present = {name for name, _ in message.get("headers", [])}
+                message["headers"] = [
+                    *message.get("headers", []),
+                    *(
+                        header
+                        for header in SECURITY_HEADERS
+                        if header[0] not in present
+                    ),
+                ]
+            await send(message)
+
+        await self.app(scope, receive, with_headers)
+
+
 def _static_dir() -> Path | None:
     configured = get_settings().static_dir
     path = (
@@ -67,6 +113,7 @@ def create_app() -> FastAPI:
     if static := _static_dir():
         app.mount("/", StaticFiles(directory=static, html=True), name="dashboard")
     app.add_middleware(StripApiPrefix)
+    app.add_middleware(SecurityHeaders)
     return app
 
 

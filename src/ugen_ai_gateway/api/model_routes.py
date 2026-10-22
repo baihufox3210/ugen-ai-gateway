@@ -11,11 +11,12 @@ from ugen_ai_gateway.config import get_settings
 from ugen_ai_gateway.dependencies import (
     MODELS_SETTING,
     current_models,
+    get_secret_box,
     get_usage_store,
     models_changed,
 )
 from ugen_ai_gateway.providers.openai_client import create_openai_client
-from ugen_ai_gateway.services.model_config import StoredModels, public_view
+from ugen_ai_gateway.services.model_config import StoredModels, public_view, sealed
 from ugen_ai_gateway.services.usage import UsageStore
 
 router = APIRouter(prefix="/v1/ugen/models")
@@ -132,7 +133,7 @@ async def save_models(
             detail="The cloud needs a base URL, an API key and a model before it can be on",
         )
 
-    await store.save_setting(MODELS_SETTING, models.model_dump())
+    await store.save_setting(MODELS_SETTING, sealed(models, get_secret_box()))
     models_changed()
     # What changed, never the keys.
     await audit_admin(

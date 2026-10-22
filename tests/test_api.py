@@ -174,3 +174,10 @@ def test_ready_reuses_a_recent_provider_check() -> None:
     for _ in range(3):
         assert asyncio.run(service.readiness_problem()) is None
     assert len(calls) == 1
+
+
+def test_responses_carry_security_headers() -> None:
+    response = TestClient(create_app()).get("/health")
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"

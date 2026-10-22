@@ -85,17 +85,23 @@ def test_api_keys_are_never_returned_and_kept_when_omitted(monkeypatch) -> None:
     assert view["config"]["cloud"]["has_api_key"] is True
     assert view["config"]["cloud"]["api_key_hint"] == "…abcd"
 
+    # Stored encrypted, never as plain text.
+    raw = env.store.load_setting("models")["cloud"]["api_key"]
+    assert raw.startswith("enc:v1:") and "AIza" not in raw
+
+    def saved() -> Any:
+        return dependencies.current_models(env.store)[0]
+
     # Saving again without a key keeps it; "" removes it.
     env.put(
         body(
             cloud_enabled=True, cloud={"base_url": CLOUD["base_url"], "model": "other"}
         )
     )
-    stored = env.store.load_setting("models")
-    assert stored["cloud"]["api_key"] == "AIza-secret-abcd"
-    assert stored["cloud"]["model"] == "other"
+    assert saved().cloud.api_key == "AIza-secret-abcd"
+    assert saved().cloud.model == "other"
     env.put(body(cloud={"api_key": ""}))
-    assert env.store.load_setting("models")["cloud"]["api_key"] == ""
+    assert saved().cloud.api_key == ""
 
 
 def test_turning_the_cloud_off_keeps_its_settings(monkeypatch) -> None:
@@ -104,7 +110,7 @@ def test_turning_the_cloud_off_keeps_its_settings(monkeypatch) -> None:
     env.put(body(cloud_enabled=False))
 
     assert dependencies.get_gateway_service().engine.default("cloud") is None
-    assert env.store.load_setting("models")["cloud"]["model"] == "big"
+    assert dependencies.current_models(env.store)[0].cloud.model == "big"
 
 
 def test_cloud_cannot_be_turned_on_without_url_key_and_model(monkeypatch) -> None:

@@ -15,7 +15,9 @@ from ugen_ai_gateway.services.model_config import (
     StoredModels,
     from_settings,
     to_routing,
+    unsealed,
 )
+from ugen_ai_gateway.services.secret_box import SecretBox
 from ugen_ai_gateway.services.usage import UsageStore
 
 logger = logging.getLogger(__name__)
@@ -70,7 +72,7 @@ def current_models(store: UsageStore | None) -> tuple[StoredModels, str]:
     settings = get_settings()
     saved = store.load_setting(MODELS_SETTING) if store is not None else None
     if saved is not None:
-        return StoredModels.model_validate(saved), "database"
+        return unsealed(saved, get_secret_box()), "database"
     return from_settings(settings), "env"
 
 
@@ -126,6 +128,12 @@ def _build_gateway_service() -> GatewayService:
         policy=RoutingPolicy(cloud_enabled=False),
         usage_store=store,
     )
+
+
+@lru_cache
+def get_secret_box() -> SecretBox:
+    settings = get_settings()
+    return SecretBox.for_database(settings.usage_db_path, settings.secret_key)
 
 
 @lru_cache
