@@ -43,7 +43,12 @@ class StripApiPrefix:
         if scope["type"] in ("http", "websocket"):
             path: str = scope["path"]
             if path == API_PREFIX or path.startswith(API_PREFIX + "/"):
-                scope = {**scope, "path": path[len(API_PREFIX) :] or "/"}
+                # Keep the prefix so absolute URLs (the sign-on callback) use it.
+                scope = {
+                    **scope,
+                    "path": path[len(API_PREFIX) :] or "/",
+                    "ugen.api_prefix": API_PREFIX,
+                }
         await self.app(scope, receive, send)
 
 

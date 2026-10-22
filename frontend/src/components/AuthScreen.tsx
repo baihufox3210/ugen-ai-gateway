@@ -1,17 +1,17 @@
 import { useState } from 'react';
-import { apiFetch, errorMessage, type AuthStatus, type Session } from '../api';
+import { apiFetch, errorMessage, ssoStartUrl, type AuthStatus, type Session } from '../api';
 
 type Mode = 'login' | 'register';
 const USERNAME = /^[A-Za-z0-9_.-]{3,32}$/;
 
-function AuthScreen({ status, onSignedIn }: { status: AuthStatus; onSignedIn: (session: Session) => void }) {
+function AuthScreen({ status, onSignedIn, initialError = '' }: { status: AuthStatus; onSignedIn: (session: Session) => void; initialError?: string }) {
   // The very first account must be created before anyone can sign in.
   const firstAccount = !status.has_users;
   const [mode, setMode] = useState<Mode>(firstAccount ? 'register' : 'login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const [working, setWorking] = useState(false);
   const registering = mode === 'register';
 
@@ -49,6 +49,10 @@ function AuthScreen({ status, onSignedIn }: { status: AuthStatus; onSignedIn: (s
         <button type="button" role="tab" aria-selected={!registering} className={!registering ? 'selected' : ''} onClick={() => switchMode('login')}>Sign in</button>
         <button type="button" role="tab" aria-selected={registering} className={registering ? 'selected' : ''} onClick={() => switchMode('register')}>Create account</button>
       </div>}
+      {status.sso && <>
+        <a className="cancel-button sso-button" href={ssoStartUrl()}>{status.sso.label}</a>
+        <div className="auth-divider"><span>or use a username</span></div>
+      </>}
       <form className="auth-form" onSubmit={submit}>
         <label>Username<input value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={32} required autoFocus/></label>
         <label>Password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete={registering ? 'new-password' : 'current-password'} maxLength={128} required/></label>

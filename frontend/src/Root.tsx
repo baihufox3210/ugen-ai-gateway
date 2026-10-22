@@ -8,6 +8,9 @@ function Root() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [statusError, setStatusError] = useState(false);
   const [session, setSession] = useState<Session | null>(loadSession);
+  // A single sign-on result arrives in the URL fragment: #sso=<token> or #sso_error=<message>.
+  const [ssoToken] = useState(() => readFragment('sso'));
+  const [ssoError, setSsoError] = useState(() => readFragment('sso_error'));
 
   const updateSession = useCallback((next: Session | null) => {
     saveSession(next); setSession(next);
@@ -26,6 +29,13 @@ function Root() {
 
   useEffect(() => { void loadStatus(); }, [loadStatus]);
 
+  useEffect(() => {
+    if (!ssoToken) return;
+    apiFetch('/v1/ugen/auth/me', {}, ssoToken)
+      .then(async response => response.ok ? updateSession({ token: ssoToken, user: await response.json() as User }) : setSsoError('Single sign-on did not finish; try again.'))
+      .catch(() => setSsoError('Cannot reach the gateway.'));
+  }, [ssoToken, updateSession]);
+
   // Refresh the saved user (an administrator may have changed) and drop a dead session.
   useEffect(() => {
     if (!session) return;
@@ -35,7 +45,7 @@ function Root() {
         if (!active) return;
         if (response.ok) {
           const user = await response.json() as User;
-          if (user.is_admin !== session.user.is_admin || user.username !== session.user.username || user.avatar !== session.user.avatar) updateSession({ ...session, user });
+          if (JSON.stringify(user) !== JSON.stringify(session.user)) updateSession({ ...session, user });
         }
       })
       .catch(() => { /* Offline: keep the saved session and let requests report it. */ });
@@ -63,11 +73,25 @@ function Root() {
         : <span className="spinner dark" aria-label="Loading"/>}
     </section></main>;
   }
-  if (status.accounts_enabled && !session) return <AuthScreen key={String(status.has_users)} status={status} onSignedIn={updateSession}/>;
+  if (status.accounts_enabled && !session) {
+    if (ssoToken && !ssoError) return <main className="auth-page"><section className="auth-card auth-loading"><span className="spinner dark" aria-label="Signing in"/></section></main>;
+    return <AuthScreen key={String(status.has_users)} status={status} onSignedIn={updateSession} initialError={ssoError ?? ''}/>;
+  }
   // key: each account gets a fresh dashboard with its own saved history.
   return <App key={session?.user.id ?? 'open'} user={session?.user ?? null} onSignOut={signOut}
     onUserChange={user => session && updateSession({ ...session, user })}
     onAccountDeleted={() => { updateSession(null); void loadStatus(); }}/>;
+}
+
+/** Read and remove one value from the URL fragment, so a token is not left in the address bar or history. */
+function readFragment(name: string): string | null {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const value = params.get(name);
+  if (value === null) return null;
+  params.delete(name);
+  const rest = params.toString();
+  window.history.replaceState(null, '', window.location.pathname + window.location.search + (rest ? `#${rest}` : ''));
+  return value;
 }
 
 export default Root;

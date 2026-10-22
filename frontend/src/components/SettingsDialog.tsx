@@ -43,7 +43,7 @@ function AppearanceSection() {
   </div>;
 }
 
-function PasswordSection() {
+function PasswordSection({ hasPassword, onPasswordSet }: { hasPassword: boolean; onPasswordSet: () => void }) {
   const [form, setForm] = useState({ current: '', next: '', confirm: '' });
   const [state, setState] = useState<{ ok: boolean; message: string } | null>(null);
   const [working, setWorking] = useState(false);
@@ -60,16 +60,18 @@ function PasswordSection() {
       });
       if (!response.ok) { setState({ ok: false, message: await errorMessage(response) }); return; }
       setForm({ current: '', next: '', confirm: '' });
-      setState({ ok: true, message: 'Password changed. Other browsers signed in to this account were signed out.' });
+      setState({ ok: true, message: hasPassword ? 'Password changed. Other browsers signed in to this account were signed out.' : 'Password set. You can now also sign in with your username.' });
+      if (!hasPassword) onPasswordSet();
     } catch { setState({ ok: false, message: 'Cannot reach the gateway' }); } finally { setWorking(false); }
   }
 
   return <form className="settings-section password-form" onSubmit={submit}>
     <h3>Password</h3>
-    <input type="password" value={form.current} onChange={event => setForm({ ...form, current: event.target.value })} placeholder="Current password" aria-label="Current password" autoComplete="current-password" required/>
+    {!hasPassword && <p>You sign in with single sign-on. Set a password to also sign in with your username and password.</p>}
+    {hasPassword && <input type="password" value={form.current} onChange={event => setForm({ ...form, current: event.target.value })} placeholder="Current password" aria-label="Current password" autoComplete="current-password" required/>}
     <input type="password" value={form.next} onChange={event => setForm({ ...form, next: event.target.value })} placeholder="New password (8+ characters)" aria-label="New password" autoComplete="new-password" required/>
     <input type="password" value={form.confirm} onChange={event => setForm({ ...form, confirm: event.target.value })} placeholder="Confirm new password" aria-label="Confirm new password" autoComplete="new-password" required/>
-    <div className="probe-row"><button className="cancel-button" type="submit" disabled={working}>{working ? 'Changing…' : 'Change password'}</button>
+    <div className="probe-row"><button className="cancel-button" type="submit" disabled={working}>{working ? 'Saving…' : hasPassword ? 'Change password' : 'Set password'}</button>
       {state && <span className={`probe ${state.ok ? 'ok' : 'error'}`} role="status">{state.message}</span>}</div>
   </form>;
 }
@@ -98,10 +100,11 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
   async function deleteAccount(event: React.FormEvent) {
     event.preventDefault();
     if (!deletePassword || saving) return;
+    const confirmation = user.has_password === false ? { username: deletePassword } : { password: deletePassword };
     setSaving(true); setDeleteError('');
     try {
       const response = await apiFetch('/v1/ugen/auth/me', {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: deletePassword }),
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(confirmation),
       });
       if (response.status === 204) { onAccountDeleted(); return; }
       setDeleteError(await errorMessage(response));
@@ -115,7 +118,7 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
         <button type="button" className="avatar-picker" onClick={() => fileInput.current?.click()} disabled={saving} aria-label="Change profile picture" title="Change profile picture">
           <Avatar user={user} className="large"/><span className="avatar-edit" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8.5h3l1.6-2.5h6.8L17 8.5h3V18H4z"/><circle cx="12" cy="13" r="3.2"/></svg></span>
         </button>
-        <span className="account-copy"><b>{user.username}</b><small>{user.is_admin ? 'Administrator · manages API keys and sees all usage' : 'Member · sees only your own usage'}</small>
+        <span className="account-copy"><b>{user.username}</b><small>{user.is_admin ? 'Administrator · manages API keys and sees all usage' : 'Member · sees only your own usage'}{user.sso ? ` · single sign-on${user.email ? ` (${user.email})` : ''}` : ''}</small>
           <span className="profile-actions">
             <button type="button" className="cancel-button" onClick={() => fileInput.current?.click()} disabled={saving}>{saving ? 'Saving…' : user.avatar ? 'Change picture' : 'Upload picture'}</button>
             {user.avatar && <button type="button" className="text-action" onClick={() => void saveAvatar(null)} disabled={saving}>Remove</button>}
@@ -130,7 +133,7 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
 
     <AppearanceSection/>
 
-    <PasswordSection/>
+    <PasswordSection hasPassword={user.has_password !== false} onPasswordSet={() => onUserChange({ ...user, has_password: true })}/>
 
     <div className="settings-section">
       <h3>Session</h3>
@@ -141,7 +144,9 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
       <h3>Delete account</h3>
       <p>Permanently deletes your account, your sign-in sessions and your usage records, plus the conversations saved in this browser. This cannot be undone.{user.is_admin ? ' If you are the last administrator, the oldest remaining account becomes administrator.' : ''}</p>
       {deleting ? <form className="settings-row" onSubmit={deleteAccount}>
-        <input type="password" value={deletePassword} onChange={event => { setDeletePassword(event.target.value); setDeleteError(''); }} placeholder="Enter your password to confirm" aria-label="Password" autoComplete="current-password" autoFocus/>
+        {user.has_password === false
+          ? <input value={deletePassword} onChange={event => { setDeletePassword(event.target.value); setDeleteError(''); }} placeholder={`Type ${user.username} to confirm`} aria-label="Username" autoComplete="off" spellCheck={false} autoFocus/>
+          : <input type="password" value={deletePassword} onChange={event => { setDeletePassword(event.target.value); setDeleteError(''); }} placeholder="Enter your password to confirm" aria-label="Password" autoComplete="current-password" autoFocus/>}
         <button className="danger-button" type="submit" disabled={saving || !deletePassword}>Delete permanently</button>
         <button className="cancel-button" type="button" onClick={() => { setDeleting(false); setDeletePassword(''); setDeleteError(''); }}>Cancel</button>
       </form> : <button className="danger-outline-button" type="button" onClick={() => setDeleting(true)}>Delete my account…</button>}

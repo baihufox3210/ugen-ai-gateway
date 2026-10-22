@@ -3,6 +3,7 @@ import { apiFetch, errorMessage, type User } from '../api';
 import { copyText } from '../clipboard';
 import Avatar from './Avatar';
 import NumberStepper from './NumberStepper';
+import SsoSection from './SsoSection';
 
 type Account = User & {
   created_at: number; last_login_at: number | null; disabled: boolean; monthly_budget_usd: number | null;
@@ -72,6 +73,8 @@ function UsersPage({ currentUserId }: { currentUserId: string | null }) {
       <p>When closed, only existing accounts can sign in. Close it once everyone who needs an account has one.</p>
     </div>
 
+    <SsoSection/>
+
     <div className="settings-section">
       <h3>Accounts</h3>
       <p>Sorted by this month’s cloud cost. A budget keeps that person on the local model once their cloud spend this month reaches it.</p>
@@ -92,7 +95,7 @@ function UsersPage({ currentUserId }: { currentUserId: string | null }) {
           <div className="user-main">
             <Avatar user={account} className="small"/>
             <span className="user-name"><b>{account.username}{self && ' (you)'}</b>
-              <small>{account.is_admin ? 'Administrator' : 'Member'}{account.disabled ? ' · disabled' : ''} · last sign-in {date(account.last_login_at)}</small></span>
+              <small>{account.is_admin ? 'Administrator' : 'Member'}{account.sso ? ' · SSO' : ''}{account.disabled ? ' · disabled' : ''} · last sign-in {date(account.last_login_at)}</small></span>
             <span className="user-usage"><b>{usd(account.month_cost_usd)}</b><small>{account.month_requests} req · {account.month_cloud} cloud</small></span>
           </div>
           <div className="user-controls">

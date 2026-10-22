@@ -4,11 +4,18 @@ import secrets
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ugen_ai_gateway.api.access import audit_admin, check_admin_access, identify
-from ugen_ai_gateway.api.auth_routes import GATEWAY_SETTING, registration_allowed
-from ugen_ai_gateway.dependencies import get_usage_store
+from ugen_ai_gateway.api.auth_routes import (
+    GATEWAY_SETTING,
+    callback_url,
+    get_oidc_client,
+    oidc_settings,
+    registration_allowed,
+)
+from ugen_ai_gateway.dependencies import get_secret_box, get_usage_store
+from ugen_ai_gateway.services.oidc import OIDC_SETTING, OidcError, OidcSettings
 from ugen_ai_gateway.services.usage import LastAdministrator, UsageStore
 
 router = APIRouter(prefix="/v1/ugen")
@@ -121,3 +128,82 @@ async def save_gateway_settings(
     await store.save_setting(GATEWAY_SETTING, {**saved, **body.model_dump()})
     await audit_admin(request, store, "settings_updated", **body.model_dump())
     return body.model_dump()
+
+
+def _sso_view(request: Request, settings: OidcSettings) -> dict[str, Any]:
+    return settings.public_view() | {"callback_url": callback_url(request, settings)}
+
+
+@router.get("/sso")
+async def get_sso(store: UsageStoreDependency, request: Request) -> dict[str, Any]:
+    store = await _admin(request, store)
+    return _sso_view(request, oidc_settings(store))
+
+
+class SsoUpdate(BaseModel):
+    enabled: bool | None = None
+    issuer: str | None = None
+    client_id: str | None = None
+    # Empty keeps the stored secret; use clear_client_secret to remove it.
+    client_secret: str | None = None
+    clear_client_secret: bool = False
+    button_label: str | None = None
+    auto_create: bool | None = None
+    allowed_domains: list[str] | None = None
+    redirect_uri: str | None = None
+
+
+def _merged(store: UsageStore, body: SsoUpdate) -> OidcSettings:
+    current = oidc_settings(store)
+    changes = body.model_dump(exclude_unset=True, exclude={"clear_client_secret"})
+    if not changes.get("client_secret"):
+        changes["client_secret"] = (
+            "" if body.clear_client_secret else current.client_secret
+        )
+    try:
+        settings = OidcSettings.model_validate(current.model_dump() | changes)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()[0]["msg"]) from exc
+    if settings.enabled and not (settings.issuer and settings.client_id):
+        raise HTTPException(
+            status_code=422, detail="Single sign-on needs an issuer URL and a client ID"
+        )
+    return settings
+
+
+@router.put("/sso")
+async def save_sso(
+    body: SsoUpdate, store: UsageStoreDependency, request: Request
+) -> dict[str, Any]:
+    store = await _admin(request, store)
+    settings = _merged(store, body)
+    await store.save_setting(OIDC_SETTING, settings.sealed(get_secret_box()))
+    await audit_admin(
+        request,
+        store,
+        "sso_updated",
+        enabled=settings.enabled,
+        issuer=settings.issuer,
+        auto_create=settings.auto_create,
+    )
+    return _sso_view(request, settings)
+
+
+@router.post("/sso/test")
+async def test_sso(
+    body: SsoUpdate, store: UsageStoreDependency, request: Request
+) -> dict[str, Any]:
+    """Read the provider's discovery document for the issuer on the form."""
+    store = await _admin(request, store)
+    settings = _merged(store, body.model_copy(update={"enabled": False}))
+    if not settings.issuer:
+        raise HTTPException(status_code=422, detail="Enter the issuer URL")
+    try:
+        document = await get_oidc_client().discover(settings.issuer, fresh=True)
+    except OidcError as exc:
+        return {"ok": False, "message": str(exc)}
+    return {
+        "ok": True,
+        "message": "Found the provider",
+        "authorization_endpoint": document["authorization_endpoint"],
+    }

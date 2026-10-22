@@ -4,9 +4,12 @@ export const SIGNED_OUT_EVENT = 'ugen:signed-out';
 
 export const apiUrl = (import.meta.env.VITE_GATEWAY_URL || '/api').replace(/\/$/, '');
 
-export type User = { id: string; username: string; is_admin: boolean; avatar?: string | null };
+export type User = { id: string; username: string; is_admin: boolean; avatar?: string | null; sso?: boolean; has_password?: boolean; email?: string | null };
 export type Session = { token: string; user: User };
-export type AuthStatus = { accounts_enabled: boolean; has_users: boolean; registration_open: boolean };
+export type AuthStatus = { accounts_enabled: boolean; has_users: boolean; registration_open: boolean; sso?: { label: string } | null };
+
+/** Start single sign-on: the gateway sends the browser to the identity provider. */
+export const ssoStartUrl = () => `${apiUrl}/v1/ugen/auth/oidc/start`;
 
 /** Tokens are sent in an HTTP header, which only carries printable ASCII. */
 const isHeaderSafe = (token: string) => /^[\x21-\x7e]*$/.test(token);

@@ -44,6 +44,7 @@ def test_first_account_is_admin_and_locks_the_gateway(monkeypatch) -> None:
         "accounts_enabled": True,
         "has_users": False,
         "registration_open": True,
+        "sso": None,
     }
     assert env.chat().status_code == 200  # open until the first account exists
 

@@ -82,7 +82,9 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at REAL,
     avatar TEXT,
     disabled INTEGER NOT NULL DEFAULT 0,
-    monthly_budget_usd REAL
+    monthly_budget_usd REAL,
+    oidc_subject TEXT,
+    email TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -149,6 +151,8 @@ _ADDED_COLUMNS = {
         "avatar": "TEXT",
         "disabled": "INTEGER NOT NULL DEFAULT 0",
         "monthly_budget_usd": "REAL",
+        "oidc_subject": "TEXT",
+        "email": "TEXT",
     },
 }
 _GENESIS_HASH = "0" * 64
@@ -203,6 +207,10 @@ class UsageStore:
                     )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS requests_user_id ON requests (user_id)"
+        )
+        self._connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_subject "
+            "ON users (oidc_subject) WHERE oidc_subject IS NOT NULL"
         )
         self._connection.commit()
 
@@ -762,6 +770,71 @@ class UsageStore:
             ).fetchone()
         return float(row["spend"])
 
+    async def sso_user(
+        self, subject: str, email: str | None, name_hint: str, *, create: bool
+    ) -> dict[str, Any] | None:
+        """The account linked to a single sign-on identity, signing it in.
+
+        With ``create``, a missing account is made with a free username based
+        on ``name_hint`` and no password (the first account becomes the
+        administrator). Returns None when there is no account and ``create``
+        is false; raises ``AccountDisabled`` for a disabled account.
+        """
+        return await asyncio.to_thread(
+            self._sso_user, subject, email, name_hint, create
+        )
+
+    def _sso_user(
+        self, subject: str, email: str | None, name_hint: str, create: bool
+    ) -> dict[str, Any] | None:
+        now = time.time()
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE oidc_subject = ?", (subject,)
+            ).fetchone()
+            if row is not None:
+                if row["disabled"]:
+                    raise AccountDisabled(row["username"])
+                self._connection.execute(
+                    "UPDATE users SET last_login_at = ?, email = COALESCE(?, email) "
+                    "WHERE id = ?",
+                    (now, email, row["id"]),
+                )
+                return _user_view(dict(row) | {"last_login_at": now})
+            if not create:
+                return None
+            first = (
+                self._connection.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+                is None
+            )
+            username = name_hint
+            for attempt in range(2, 1000):
+                taken = self._connection.execute(
+                    "SELECT 1 FROM users WHERE username = ?", (username,)
+                ).fetchone()
+                if taken is None:
+                    break
+                username = f"{name_hint}-{attempt}"
+            row = {
+                "id": "usr_" + secrets.token_hex(8),
+                "username": username,
+                "password_hash": NO_PASSWORD,
+                "is_admin": int(first),
+                "created_at": now,
+                "last_login_at": now,
+                "oidc_subject": subject,
+                "email": email,
+            }
+            self._connection.execute(
+                "INSERT INTO users (id, username, password_hash, is_admin, created_at, "
+                "last_login_at, oidc_subject, email) VALUES (:id, :username, "
+                ":password_hash, :is_admin, :created_at, :last_login_at, "
+                ":oidc_subject, :email)",
+                row,
+            )
+        return _user_view(row)
+
     async def delete_user(self, user_id: str) -> bool:
         """Delete an account with its sessions, request metadata and feedback.
 
@@ -902,6 +975,10 @@ def _month_start() -> float:
     return datetime(now.year, now.month, 1, tzinfo=UTC).timestamp()
 
 
+# Stored for accounts created by single sign-on; no password matches it.
+NO_PASSWORD = "!"
+
+
 class UsernameTaken(ValueError):
     pass
 
@@ -924,6 +1001,9 @@ def _user_view(row: dict[str, Any]) -> dict[str, Any]:
         "avatar": row.get("avatar"),
         "disabled": bool(row.get("disabled") or 0),
         "monthly_budget_usd": row.get("monthly_budget_usd"),
+        "email": row.get("email"),
+        "sso": bool(row.get("oidc_subject")),
+        "has_password": row.get("password_hash", NO_PASSWORD) != NO_PASSWORD,
     }
 
 
