@@ -10,21 +10,16 @@ from ugen_ai_gateway.services.model_config import (
     to_routing,
 )
 
-LOCAL = {
-    "preset": "ollama",
-    "base_url": "http://localhost:11434/v1",
-    "model": "qwen3:8b",
+LOCAL = {"base_url": "http://localhost:11434/v1", "model": "qwen3:8b"}
+CLOUD = {
+    "base_url": "https://api.example.com/v1",
+    "api_key": "sk-test-1234567890",
+    "model": "big",
 }
 
 
 def body(**overrides: Any) -> dict[str, Any]:
-    return {
-        "local": LOCAL,
-        "cloud_enabled": False,
-        "cloud_active": "openai",
-        "cloud": {},
-        **overrides,
-    }
+    return {"local": LOCAL, "cloud_enabled": False, "cloud": {}, **overrides}
 
 
 class ModelsEnv(AccountEnv):
@@ -63,15 +58,12 @@ def test_saved_models_drive_the_gateway_without_a_restart(monkeypatch) -> None:
     env = ModelsEnv(monkeypatch)
     assert env.get().json()["source"] == "env"
 
-    cloud = {
-        "openai": {
-            "api_key": "sk-test-1234567890",
-            "model": "gpt-big",
-            "alias": "Smart",
-        }
-    }
     saved = env.put(
-        body(cloud_enabled=True, cloud=cloud, local={**LOCAL, "alias": "House"})
+        body(
+            cloud_enabled=True,
+            cloud={**CLOUD, "alias": "Smart"},
+            local={**LOCAL, "alias": "House"},
+        )
     )
     assert saved.status_code == 200, saved.text
 
@@ -79,63 +71,66 @@ def test_saved_models_drive_the_gateway_without_a_restart(monkeypatch) -> None:
     assert config["local_model"] == "House"
     assert config["cloud_model"] == "Smart"
     assert config["cloud_enabled"] is True
-    service = dependencies.get_gateway_service()
-    assert (
-        service.engine.default("cloud").provider.base_url == "https://api.openai.com/v1"
-    )
+    route = dependencies.get_gateway_service().engine.default("cloud")
+    assert route.provider.base_url == "https://api.example.com/v1"
+    assert route.model.id == "big"
 
 
 def test_api_keys_are_never_returned_and_kept_when_omitted(monkeypatch) -> None:
     env = ModelsEnv(monkeypatch)
-    cloud = {"gemini": {"api_key": "AIza-secret-abcd", "model": "gemini-x"}}
-    env.put(body(cloud_enabled=True, cloud_active="gemini", cloud=cloud))
+    env.put(body(cloud_enabled=True, cloud={**CLOUD, "api_key": "AIza-secret-abcd"}))
 
     view = env.get().json()
     assert "AIza-secret-abcd" not in str(view)
-    assert view["config"]["cloud"]["gemini"]["has_api_key"] is True
-    assert view["config"]["cloud"]["gemini"]["api_key_hint"] == "…abcd"
+    assert view["config"]["cloud"]["has_api_key"] is True
+    assert view["config"]["cloud"]["api_key_hint"] == "…abcd"
 
     # Saving again without a key keeps it; "" removes it.
     env.put(
         body(
-            cloud_enabled=True,
-            cloud_active="gemini",
-            cloud={"gemini": {"model": "gemini-y"}},
+            cloud_enabled=True, cloud={"base_url": CLOUD["base_url"], "model": "other"}
         )
     )
     stored = env.store.load_setting("models")
-    assert stored["cloud"]["gemini"]["api_key"] == "AIza-secret-abcd"
-    assert stored["cloud"]["gemini"]["model"] == "gemini-y"
-    env.put(body(cloud={"gemini": {"api_key": "", "model": "gemini-y"}}))
-    assert env.store.load_setting("models")["cloud"]["gemini"]["api_key"] == ""
+    assert stored["cloud"]["api_key"] == "AIza-secret-abcd"
+    assert stored["cloud"]["model"] == "other"
+    env.put(body(cloud={"api_key": ""}))
+    assert env.store.load_setting("models")["cloud"]["api_key"] == ""
 
 
-def test_switching_the_active_cloud_keeps_every_providers_key(monkeypatch) -> None:
+def test_turning_the_cloud_off_keeps_its_settings(monkeypatch) -> None:
     env = ModelsEnv(monkeypatch)
-    cloud = {
-        "openai": {"api_key": "sk-openai-key-1", "model": "gpt-x"},
-        "anthropic": {"api_key": "sk-ant-key-2222", "model": "claude-x"},
-    }
-    env.put(body(cloud_enabled=True, cloud_active="openai", cloud=cloud))
-    env.put(body(cloud_enabled=True, cloud_active="anthropic"))
+    env.put(body(cloud_enabled=True, cloud=CLOUD))
+    env.put(body(cloud_enabled=False))
 
-    route = dependencies.get_gateway_service().engine.default("cloud")
-    assert route.model.id == "claude-x"
-    assert route.provider.base_url == "https://api.anthropic.com/v1/"
-    assert (
-        env.store.load_setting("models")["cloud"]["openai"]["api_key"]
-        == "sk-openai-key-1"
-    )
+    assert dependencies.get_gateway_service().engine.default("cloud") is None
+    assert env.store.load_setting("models")["cloud"]["model"] == "big"
 
 
-def test_cloud_cannot_be_turned_on_without_a_key_and_model(monkeypatch) -> None:
+def test_cloud_cannot_be_turned_on_without_url_key_and_model(monkeypatch) -> None:
     env = ModelsEnv(monkeypatch)
-    response = env.put(body(cloud_enabled=True, cloud_active="gemini"))
-    assert response.status_code == 422
-    assert "Gemini" in response.json()["detail"]
+    for missing in ("base_url", "api_key", "model"):
+        cloud = {k: v for k, v in CLOUD.items() if k != missing}
+        response = env.put(body(cloud_enabled=True, cloud=cloud))
+        assert response.status_code == 422, missing
     assert (
         env.put(body(local={**LOCAL, "base_url": "localhost:11434"})).status_code == 422
     )
+
+
+def test_configuration_saved_with_presets_keeps_the_active_provider() -> None:
+    old = {
+        "local": {"preset": "ollama", **LOCAL},
+        "cloud_enabled": True,
+        "cloud_active": "anthropic",
+        "cloud": {
+            "openai": {"model": "gpt"},
+            "anthropic": {**CLOUD, "model": "claude"},
+        },
+    }
+    stored = StoredModels.model_validate(old)
+    assert stored.cloud.model == "claude"
+    assert stored.active_cloud() is not None
 
 
 def test_routing_file_takes_precedence(monkeypatch, tmp_path) -> None:
@@ -170,7 +165,7 @@ class FakeClient:
 
 def test_test_and_list_use_the_saved_key_unless_one_is_given(monkeypatch) -> None:
     env = ModelsEnv(monkeypatch)
-    env.put(body(cloud={"gemini": {"api_key": "saved-key-9999", "model": "gemini-a"}}))
+    env.put(body(cloud={**CLOUD, "api_key": "saved-key-9999"}))
     used: list[str] = []
     fake = FakeClient()
 
@@ -182,7 +177,7 @@ def test_test_and_list_use_the_saved_key_unless_one_is_given(monkeypatch) -> Non
         "ugen_ai_gateway.api.model_routes.create_openai_client", factory
     )
     probe = {
-        "target": "cloud:gemini",
+        "target": "cloud",
         "base_url": "https://g.example/v1",
         "model": "gemini-a",
     }
@@ -218,17 +213,14 @@ def test_env_settings_seed_the_first_configuration() -> None:
         cloud_model="gemini-flash",
     )
     seeded = from_settings(settings)
-    assert seeded.local.preset == "ollama" and seeded.local.model == "qwen"
-    assert seeded.cloud_enabled and seeded.cloud_active == "gemini"
-    assert seeded.cloud["gemini"].model == "gemini-flash"
+    assert seeded.local.model == "qwen"
+    assert seeded.cloud_enabled and seeded.cloud.model == "gemini-flash"
     routing = to_routing(seeded)
     assert [p.locality for p in routing.providers] == ["local", "cloud"]
 
 
 def test_no_cloud_when_disabled() -> None:
-    stored = StoredModels.model_validate(
-        {"local": LOCAL, "cloud": {"openai": {"api_key": "k", "model": "m"}}}
-    )
+    stored = StoredModels.model_validate({"local": LOCAL, "cloud": CLOUD})
     assert [p.name for p in to_routing(stored).providers] == ["local"]
 
 

@@ -37,8 +37,8 @@ docker compose up -d --build
 ```
 
 Open `http://<host>:7632` and create the administrator account. Then open the
-**Models** page (chip icon in the sidebar), pick your local model server and
-model, optionally add a cloud provider, and save. No `.env` file is needed;
+**Models** page (chip icon in the sidebar), enter your local model server's
+base URL and model, optionally a cloud model, and save. No `.env` file is needed;
 see [Models](#models).
 
 ## Deployment
@@ -55,7 +55,7 @@ needs Docker Compose 2.24 or later.
 2. Clone the repository and run `docker compose up -d --build`; check that
    `docker compose ps` shows the container as `healthy`.
 3. Open the dashboard and create the administrator account.
-4. On the **Models** page, set up the local model (and a cloud provider if you
+4. On the **Models** page, set up the local model (and a cloud model if you
    want one), use **Test connection**, and save. `curl
    http://localhost:7632/ready` then returns `{"status":"ready"}`.
 5. To stop strangers from signing up, create `.env` with
@@ -126,15 +126,15 @@ docker compose restart gateway
 Administrators manage model connections on the dashboard's **Models** page;
 changes apply to the next request, without a restart.
 
-- **Local model**: presets for Ollama (`http://localhost:11434/v1`) and LM
-  Studio (`http://localhost:1234/v1`), or any OpenAI-compatible base URL
-  (vLLM, llama.cpp server and so on). It answers simple requests and analyzes
-  every request for personal data.
-- **Cloud model**: presets for ChatGPT (OpenAI), Gemini and Claude, which all
-  speak the OpenAI Chat Completions API, or any OpenAI SDK-compatible base URL
-  (OpenRouter, Azure OpenAI, a company proxy). Each provider keeps its own key
-  and model, so switching the active provider is one click. The switch turns
-  cloud routing on or off.
+- **Local model**: any OpenAI-compatible server on your own hardware, such as
+  Ollama (`http://localhost:11434/v1`), LM Studio (`http://localhost:1234/v1`),
+  vLLM or a llama.cpp server. It answers simple requests and analyzes every
+  request for personal data.
+- **Cloud model**: any OpenAI SDK-compatible API, for example OpenAI
+  (`https://api.openai.com/v1`), Gemini
+  (`https://generativelanguage.googleapis.com/v1beta/openai/`), Claude
+  (`https://api.anthropic.com/v1/`) or OpenRouter. The switch turns cloud
+  routing on or off and keeps the settings either way.
 - **Load models** lists the provider's models; **Test connection** sends a
   tiny request with the settings on screen, before saving.
 - **Alias** gives a model a public name ([Model aliases](#model-aliases));

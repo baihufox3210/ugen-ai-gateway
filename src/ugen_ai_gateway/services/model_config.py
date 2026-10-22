@@ -1,13 +1,13 @@
 """Model connections managed from the dashboard and stored in the database.
 
-One local model, plus saved credentials for each cloud preset with one of
-them active. This replaces the LOCAL_* / CLOUD_* settings, which only seed
-the first configuration.
+One local and one cloud model, each an OpenAI-compatible endpoint. This
+replaces the LOCAL_* / CLOUD_* settings, which only seed the first
+configuration.
 """
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.routing.config import (
@@ -20,117 +20,70 @@ from ugen_ai_gateway.routing.config import (
     Target,
 )
 
-LocalPreset = Literal["ollama", "lmstudio", "custom"]
-CloudPreset = Literal["openai", "gemini", "anthropic", "custom"]
-
-# Every preset speaks the OpenAI Chat Completions API at this base URL.
-LOCAL_PRESETS: dict[str, dict[str, str]] = {
-    "ollama": {"label": "Ollama", "base_url": "http://localhost:11434/v1"},
-    "lmstudio": {"label": "LM Studio", "base_url": "http://localhost:1234/v1"},
-    "custom": {"label": "OpenAI-compatible", "base_url": ""},
-}
-CLOUD_PRESETS: dict[str, dict[str, str]] = {
-    "openai": {
-        "label": "ChatGPT",
-        "base_url": "https://api.openai.com/v1",
-        "key_url": "https://platform.openai.com/api-keys",
-    },
-    "gemini": {
-        "label": "Gemini",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "key_url": "https://aistudio.google.com/apikey",
-    },
-    "anthropic": {
-        "label": "Claude",
-        "base_url": "https://api.anthropic.com/v1/",
-        "key_url": "https://console.anthropic.com/settings/keys",
-    },
-    "custom": {"label": "OpenAI-compatible", "base_url": "", "key_url": ""},
-}
-
 
 class LocalModel(BaseModel):
-    preset: LocalPreset = "ollama"
     base_url: str = Field(default="", max_length=500)
     api_key: str = Field(default="", max_length=500)
     model: str = Field(default="", max_length=200)
     alias: str = Field(default="", max_length=100)
 
 
-class CloudModel(BaseModel):
-    base_url: str = Field(default="", max_length=500)
-    api_key: str = Field(default="", max_length=500)
-    model: str = Field(default="", max_length=200)
-    alias: str = Field(default="", max_length=100)
+class CloudModel(LocalModel):
     # USD per million tokens, for the cost and savings figures.
     input_cost_per_million: float = Field(default=0, ge=0)
     output_cost_per_million: float = Field(default=0, ge=0)
 
 
-def _default_clouds() -> dict[str, CloudModel]:
-    return {
-        name: CloudModel(base_url=preset["base_url"])
-        for name, preset in CLOUD_PRESETS.items()
-    }
-
-
 class StoredModels(BaseModel):
     local: LocalModel = Field(default_factory=LocalModel)
     cloud_enabled: bool = False
-    cloud_active: CloudPreset = "openai"
-    cloud: dict[CloudPreset, CloudModel] = Field(default_factory=_default_clouds)
+    cloud: CloudModel = Field(default_factory=CloudModel)
     # hybrid: rules when a request stays local anyway; llm: the local model
     # judges every request.
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
 
+    @model_validator(mode="before")
+    @classmethod
+    def from_preset_layout(cls, data: Any) -> Any:
+        """Read configurations saved with per-provider presets: keep the
+        provider that was active."""
+        if isinstance(data, dict) and "cloud_active" in data:
+            data = dict(data)
+            clouds = data.pop("cloud") or {}
+            data["cloud"] = clouds.get(data.pop("cloud_active"), {})
+            if isinstance(data.get("local"), dict):
+                data["local"] = {
+                    k: v for k, v in data["local"].items() if k != "preset"
+                }
+        return data
+
     def active_cloud(self) -> CloudModel | None:
-        cloud = self.cloud.get(self.cloud_active)
-        if self.cloud_enabled and cloud and cloud.api_key and cloud.model:
+        cloud = self.cloud
+        if self.cloud_enabled and cloud.base_url and cloud.api_key and cloud.model:
             return cloud
         return None
 
 
 def from_settings(settings: Settings) -> StoredModels:
     """The configuration the LOCAL_* / CLOUD_* settings describe."""
-    local_preset = next(
-        (
-            name
-            for name, preset in LOCAL_PRESETS.items()
-            if preset["base_url"] and preset["base_url"] == settings.local_base_url
-        ),
-        "custom" if settings.local_base_url else "ollama",
-    )
-    stored = StoredModels(
+    return StoredModels(
         local=LocalModel(
-            preset=local_preset,  # type: ignore[arg-type]
-            base_url=settings.local_base_url or LOCAL_PRESETS["ollama"]["base_url"],
+            base_url=settings.local_base_url,
             api_key="" if settings.local_api_key == "local" else settings.local_api_key,
             model=settings.local_model,
             alias=settings.local_model_alias,
         ),
-        analysis_mode="llm" if settings.analysis_mode == "llm" else "hybrid",
-    )
-    if settings.cloud_api_key or settings.cloud_model:
-        cloud_base = settings.cloud_base_url.rstrip("/")
-        active = next(
-            (
-                name
-                for name, preset in CLOUD_PRESETS.items()
-                if preset["base_url"]
-                and preset["base_url"].rstrip("/")
-                == (cloud_base or CLOUD_PRESETS["openai"]["base_url"])
-            ),
-            "custom",
-        )
-        stored.cloud_active = active  # type: ignore[assignment]
-        stored.cloud[active] = CloudModel(  # type: ignore[index]
-            base_url=settings.cloud_base_url or CLOUD_PRESETS[active]["base_url"],
+        cloud=CloudModel(
+            # The OpenAI SDK's default when CLOUD_BASE_URL was left blank.
+            base_url=settings.cloud_base_url
+            or ("https://api.openai.com/v1" if settings.cloud_api_key else ""),
             api_key=settings.cloud_api_key,
             model=settings.cloud_model,
             alias=settings.cloud_model_alias,
-        )
-        stored.cloud_enabled = bool(settings.cloud_api_key and settings.cloud_model)
-    return stored
+        ),
+        cloud_enabled=bool(settings.cloud_api_key and settings.cloud_model),
+        analysis_mode="llm" if settings.analysis_mode == "llm" else "hybrid",
+    )
 
 
 def to_routing(stored: StoredModels) -> RoutingConfig:
@@ -196,7 +149,6 @@ def public_view(stored: StoredModels) -> dict[str, Any]:
     return {
         "local": masked(stored.local),
         "cloud_enabled": stored.cloud_enabled,
-        "cloud_active": stored.cloud_active,
-        "cloud": {name: masked(model) for name, model in stored.cloud.items()},
+        "cloud": masked(stored.cloud),
         "analysis_mode": stored.analysis_mode,
     }

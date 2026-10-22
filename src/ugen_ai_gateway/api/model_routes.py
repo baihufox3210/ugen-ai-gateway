@@ -15,14 +15,7 @@ from ugen_ai_gateway.dependencies import (
     models_changed,
 )
 from ugen_ai_gateway.providers.openai_client import create_openai_client
-from ugen_ai_gateway.services.model_config import (
-    CLOUD_PRESETS,
-    LOCAL_PRESETS,
-    CloudPreset,
-    LocalPreset,
-    StoredModels,
-    public_view,
-)
+from ugen_ai_gateway.services.model_config import StoredModels, public_view
 from ugen_ai_gateway.services.usage import UsageStore
 
 router = APIRouter(prefix="/v1/ugen/models")
@@ -51,28 +44,23 @@ class _Connection(BaseModel):
         return _check_url(value)
 
 
-class LocalUpdate(_Connection):
-    preset: LocalPreset = "ollama"
-
-
 class CloudUpdate(_Connection):
     input_cost_per_million: float = Field(default=0, ge=0, le=10_000)
     output_cost_per_million: float = Field(default=0, ge=0, le=10_000)
 
 
 class ModelsUpdate(BaseModel):
-    local: LocalUpdate
+    local: _Connection = Field(default_factory=_Connection)
     cloud_enabled: bool = False
-    cloud_active: CloudPreset = "openai"
-    cloud: dict[CloudPreset, CloudUpdate] = Field(default_factory=dict)
+    cloud: CloudUpdate = Field(default_factory=CloudUpdate)
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
 
 
 class Probe(BaseModel):
     """A connection to try: ``target`` names whose saved key to use when
-    ``api_key`` is not given ("local" or "cloud:<preset>")."""
+    ``api_key`` is not given."""
 
-    target: str = Field(pattern=r"^(local|cloud:(openai|gemini|anthropic|custom))$")
+    target: Literal["local", "cloud"]
     base_url: str = Field(default="", max_length=500)
     api_key: str | None = Field(default=None, max_length=500)
     model: str = Field(default="", max_length=200)
@@ -104,7 +92,6 @@ async def get_models(store: UsageStoreDependency, request: Request) -> dict[str,
     return {
         "source": "routing_file" if get_settings().routing_config else source,
         "config": public_view(models),
-        "presets": {"local": LOCAL_PRESETS, "cloud": CLOUD_PRESETS},
     }
 
 
@@ -124,32 +111,21 @@ async def save_models(
     local = saved.local.model_copy(update=_strip(body.local))
     if body.local.api_key is not None:
         local.api_key = body.local.api_key.strip()
-    local.base_url = local.base_url or LOCAL_PRESETS[local.preset]["base_url"]
-    cloud = dict(saved.cloud)
-    for name, update in body.cloud.items():
-        merged = cloud[name].model_copy(update=_strip(update))
-        if update.api_key is not None:
-            merged.api_key = update.api_key.strip()
-        # A preset left without a URL uses the provider's own.
-        merged.base_url = merged.base_url or CLOUD_PRESETS[name]["base_url"]
-        cloud[name] = merged
+    cloud = saved.cloud.model_copy(update=_strip(body.cloud))
+    if body.cloud.api_key is not None:
+        cloud.api_key = body.cloud.api_key.strip()
 
     models = StoredModels(
         local=local,
         cloud_enabled=body.cloud_enabled,
-        cloud_active=body.cloud_active,
         cloud=cloud,
         analysis_mode=body.analysis_mode,
     )
-    active = models.cloud[models.cloud_active]
-    if models.cloud_enabled and not (active.api_key and active.model):
-        label = CLOUD_PRESETS[models.cloud_active]["label"]
+    if models.cloud_enabled and not models.active_cloud():
         raise HTTPException(
             status_code=422,
-            detail=f"{label} needs an API key and a model before the cloud can be on",
+            detail="The cloud needs a base URL, an API key and a model before it can be on",
         )
-    if models.cloud_enabled and not active.base_url:
-        raise HTTPException(status_code=422, detail="Enter the cloud base URL")
 
     await store.save_setting(MODELS_SETTING, models.model_dump())
     models_changed()
@@ -161,7 +137,7 @@ def _probe_client(probe: Probe, store: UsageStore | None):
     if probe.target == "local":
         saved_key, fallback = saved.local.api_key, "local"
     else:
-        saved_key, fallback = saved.cloud[probe.target.split(":")[1]].api_key, ""  # type: ignore[index]
+        saved_key, fallback = saved.cloud.api_key, ""
     key = probe.api_key.strip() if probe.api_key is not None else saved_key
     if not key and not fallback:
         raise HTTPException(status_code=422, detail="Enter the API key first")
