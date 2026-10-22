@@ -11,7 +11,7 @@ from tests.test_accounts import PASSWORD, AccountEnv, bearer
 from ugen_ai_gateway.services.oidc import OidcClient, username_from
 
 ISSUER = "https://id.example.com"
-CALLBACK = "http://testserver/v1/ugen/auth/oidc/callback"
+CALLBACK = "https://testserver/v1/ugen/auth/oidc/callback"
 
 
 def _jwt(claims: dict[str, Any]) -> str:
@@ -243,7 +243,7 @@ def test_callback_url_keeps_the_api_prefix(monkeypatch) -> None:
     env = SsoEnv(monkeypatch)
     admin = env.token("alice")
     view = env.client.get("/api/v1/ugen/sso", headers=bearer(admin)).json()
-    assert view["callback_url"] == "http://testserver/api/v1/ugen/auth/oidc/callback"
+    assert view["callback_url"] == "https://testserver/api/v1/ugen/auth/oidc/callback"
     env.configure(admin)
     start = env.client.get("/api/v1/ugen/auth/oidc/start", follow_redirects=False)
     query = parse_qs(urlparse(start.headers["location"]).query)
@@ -254,7 +254,7 @@ def test_callback_url_keeps_the_api_prefix(monkeypatch) -> None:
         follow_redirects=False,
     )
     # Back to the dashboard root, not under /api.
-    assert done.headers["location"].startswith("http://testserver/#sso=ugs_")
+    assert done.headers["location"].startswith("https://testserver/#sso=ugs_")
 
 
 def test_sso_account_password_and_deletion(monkeypatch) -> None:
@@ -352,3 +352,28 @@ def test_google_preset(monkeypatch) -> None:
     env.configure(admin, issuer=ISSUER)
     env.provider.token_issuer = "id.example.com"
     assert "different issuer" in unquote(env.sign_in())
+
+
+def test_callback_url_uses_https_behind_a_proxy(monkeypatch) -> None:
+    env = SsoEnv(monkeypatch)
+    admin = env.token("alice")
+
+    def callback(**headers: str) -> str:
+        return env.client.get(
+            "/api/v1/ugen/sso", headers=bearer(admin) | headers
+        ).json()["callback_url"]
+
+    path = "/api/v1/ugen/auth/oidc/callback"
+    # A tunnel such as cloudflared sends plain HTTP with the public host.
+    assert callback(host="ugen.example.com") == f"https://ugen.example.com{path}"
+    assert (
+        callback(host="ugen.example.com", **{"x-forwarded-proto": "https"})
+        == f"https://ugen.example.com{path}"
+    )
+    # Local and private addresses keep http.
+    assert callback(host="localhost:7632") == f"http://localhost:7632{path}"
+    assert callback(host="192.168.1.20:7632") == f"http://192.168.1.20:7632{path}"
+    assert (
+        callback(host="localhost:7632", **{"x-forwarded-proto": "https"})
+        == f"https://localhost:7632{path}"
+    )

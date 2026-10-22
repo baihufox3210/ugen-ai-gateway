@@ -6,6 +6,7 @@ becomes the administrator; others are members who see only their own usage.
 
 import base64
 import binascii
+import ipaddress
 import logging
 import re
 from functools import lru_cache
@@ -68,7 +69,33 @@ def callback_url(request: Request, settings: OidcSettings) -> str:
     if settings.redirect_uri:
         return settings.redirect_uri
     prefix = request.scope.get("ugen.api_prefix", "")
-    return str(request.base_url).rstrip("/") + prefix + CALLBACK_PATH
+    base = request.base_url
+    scheme = _public_scheme(request, base.hostname or "", base.scheme)
+    return f"{scheme}://{base.netloc}" + prefix + CALLBACK_PATH
+
+
+def _public_scheme(request: Request, host: str, scheme: str) -> str:
+    """The scheme people reach the gateway with. HTTPS proxies and tunnels
+    (Cloudflare Tunnel, Caddy, Tailscale) talk plain HTTP to the gateway, so
+    follow their X-Forwarded-Proto, and treat any public host as HTTPS:
+    providers such as Google refuse http:// callbacks there anyway. Trusting
+    the header is safe here; the provider only accepts registered URLs."""
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    if forwarded in ("http", "https"):
+        scheme = forwarded
+    if scheme == "http" and not _is_local_host(host):
+        return "https"
+    return scheme
+
+
+def _is_local_host(host: str) -> bool:
+    if host == "localhost" or host.endswith((".localhost", ".local")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local
 
 
 def _dashboard_url(redirect_uri: str) -> str:
