@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Footer from './Footer';
 import { apiFetch, errorMessage, startSso, type AuthStatus, type Session } from '../api';
+import LogoMark from './LogoMark';
 
 type Mode = 'login' | 'register';
 const USERNAME = /^[A-Za-z0-9_.-]{3,32}$/;
@@ -42,7 +43,7 @@ function AuthScreen({ status, onSignedIn, initialError = '' }: { status: AuthSta
 
   return <main className="auth-page">
     <section className="auth-card" aria-labelledby="auth-title">
-      <div className="auth-brand"><span className="brand-mark"><svg viewBox="0 0 40 40" aria-hidden="true"><path className="brand-gate" d="M11 27V15a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v12"/><path className="brand-route" d="M20 30v-7m0 0-7-7m7 7 7-7"/><circle className="brand-node" cx="13" cy="16" r="2.3"/><circle className="brand-node" cx="27" cy="16" r="2.3"/><circle className="brand-core" cx="20" cy="30" r="2.2"/></svg></span><span>ugen<span className="brand-dot">.</span><small>AI GATEWAY</small></span></div>
+      <div className="auth-brand"><span className="brand-mark"><LogoMark/></span><span>ugen<span className="brand-dot">.</span><small>AI GATEWAY</small></span></div>
       <span className="eyebrow">{firstAccount ? 'FIRST-TIME SETUP' : registering ? 'NEW ACCOUNT' : 'WELCOME BACK'}</span>
       <h1 id="auth-title">{firstAccount ? 'Create the administrator account' : registering ? 'Create an account' : 'Sign in'}</h1>
       <p>{firstAccount ? 'This first account manages the gateway: API keys, the audit log and other accounts’ usage.' : 'Requests are analyzed on this machine before any model sees them.'}</p>

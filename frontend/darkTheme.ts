@@ -17,6 +17,10 @@ const OVERRIDES: Record<string, string> = {
   '#fafcfb': '#121212',
   '#f6faf8': '#121212',
   '#eef2ef': '#0f0f0f',
+  // The logo keeps its colours in dark mode (the same as public/favicon.svg).
+  '#1f5c4e': '#9fd6c2',
+  '#7cc4a7': '#3f8f74',
+  '#163b37': '#ececec',
 };
 
 type Rgba = [number, number, number, number];
