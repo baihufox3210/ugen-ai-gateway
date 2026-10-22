@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { User } from '../api';
 import { copyText } from '../clipboard';
 import type { ConversationMemory, ConversationTurn, SharedInfo } from '../types';
@@ -7,6 +7,40 @@ import Avatar from './Avatar';
 // The Markdown and LaTeX renderer is large, so it loads with the first reply instead of the page.
 const LazyMarkdown = lazy(() => import('./Markdown'));
 const Markdown = memo(({ text }: { text: string }) => <Suspense fallback={<div className="markdown plain">{text}</div>}><LazyMarkdown text={text}/></Suspense>);
+
+/** Streamed Markdown split at blank lines into finished blocks and the one
+ * still being written. Only the last block is parsed again as text arrives;
+ * code fences and $$ math are never split, nor is an indented continuation. */
+export function markdownBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  const lines = text.split('\n');
+  let current: string[] = [];
+  let fence = '';
+  let math = false;
+  lines.forEach((line, index) => {
+    const opener = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence) {
+      if (opener && opener[0] === fence[0] && opener.length >= fence.length) fence = '';
+    } else if (opener) {
+      fence = opener;
+    } else if (line.trim() === '$$') {
+      math = !math;
+    } else if (!math && !line.trim() && current.length) {
+      const next = lines[index + 1];
+      if (next && !/^\s/.test(next)) {
+        blocks.push(current.join('\n'));
+        current = [];
+        return;
+      }
+    }
+    current.push(line);
+  });
+  blocks.push(current.join('\n'));
+  return blocks;
+}
+
+const StreamingMarkdown = ({ text }: { text: string }) =>
+  <>{markdownBlocks(text).map((block, index) => <Markdown key={index} text={block}/>)}</>;
 
 // Built-in rules that keep a request local, with the reason in plain words.
 const POLICY_RULES: Record<string, string> = {
@@ -44,7 +78,8 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
   // stops that until the next message.
   const followRef = useRef(true);
   useEffect(() => { followRef.current = true; }, [turns.length]);
-  useEffect(() => {
+  // Before paint, so new text never shows below the fold for a frame first.
+  useLayoutEffect(() => {
     if (threadRef.current && followRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
   }, [turns.length, turns.at(-1)?.result?.content, streamingText]);
   const hasTurns = turns.length > 0;
@@ -121,7 +156,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>
           <span className="message-avatar assistant-avatar">✳</span><div className="message-body"><div className="message-author"><b>UGen</b></div>{busy && index === turns.length - 1 && streamingText
-            ? <div className="markdown-wrap streaming"><Markdown text={streamingText}/></div>
+            ? <div className="markdown-wrap streaming"><StreamingMarkdown text={streamingText}/></div>
             : <p>{busy && index === turns.length - 1 ? (memoryBusy ? 'Saving older messages to memory…' : 'Analyzing and generating a response…') : 'No response received for this message'}</p>}</div>
         </article>}
       </section>;

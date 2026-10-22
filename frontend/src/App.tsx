@@ -18,6 +18,7 @@ import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, Analysis
 const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
 
 const PROVIDER_SELECTION_KEY = 'ugen-gateway-provider-selection';
+const STREAM_FRAME_MS = 50;
 type View = 'chat' | 'monitor';
 type DeleteAction = { type: 'conversation'; conversationId: string } | { type: 'turn'; conversationId: string; turnId: string } | { type: 'all' };
 function isSource(value: unknown): value is AnalysisSource {
@@ -217,6 +218,10 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
     const controller = new AbortController();
     abortRef.current = controller;
     let streamed = '';
+    // Show streamed text at most every STREAM_FRAME_MS: re-rendering the page
+    // for every token made long answers stutter.
+    let streamTimer = 0;
+    const showStreamed = () => { streamTimer = 0; setStreamingText(streamed); };
     // What this request was answered by, for a partial answer kept after Stop
     // or an error (the state values belong to the previous render).
     let streamModel = ''; let streamProvider: Provider = 'local';
@@ -257,7 +262,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
         if (event.type === 'guard' && event.kind === 'injection') setInjectionSignals(Array.isArray(event.signals) ? event.signals.map(String) : []);
         if (event.type === 'fallback') { setFallbackFrom(event.from === 'cloud' ? 'cloud' : 'local'); streamProvider = event.to === 'cloud' ? 'cloud' : 'local'; setProvider(streamProvider); }
         if (event.type === 'generation_started') { streamProvider = event.provider === 'cloud' ? 'cloud' : 'local'; streamModel = String(event.model ?? ''); setProvider(streamProvider); setModel(streamModel); setPhase('generating'); }
-        if (event.type === 'delta') { streamed += String(event.content ?? ''); setStreamingText(streamed); }
+        if (event.type === 'delta') { streamed += String(event.content ?? ''); if (!streamTimer) streamTimer = window.setTimeout(showStreamed, STREAM_FRAME_MS); }
         if (event.type === 'result') received.result = event.data as ChatResult;
         if (event.type === 'error') streamError = String(event.detail ?? 'The model request failed.');
       };
@@ -296,6 +301,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       if (controller.signal.aborted) { setPhase('idle'); return; }
       setError(message); setPhase('failed');
     } finally {
+      window.clearTimeout(streamTimer);
       abortRef.current = null;
     }
   }
