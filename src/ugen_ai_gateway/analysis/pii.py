@@ -1,6 +1,7 @@
 import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from typing import Any
 
 # Boundaries are ASCII-only on purpose: in Python, \w also matches CJK
 # characters, so "(?<!\w)" would miss "電話0912345678".
@@ -26,10 +27,17 @@ TAIWAN_LANDLINE_PATTERN = re.compile(
 TAIWAN_ID_PATTERN = re.compile(
     _NOT_AFTER_WORD + r"[A-Z][12]\d{8}" + _NOT_BEFORE_WORD, re.IGNORECASE
 )
-# Resident certificate: new format (letter + 8/9 + 8 digits) and old format
-# (two letters + 8 digits).
+# Resident certificate, new format: letter + 8/9 + 8 digits.
 TAIWAN_ARC_PATTERN = re.compile(
-    _NOT_AFTER_WORD + r"[A-Z][A-D89]\d{8}" + _NOT_BEFORE_WORD, re.IGNORECASE
+    _NOT_AFTER_WORD + r"[A-Z][89]\d{8}" + _NOT_BEFORE_WORD, re.IGNORECASE
+)
+# Old format (two letters + 8 digits) looks exactly like a 統一發票 number, so
+# it only counts right after a keyword naming it.
+TAIWAN_OLD_ARC_PATTERN = re.compile(
+    r"(?:居留證(?:號碼|號)?|居留|統一證號|ARC(?: no\.?| number)?|"
+    r"resident (?:permit|certificate)(?: no\.?| number)?)\s*[:：#]?\s*"
+    r"(?P<value>[A-Z][A-D]\d{8})" + _NOT_BEFORE_WORD,
+    re.IGNORECASE,
 )
 CREDIT_CARD_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 # Short numeric identifiers only count right after a keyword naming them.
@@ -123,9 +131,20 @@ def _is_valid_resident_certificate(value: str) -> bool:
     return checksum % 10 == 0
 
 
+# Issuer prefixes and lengths of payment cards (Visa, Mastercard, Amex, JCB,
+# UnionPay, Discover). A Luhn check alone passes 1 in 10 random numbers, such
+# as tracking or order numbers; real cards always carry one of these.
+_CARD_PREFIXES = re.compile(
+    r"4\d{12}(?:\d{3}){0,2}|5[1-5]\d{14}|2(?:2[2-9]|[3-6]\d|7[01])\d{13}|2720\d{12}|"
+    r"3[47]\d{13}|35\d{14,17}|62\d{14,17}|6(?:011|5\d{2})\d{12,15}"
+)
+
+
 def _is_valid_credit_card(value: str) -> bool:
     digits = [int(digit) for digit in value if digit.isdigit()]
     if not 13 <= len(digits) <= 19:
+        return False
+    if not _CARD_PREFIXES.fullmatch("".join(map(str, digits))):
         return False
 
     checksum = 0
@@ -199,6 +218,12 @@ DETECTORS: tuple[Detector, ...] = (
         TAIWAN_ARC_PATTERN,
         _is_valid_resident_certificate,
     ),
+    Detector(
+        "taiwan_resident_certificate",
+        "TAIWAN_ARC",
+        TAIWAN_OLD_ARC_PATTERN,
+        _is_valid_resident_certificate,
+    ),
     Detector("taiwan_ubn", "TAIWAN_UBN", TAIWAN_UBN_PATTERN, _is_valid_ubn),
     Detector("passport", "PASSPORT", PASSPORT_PATTERN),
     Detector("nhi_card", "NHI_CARD", NHI_CARD_PATTERN),
@@ -262,11 +287,19 @@ def has_slow_finders() -> bool:
     return bool(_extra_finders)
 
 
-def find_personal_data(text: str) -> list[PersonalDataMatch]:
+# Marks "use the installed custom terms" in find_personal_data.
+_INSTALLED = object()
+
+
+def find_personal_data(
+    text: str, *, custom_finder: Any = _INSTALLED
+) -> list[PersonalDataMatch]:
     """Return non-overlapping personal-data matches in text order.
 
     Detectors earlier in ``DETECTORS`` win when two matches overlap; registered
-    finders (NER) come last.
+    finders (NER) come last. ``custom_finder`` replaces the installed custom
+    terms for this call only (None for none), so previewing unsaved rules
+    never changes what concurrent requests detect.
     """
     found: list[PersonalDataMatch] = []
 
@@ -280,7 +313,8 @@ def find_personal_data(text: str) -> list[PersonalDataMatch]:
     for detector in DETECTORS:
         for start, end, value in detector.matches(text):
             add(PersonalDataMatch(detector.type, detector.label, start, end, value))
-    finders = [_custom_finder] if _custom_finder is not None else []
+    custom = _custom_finder if custom_finder is _INSTALLED else custom_finder
+    finders = [custom] if custom is not None else []
     for finder in [*finders, *_extra_finders]:
         for candidate in finder(text):
             add(candidate)

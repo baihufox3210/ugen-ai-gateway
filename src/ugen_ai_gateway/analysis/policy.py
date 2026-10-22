@@ -6,13 +6,27 @@ from pydantic import BaseModel
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis
 
 ProviderName = Literal["local", "cloud"]
-_COMPLEXITY_CUES = re.compile(
-    r"architecture|architectural|system design|design a|trade[ -]?offs?|compare|"
-    r"comparison|evaluate|analy[sz]e|step[ -]?by[ -]?step|comprehensive|"
-    r"multi[ -]?step|implement|refactor|debug|optimi[sz]e|strategy|"
-    r"架構|設計|比較|取捨|評估|規劃|策略|逐步|多步驟|整合|重構|除錯|優化|完整方案|全面分析",
+# Words that on their own mark a demanding technical task.
+_STRONG_CUES = re.compile(
+    r"architecture|architectural|system design|trade[ -]?offs?|step[ -]?by[ -]?step|"
+    r"comprehensive|multi[ -]?step|refactor|debug|"
+    r"design (?:a|an) (?:[\w-]+ )?(?:system|service|api|database|schema|architecture|"
+    r"pipeline|protocol|limiter|cache|queue|platform)|"
+    r"架構|取捨|逐步|多步驟|重構|除錯|完整方案|全面分析|"
+    r"設計.{0,8}?(?:系統|資料庫|API|架構|演算法|平台)",
     re.IGNORECASE,
 )
+# Everyday words that also appear in simple requests ("設計一句祝福語",
+# "比較一下兩種水果"): they only count with more signal, see below.
+_COMMON_CUES = re.compile(
+    r"design|compare|comparison|evaluate|analy[sz]e|implement|optimi[sz]e|strategy|"
+    r"設計|比較|評估|規劃|策略|整合|優化",
+    re.IGNORECASE,
+)
+# A common cue counts on a request at least this long, with each CJK
+# character counted twice (Chinese says more per character).
+_CUE_LENGTH = 120
+_CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 
 
 class RoutingDecision(BaseModel):
@@ -40,11 +54,20 @@ class RoutingPolicy:
         if analysis.complexity != "simple":
             return analysis
 
-        has_complex_cue = bool(_COMPLEXITY_CUES.search(user_input))
         has_multiple_parts = (
             len(re.findall(r"(?:^|\n)\s*(?:\d+[.)、]|[-*])\s+", user_input)) >= 2
         )
         is_long = len(user_input) >= 700
+        common_cues = {cue.lower() for cue in _COMMON_CUES.findall(user_input)}
+        # A strong cue, or an everyday one backed by length or by a second cue
+        # ("比較三種方案並規劃時程"), so short casual requests stay local.
+        has_complex_cue = bool(_STRONG_CUES.search(user_input)) or bool(
+            common_cues
+            and (
+                len(common_cues) >= 2
+                or len(user_input) + len(_CJK.findall(user_input)) >= _CUE_LENGTH
+            )
+        )
         if not (has_complex_cue or has_multiple_parts or is_long):
             return analysis
 

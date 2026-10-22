@@ -11,6 +11,7 @@ from ugen_ai_gateway.analysis.custom_rules import (
     rules_finder,
 )
 from ugen_ai_gateway.analysis.pii import find_personal_data, set_custom_finder
+from ugen_ai_gateway.api import privacy_routes
 
 
 def rule(**fields: Any) -> dict[str, Any]:
@@ -91,11 +92,13 @@ def test_custom_terms_never_reach_the_cloud_and_come_back_in_the_reply(
     assert env.save(rules=[rule()]).status_code == 200
     reply = env.chat(
         env.admin,
-        messages=[{"role": "user", "content": "Compare the Falcon rollout plans"}],
+        messages=[
+            {"role": "user", "content": "Compare the Falcon rollout architecture"}
+        ],
     )
     sent = str(env.cloud.calls[-1]["messages"])
     assert "Falcon" not in sent and "[PROJECT_1]" in sent
-    assert "Falcon rollout plans" in reply.json()["content"]
+    assert "Falcon rollout architecture" in reply.json()["content"]
 
 
 def test_keep_local_rules_stay_on_the_local_model(
@@ -105,19 +108,24 @@ def test_keep_local_rules_stay_on_the_local_model(
     env.save(rules=[rule(keep_local=True)])
     falcon = env.chat(
         env.admin,
-        messages=[{"role": "user", "content": "Compare the Falcon rollout plans"}],
+        messages=[
+            {"role": "user", "content": "Compare the Falcon rollout architecture"}
+        ],
     )
     assert falcon.json()["provider"] == "local"
     assert falcon.json()["routing"]["rule"] == "privacy.never_cloud"
     email = env.chat(
         env.admin,
-        messages=[{"role": "user", "content": "Compare mail options for a@b.co"}],
+        messages=[
+            {"role": "user", "content": "Compare the mail architecture for a@b.co"}
+        ],
     )
     # Built-in personal data is redacted, not kept local.
     assert email.json()["provider"] == "cloud"
     assert "a@b.co" not in str(env.cloud.calls[-1]["messages"])
     plain = env.chat(
-        env.admin, messages=[{"role": "user", "content": "Compare rollout plans"}]
+        env.admin,
+        messages=[{"role": "user", "content": "Compare the rollout architecture"}],
     )
     assert plain.json()["provider"] == "cloud"
 
@@ -136,6 +144,40 @@ def test_try_it_previews_without_saving(monkeypatch) -> None:
     assert preview["keeps_local"] == ["custom:project"]
     # Nothing was saved, so the term is not detected afterwards.
     assert find_personal_data("Falcon") == []
+
+
+def test_try_it_never_changes_what_other_requests_detect(monkeypatch) -> None:
+    env = PrivacyEnv(monkeypatch)
+    env.save(rules=[rule()])
+    seen_during_preview: list[list[str]] = []
+    real_rules_finder = privacy_routes.rules_finder
+
+    def spying_rules_finder(rules: Any) -> Any:
+        preview_finder = real_rules_finder(rules)
+
+        def find(text: str) -> Any:
+            # A request running at this moment, on another thread, uses the
+            # saved rules: "Falcon" must still be detected.
+            seen_during_preview.append([m.value for m in find_personal_data("Falcon")])
+            return preview_finder(text)
+
+        return find
+
+    monkeypatch.setattr(privacy_routes, "rules_finder", spying_rules_finder)
+    preview = env.client.post(
+        "/v1/ugen/privacy/test",
+        json={
+            "text": "Osprey ships",
+            "settings": {"rules": [rule(name="Bird", pattern="Osprey")]},
+        },
+        headers=bearer(env.admin),
+    ).json()
+
+    assert preview["redacted"] == "[BIRD_1] ships"
+    assert seen_during_preview and all(
+        seen == ["Falcon"] for seen in seen_during_preview
+    )
+    assert [m.value for m in find_personal_data("Falcon")] == ["Falcon"]
 
 
 def test_only_administrators_manage_privacy(monkeypatch) -> None:
