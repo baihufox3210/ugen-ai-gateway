@@ -610,7 +610,12 @@ and cached results never leave the process. `routing.analysis_source` and the
 Complexity is judged from the latest user message, so a short follow-up in a
 long conversation is not sent to the cloud just because of the history, while
 personal data is checked in every user and system message. Each message's
-analysis is cached, so earlier turns are not analyzed again.
+analysis is cached, so earlier turns are not analyzed again. When cached
+results have expired (for example after a break in a long conversation), the
+latest message is analyzed on its own while all the older ones share a single
+call that only looks for personal data, run alongside it: however long the
+conversation, a request needs at most two model calls, and the values found
+are cached per message again.
 
 The analysis model classifies each request. Moderate and complex tasks use the cloud
 provider when cloud routing is enabled. Strong complexity cues in the prompt,
@@ -715,7 +720,10 @@ uv run python -m spacy download zh_core_web_sm
 
 Then set `PII_NER=presidio` (`PII_NER_LANGUAGE`, default `zh`;
 `PII_NER_SPACY_MODEL`, default `zh_core_web_sm`; `PII_NER_SCORE_THRESHOLD`,
-default `0.5`).
+default `0.5`). The spaCy model takes milliseconds per scan, so with it on the
+gateway redacts input on a worker thread and checks streamed replies once per
+sentence (rather than per token), also on a worker thread; other requests keep
+streaming meanwhile. Replies then arrive a sentence at a time.
 
 Redaction is reversible. Each value is replaced with a numbered placeholder such
 as `[EMAIL_1]`; the same value gets the same placeholder across every message in

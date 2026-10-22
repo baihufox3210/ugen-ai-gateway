@@ -256,6 +256,12 @@ def supported_types() -> frozenset[str]:
     )
 
 
+def has_slow_finders() -> bool:
+    """Whether a slow detector (named-entity recognition) is registered, so
+    callers should keep detection off the event loop and run it less often."""
+    return bool(_extra_finders)
+
+
 def find_personal_data(text: str) -> list[PersonalDataMatch]:
     """Return non-overlapping personal-data matches in text order.
 
