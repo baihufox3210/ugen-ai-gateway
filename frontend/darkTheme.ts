@@ -2,20 +2,21 @@ import type { Plugin } from 'vite';
 
 /**
  * Dark mode without a second stylesheet: every hex color in style.css becomes
- * a CSS variable whose light value is the original and whose dark value keeps
- * the hue and inverts the lightness, so text, surfaces and accents keep their
- * contrast. Shadows and overlays stay dark. The theme follows the system unless
+ * a CSS variable whose light value is the original and whose dark value
+ * inverts the lightness, so text, surfaces and accents keep their contrast.
+ * Surfaces, borders and text turn neutral black and grey; only accent colors
+ * keep their hue. Shadows and overlays stay dark. The theme follows the system unless
  * <html data-theme="light|dark"> picks one.
  */
 
 // Hand-tuned dark values where the formula is not good enough (light hex → dark hex).
 const OVERRIDES: Record<string, string> = {
-  '#fff': '#14201c',
-  '#ffffff': '#14201c',
-  '#f3f7f5': '#0d1513',
-  '#fafcfb': '#101a17',
-  '#f6faf8': '#101a17',
-  '#eef2ef': '#111b18',
+  '#fff': '#161616',
+  '#ffffff': '#161616',
+  '#f3f7f5': '#0a0a0a',
+  '#fafcfb': '#121212',
+  '#f6faf8': '#121212',
+  '#eef2ef': '#0f0f0f',
 };
 
 type Rgba = [number, number, number, number];
@@ -57,8 +58,9 @@ export function darkColor(hex: string): string {
   if (alpha < 1 && l < 0.45) return `#000000${hex2(Math.min(1, alpha * 1.8))}`;
   // Invert lightness into 0.09–0.90 so surfaces are not pure black and text not pure white.
   const nextL = 0.09 + (1 - l) * 0.81;
-  // Very light, tinted surfaces become dark tinted surfaces; soften their saturation.
-  const nextS = l > 0.85 ? s * 0.55 : s;
+  // Surfaces, borders and text (very light, very dark or muted colors) become
+  // neutral greys; accents keep their hue.
+  const nextS = l > 0.8 || l < 0.3 || s < 0.25 ? 0 : s;
   const [r, g, b] = fromHsl(h, nextS, nextL);
   return `#${hex2(r)}${hex2(g)}${hex2(b)}${alpha < 1 ? hex2(alpha) : ''}`;
 }
