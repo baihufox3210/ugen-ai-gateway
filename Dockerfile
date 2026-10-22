@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # Build the dashboard.
-FROM node:22-slim AS dashboard
+# Built on the build machine's platform: the output is the same for every image.
+FROM --platform=$BUILDPLATFORM node:22-slim AS dashboard
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci

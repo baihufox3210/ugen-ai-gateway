@@ -1,5 +1,6 @@
 # UGen AI Gateway
 
+[![CI](https://github.com/baihufox3210/ugen-ai-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/baihufox3210/ugen-ai-gateway/actions/workflows/ci.yml)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.143%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)](#deployment)
@@ -13,13 +14,17 @@ original values restored, so users see a complete answer while the cloud model
 never saw the data.
 
 - **Privacy first**: reversible redaction of emails, phone numbers, national
-  IDs, cards, keys and more; data types you choose never leave the machine.
+  IDs, cards, keys and more, plus your own terms (project code names, client
+  names); data types you choose never leave the machine.
 - **Smart routing**: simple requests stay on the local model, complex ones go
-  to the cloud; YAML rules for several providers and models; automatic
-  fallback when a provider is down.
-- **OpenAI-compatible API**: point any OpenAI SDK or tool at `/v1`.
-- **Dashboard**: chat with live routing, usage and cost savings, accounts with
-  an administrator, per-team API keys with budgets and rate limits, and a
+  to the cloud; extra models and routing rules set up on the dashboard;
+  automatic fallback when a provider is down.
+- **OpenAI-compatible API**: point any OpenAI SDK or tool at `/v1`, including
+  local `/v1/embeddings`.
+- **Dashboard**: streaming chat with long-term conversation memory, stop,
+  edit and regenerate, search and export; usage and cost savings; dark mode.
+- **Teams**: accounts with roles and monthly budgets, single sign-on (OpenID
+  Connect), per-app API keys with budgets and rate limits, and a
   tamper-evident audit log.
 
 ## Quick start
@@ -36,10 +41,10 @@ cd ugen-ai-gateway
 docker compose up -d --build
 ```
 
-Open `http://<host>:7632` and create the administrator account. Then open the
-**Models** page (chip icon in the sidebar), enter your local model server's
-base URL and model, optionally a cloud model, and save. No `.env` file is needed;
-see [Models](#models).
+Open `http://<host>:7632` and create the administrator account. The dashboard
+then points you to the **Models** page (also under the gear icon in the
+sidebar): enter your local model server's base URL and model, optionally a
+cloud model, and save. No `.env` file is needed; see [Models](#models).
 
 ## Deployment
 
@@ -58,10 +63,18 @@ needs Docker Compose 2.24 or later.
 4. On the **Models** page, set up the local model (and a cloud model if you
    want one), use **Test connection**, and save. `curl
    http://localhost:7632/ready` then returns `{"status":"ready"}`.
-5. To stop strangers from signing up, create `.env` with
-   `ALLOW_REGISTRATION=false` and run `docker compose up -d`.
+5. To stop strangers from signing up, turn **Sign-up** off on the **Users**
+   page, or set up [single sign-on](#single-sign-on).
 6. For other apps that call the API, create API keys on the dashboard's
    API keys page. Once any account or key exists, the API requires a key.
+
+Instead of building on the server, you can run the image that GitHub Actions
+publishes for `linux/amd64` and `linux/arm64`: set
+`UGEN_IMAGE=ghcr.io/baihufox3210/ugen-ai-gateway:latest` in `.env`, then run
+`docker compose pull && docker compose up -d`. Tags are `latest` (the main
+branch), `sha-<commit>`, and `1.2.3` / `1.2` for `v1.2.3` releases. A new
+GitHub package is private until you make it public in its package settings
+(or run `docker login ghcr.io` on the server first).
 
 The compose file uses host networking, so the container reaches a model
 server on the same machine at `localhost` (Ollama's default
@@ -100,17 +113,23 @@ gateway over HTTPS whenever it is reachable beyond your own network.
 
 ```sh
 git pull && docker compose up -d --build   # update; data is kept
+docker compose pull && docker compose up -d   # update, with UGEN_IMAGE set
 docker compose logs -f gateway             # follow the logs
 ```
 
-Accounts, API keys, usage metadata and the audit log live in one SQLite file
-in the `ugen-data` volume, which survives rebuilds (`docker compose down -v`
-deletes it). Conversations are never stored on the server; they stay in each
-user's browser. To take a consistent backup while the gateway runs:
+Accounts, API keys, settings, usage metadata and the audit log live in one
+SQLite file in the `ugen-data` volume, which survives rebuilds (`docker
+compose down -v` deletes it). Provider API keys and the single sign-on client
+secret in it are encrypted with `secret.key`, which is created next to the
+database on first use (or derived from `SECRET_KEY` when set). **Back up
+`secret.key` together with the database**: without it, stored provider keys
+must be entered again. Conversations are never stored on the server; they stay
+in each user's browser. To take a consistent backup while the gateway runs:
 
 ```sh
 docker compose exec gateway python -c "import sqlite3; sqlite3.connect('/app/data/ugen.db').backup(sqlite3.connect('/app/data/backup.db'))"
 docker compose cp gateway:/app/data/backup.db ./ugen-backup.db
+docker compose cp gateway:/app/data/secret.key ./ugen-secret.key
 ```
 
 To restore a backup, copy it in and load it the same way, then restart:
@@ -120,6 +139,17 @@ docker compose cp ./ugen-backup.db gateway:/app/data/restore.db
 docker compose exec gateway python -c "import sqlite3; sqlite3.connect('/app/data/restore.db').backup(sqlite3.connect('/app/data/ugen.db'))"
 docker compose restart gateway
 ```
+
+A forgotten administrator password is reset from the server:
+
+```sh
+docker compose exec gateway python -m ugen_ai_gateway.cli list-users
+docker compose exec gateway python -m ugen_ai_gateway.cli reset-password <username>
+docker compose exec gateway python -m ugen_ai_gateway.cli make-admin <username>
+```
+
+`reset-password` prints a random password (or takes `--password`) and signs
+the account out everywhere.
 
 ## Models
 
@@ -139,10 +169,19 @@ changes apply to the next request, without a restart.
   tiny request with the settings on screen, before saving.
 - **Alias** gives a model a public name ([Model aliases](#model-aliases));
   the optional **prices** per million tokens feed the cost and savings figures.
+- **Analysis model** (optional): a smaller local model that classifies
+  requests, so routing is faster; the local model is used otherwise.
+- **Embedding model** (optional): a local model that serves
+  [`/v1/embeddings`](#post-v1embeddings).
 - **Routing**: *Fast* (rules decide, `hybrid`) or *Thorough* (the local model
   judges every request, `llm`); see [Routing behavior](#routing-behavior).
+- **More models**: add further local or cloud connections, then **routing
+  rules** that send matching requests to them. Rules match on complexity, task
+  type, personal data (any, or specific types) and request length; they are
+  checked from the top and the first match wins, before the default policy.
+  Every model is also listed by `GET /v1/models` and can be requested by name.
 
-API keys are stored in the gateway's database and never sent back to the
+API keys are encrypted in the gateway's database and never sent back to the
 browser; the page shows only their last four characters. Until the page is
 saved, the `LOCAL_*` / `CLOUD_*` settings below are used as the starting
 values; a `ROUTING_CONFIG` file overrides the page entirely.
@@ -154,11 +193,13 @@ advanced settings; it documents every one. The main ones:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `ALLOW_REGISTRATION` | Allow sign-ups after the first (administrator) account | `true` |
+| `ALLOW_REGISTRATION` | Allow sign-ups after the first (administrator) account, until changed on the Users page | `true` |
+| `SECRET_KEY` | Encrypts stored provider keys; when blank, `secret.key` next to the database is used | blank |
 | `ROUTING_CONFIG` | YAML with several providers, models and rules; overrides the Models page ([Routing rules](#routing-rules-and-multiple-models)) | blank |
 | `LOCAL_*`, `CLOUD_*` | Starting values for the Models page before it is first saved | blank |
 | `SESSION_TTL_DAYS` | How long a dashboard sign-in lasts | `30` |
 | `GATEWAY_HOST`, `GATEWAY_PORT` | Docker only: listen address and port | `0.0.0.0`, `7632` |
+| `UGEN_IMAGE` | Docker only: image to run, e.g. `ghcr.io/baihufox3210/ugen-ai-gateway:latest` | built locally |
 | `USAGE_DB_PATH` | SQLite database; empty turns off accounts and usage tracking | `data/ugen.db` (Docker: `/app/data/ugen.db`) |
 | `GATEWAY_API_KEY`, `ADMIN_API_KEY` | Optional fixed keys with full access (for scripts); `APP_ENV=production` requires `GATEWAY_API_KEY` | blank |
 | `INJECTION_ACTION`, `OUTPUT_PII_ACTION` | Guards ([Guards](#guards)) | `flag`, `redact` |
@@ -170,7 +211,8 @@ advanced settings; it documents every one. The main ones:
 After changing `.env`, apply it with `docker compose up -d`.
 
 `/health` reports process liveness; `/ready` checks that the local model
-endpoint (and configured cloud endpoint) can be reached.
+endpoint (and configured cloud endpoint) can be reached, caching the result
+for 10 seconds, and lists the reasons when it is not ready.
 
 ## API
 
@@ -197,8 +239,10 @@ response. `stream: true` returns Server-Sent Events chunks ending with
 `data: [DONE]`; `stream_options: {"include_usage": true}` adds a final usage
 chunk. `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`,
 `presence_penalty`, `frequency_penalty`, and `seed` are forwarded to the
-selected model. Tool calling and `n > 1` are not supported yet and return HTTP
-`400`.
+selected model. Tool calling (`tools`) and `n > 1` are reserved for a later
+version and return HTTP `400`. Image parts in messages are passed through
+without being inspected for personal data, so keep them on the local model
+when that matters.
 
 The `model` field picks the routing mode:
 
@@ -221,14 +265,31 @@ The routing decision is reported in response headers (`X-UGen-Provider`,
 #### `GET /v1/models`
 
 Lists `ugen-auto`, `ugen-local`, `ugen-cloud` (when cloud routing is enabled),
-and the configured model names.
+`ugen-embed` (when an embedding model is set), and the configured model names.
+
+#### `POST /v1/embeddings`
+
+Standard embeddings request (`input` as a string or list, optional
+`encoding_format` and `dimensions`), answered by the local embedding model set
+on the Models page. Embeddings never go to the cloud, so the text is not
+redacted. `model` may be `ugen-embed` or the embedding model's name; without
+an embedding model the endpoint returns HTTP `404`.
 
 ### Accounts
 
 The dashboard requires signing in. The first account created becomes the
-administrator; later accounts are members. Administrators manage API keys,
-export the audit log and see every request's usage; members see only their own.
-`ALLOW_REGISTRATION=false` closes sign-up once the first account exists.
+administrator; later accounts are members. Administrators manage models,
+privacy rules, accounts and API keys, export the audit log and see every
+request's usage; members see only their own.
+
+The **Users** page (administrators) lists every account with this month's
+requests and cloud cost, and can make or remove administrators, disable an
+account (which signs it out), reset a password (shown once), delete an
+account, set a **monthly cloud budget** per person (once reached, that
+person's requests stay on the local model; `routing.rule` is `user.budget`),
+and open or close **Sign-up**. Account changes are recorded in the audit log.
+Everyone can change their password, profile picture and theme on the
+**Account** page.
 
 - `GET /v1/ugen/auth/status` tells the sign-in screen whether accounts are
   enabled, whether any exist and whether sign-up is open.
@@ -243,14 +304,45 @@ export the audit log and see every request's usage; members see only their own.
 - `PUT /v1/ugen/auth/me/avatar` with `{"image": "data:image/webp;base64,..."}`
   sets the profile picture (PNG, JPEG or WebP, at most 200 KB; the dashboard
   crops and resizes it to 160×160 first) and `{"image": null}` removes it.
-- `DELETE /v1/ugen/auth/me` with `{"password": "..."}` deletes the account,
+- `PUT /v1/ugen/auth/me/password` with `{"current_password": "...",
+  "new_password": "..."}` changes the password and signs out other browsers.
+- `DELETE /v1/ugen/auth/me` with `{"password": "..."}` (or `{"username":
+  "..."}` for an account that only uses single sign-on) deletes the account,
   its sessions, and its request metadata and feedback. Audit entries stay
   (they never name the user, and removing them would break the hash chain).
   If the last administrator leaves, the oldest remaining account is promoted.
 
+- `GET /v1/ugen/users`, `PATCH /v1/ugen/users/{id}` (`is_admin`, `disabled`,
+  `monthly_budget_usd`), `POST /v1/ugen/users/{id}/reset-password`,
+  `DELETE /v1/ugen/users/{id}`, and `GET`/`PUT /v1/ugen/settings`
+  (`allow_registration`) back the Users page.
+
 Passwords are stored as salted scrypt hashes and session tokens as SHA-256
 hashes, in the same SQLite database as usage (`USAGE_DB_PATH`). Without a
 database, accounts are off and the dashboard opens without sign-in.
+
+### Single sign-on
+
+People can sign in with any OpenID Connect provider: Google, Microsoft Entra
+ID, Okta, Keycloak, Authentik and others. On the **Users** page:
+
+1. Copy the **Callback URL** shown there and register it with your provider
+   as a redirect URI of a new web application (OAuth client).
+2. Enter the provider's **issuer URL** (for example
+   `https://accounts.google.com`, or
+   `https://login.microsoftonline.com/<tenant>/v2.0`), the **client ID** and
+   **client secret**, and use **Check provider**.
+3. Optionally limit sign-in to **allowed email domains**, and choose whether
+   an account is created the first time someone signs in. Turn it on and save.
+
+The sign-in screen then shows the button. The gateway uses the authorization
+code flow with PKCE, and checks the ID token's issuer, audience, nonce and
+expiry. Accounts are linked by the provider's subject identifier; usernames
+come from the provider's preferred username or email. An SSO account can set
+a password on the Account page to also sign in with it. The client secret is
+encrypted like provider keys. Serve the gateway over HTTPS, and if a proxy
+changes the address the gateway sees, set the callback URL override under
+**Advanced**.
 
 ### Authentication and API keys
 
@@ -293,9 +385,10 @@ so running several workers needs a shared store, such as Redis, behind that
 interface.
 
 In the dashboard, the account button in the sidebar opens the Account page
-(profile picture, sign out, delete account) and the key icon opens the API
-keys page, where an administrator creates, lists and revokes keys and exports
-the audit log.
+(profile picture, password, theme, sign out, delete account) and, for
+administrators, the gear icon opens the Users, Models, Privacy and API keys
+pages. On the API keys page an administrator creates, lists and revokes keys
+and exports the audit log.
 
 ### Dashboard endpoints
 
@@ -347,6 +440,37 @@ These power the bundled dashboard and expose more detail than the OpenAI API.
   metadata, newest first.
 - `POST /v1/ugen/feedback` with `{"request_id": "...", "rating": 1}` (or `-1`)
   records feedback on an answer; `request_id` is the `id` of the chat response.
+- `POST /v1/ugen/memory` with `{"previous": "...", "messages": [...]}` folds
+  older messages into a conversation memory with the local model and returns
+  `{"memory": "..."}` (see [Conversation memory](#conversation-memory)).
+- `GET`/`PUT /v1/ugen/models`, `POST /v1/ugen/models/test` and
+  `POST /v1/ugen/models/list` back the Models page; `GET`/`PUT
+  /v1/ugen/privacy` and `POST /v1/ugen/privacy/test` the Privacy page; and
+  `GET`/`PUT /v1/ugen/sso` and `POST /v1/ugen/sso/test` single sign-on.
+
+### Using the dashboard
+
+- **Conversations** are kept in your browser, listed in the sidebar with
+  search (titles and message text). Double-click a title or use ✎ to rename,
+  and **Export** a conversation as Markdown or JSON.
+- **Stop** ends an answer while it streams. Each answer can be copied or
+  regenerated, and each of your messages edited and sent again. Code blocks
+  are highlighted and have a copy button; Markdown tables and LaTeX math
+  (`$…$`, `$$…$$`) are rendered.
+- **Theme**: System, Light or Dark, on the Account page.
+
+### Conversation memory
+
+Long conversations are not cut off. When a conversation's text passes about
+20,000 characters, the dashboard asks the gateway to fold the oldest turns
+into the conversation's **memory**: the local model writes down the facts,
+decisions, preferences, names and open tasks worth keeping, merged with the
+memory so far. Recent turns (about 10,000 characters, at least the last two)
+are sent as they are, and the memory is sent before them as a system message,
+so it is analyzed and redacted like any other text. The memory never leaves
+the local model while it is written, and is stored with the conversation in
+the browser. A marker in the conversation shows how many earlier messages it
+covers.
 
 ### Guards
 
@@ -425,6 +549,11 @@ Model analysis results are cached in memory for identical request text
 `ANALYSIS_CACHE_TTL_SECONDS`, default `600`). Cache keys are SHA-256 hashes,
 and cached results never leave the process. `routing.analysis_source` and the
 `analysis_completed` stream event report `llm`, `rules`, or `cache`.
+
+Complexity is judged from the latest user message, so a short follow-up in a
+long conversation is not sent to the cloud just because of the history, while
+personal data is checked in every user and system message. Each message's
+analysis is cached, so earlier turns are not analyzed again.
 
 The analysis model classifies each request. Moderate and complex tasks use the cloud
 provider when cloud routing is enabled. Strong complexity cues in the prompt,
@@ -545,6 +674,22 @@ The response's `routing.redacted_values` reports how many values were replaced.
 | `REDACT_LOCAL` | Also redact requests routed to the local model | `true` |
 | `RESTORE_REDACTED` | Put original values back into the reply | `true` |
 
+### Privacy page
+
+Administrators can extend detection on the dashboard's **Privacy** page:
+
+- **Custom terms**: keyword lists (one term per line) or regular expressions
+  for things that must not reach the cloud as written, such as project code
+  names, client names or internal hostnames. Matches are replaced with
+  placeholders like `[PROJECT_1]` and restored in the reply. A term can also
+  keep any request containing it on the local model.
+- **Never send to the cloud**: data types (email, national ID, card number
+  and the rest) that keep a request on the local model whenever they appear,
+  even in Cloud mode. A `privacy.never_cloud` list in a `ROUTING_CONFIG` file
+  is added to these.
+- **Try it** shows what the cloud would receive for sample text, using the
+  rules on screen before they are saved.
+
 Requests routed to the cloud are always redacted. Common
 patterns are detected locally as a backstop if the analysis model misses them.
 The current analysis and redaction flow applies to text; image or other
@@ -556,6 +701,18 @@ reports personal data it cannot point to exactly (a type without the values),
 the request is kept on the local model (`routing.rule` is
 `privacy.unredactable`) and is only refused when no local model is available. PII detection is a safeguard,
 not a guarantee that every sensitive value will be recognized.
+
+## Security
+
+- Serve the gateway over HTTPS beyond your own network ([HTTPS](#https)).
+- Responses carry a strict Content Security Policy (scripts only from the
+  gateway itself), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`
+  and a no-referrer policy.
+- Passwords use scrypt; session tokens and API keys are stored only as
+  SHA-256 hashes; provider keys and the SSO client secret are encrypted with
+  `secret.key` / `SECRET_KEY`.
+- Sign-in attempts are rate limited per IP, and account, key, model, privacy
+  and sign-on changes are recorded in the tamper-evident audit log.
 
 ## Limits and errors
 
@@ -585,7 +742,9 @@ the API on port `7632` (set `UGEN_BACKEND_PORT` for another port). When
 `frontend/dist` exists (after `npm run build`), the API server also serves the
 dashboard at `/`, as the Docker image does.
 
-Run the tests and checks with:
+GitHub Actions runs these checks on every push and pull request
+(`.github/workflows/ci.yml`) and publishes the Docker image from `main` and
+`v*` tags (`.github/workflows/docker.yml`). Run them locally with:
 
 ```sh
 uv run pytest

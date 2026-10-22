@@ -1,10 +1,13 @@
 # docker compose up -d --build
+# Or run the published image instead of building: set
+# UGEN_IMAGE=ghcr.io/baihufox3210/ugen-ai-gateway:latest in .env, then
+#   docker compose pull && docker compose up -d
 # Models are set up on the dashboard's Models page. .env is optional: copy
 # .env.example to change ports or other advanced settings.
 services:
   gateway:
     build: .
-    image: ugen-ai-gateway
+    image: ${UGEN_IMAGE:-ugen-ai-gateway}
     env_file:
       - path: .env
         required: false
