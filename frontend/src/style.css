@@ -298,7 +298,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .channel-hash{color:#91aaa0;font-weight:500}
 .conversation-live{display:flex;flex:none;align-items:center;gap:7px;border:1px solid #e1ebe5;border-radius:20px;padding:6px 9px;color:#81968c;font-size:8px;white-space:nowrap}
 .conversation-live i{width:6px;height:6px;border-radius:50%;background:#54aa83;box-shadow:0 0 0 3px #54aa831c}
-.conversation-thread{flex:1;min-height:0;overflow:auto;margin:0 -7px;padding:2px 7px;overscroll-behavior:contain;scroll-behavior:smooth;scrollbar-color:#d9e6df transparent;scrollbar-width:thin}
+.conversation-thread{flex:1;min-height:0;overflow:auto;margin:0 -7px;padding:2px 7px;overscroll-behavior:contain;scrollbar-color:#d9e6df transparent;scrollbar-width:thin}
 .turn{padding:17px 10px;border-bottom:1px solid #edf1ef;border-radius:9px;animation:turn-in .35s var(--ease) both;transition:background .2s var(--ease-out)}
 .turn:first-child{padding-top:1px}
 .turn:last-child{border-bottom:0}
@@ -322,6 +322,9 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .markdown p:last-child{margin-bottom:0}
 .markdown h2,.markdown h3,.markdown h4,.markdown h5,.markdown h6{margin:14px 0 6px;color:#25443a;line-height:1.45}
 .markdown>:first-child{margin-top:0}
+/* While streaming, each finished block is its own .markdown (see StreamingMarkdown). */
+.streaming>.markdown+.markdown{margin-top:9px}
+.streaming>.markdown+.markdown>:first-child:is(h2,h3,h4,h5,h6){margin-top:14px}
 .markdown h2{font-size:14px}
 .markdown h3{font-size:12px}
 .markdown h4,.markdown h5,.markdown h6{font-size:11px}
@@ -434,7 +437,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 
 /* Live streaming reply */
 /* The caret is drawn after the last block so blocks keep their normal layout while text arrives. */
-.streaming .markdown>:is(p,h2,h3,h4,h5,h6):last-child::after,.streaming .markdown>:is(ul,ol):last-child>li:last-child::after,.streaming .markdown>blockquote:last-child>p:last-child::after,.streaming .markdown>.code-block:last-child code::after{content:'';display:inline-block;width:7px;height:14px;margin-left:2px;vertical-align:-2px;border-radius:1px;background:#65a580;animation:cursor-blink 1s steps(2,end) infinite}
+.streaming .markdown:last-child>:is(p,h2,h3,h4,h5,h6):last-child::after,.streaming .markdown:last-child>:is(ul,ol):last-child>li:last-child::after,.streaming .markdown:last-child>blockquote:last-child>p:last-child::after,.streaming .markdown:last-child>.code-block:last-child code::after{content:'';display:inline-block;width:7px;height:14px;margin-left:2px;vertical-align:-2px;border-radius:1px;background:#65a580;animation:cursor-blink 1s steps(2,end) infinite}
 .route-mode.fallback{background:#fdf1e3;color:#a4692a}
 .result-foot .fallback-note{border-color:#f0dcc2;background:#fff8ef;color:#a4692a;font-weight:600}
 .result-foot .policy-note{border-color:#cde5da;background:#f0f8f4;color:#2f7a5f;font-weight:600}
