@@ -927,6 +927,52 @@ class UsageStore:
                 raise StorageFull(total)
         return now
 
+    async def link_sso(
+        self, user_id: str, subject: str, email: str | None
+    ) -> dict[str, Any]:
+        """Link a single sign-on identity to an existing account. Raises
+        ``IdentityTaken`` (with the other account's username) when another
+        account already uses it, and ``KeyError`` for an unknown account."""
+        return await asyncio.to_thread(self._link_sso, user_id, subject, email)
+
+    def _link_sso(
+        self, user_id: str, subject: str, email: str | None
+    ) -> dict[str, Any]:
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            other = self._connection.execute(
+                "SELECT username FROM users WHERE oidc_subject = ? AND id != ?",
+                (subject, user_id),
+            ).fetchone()
+            if other is not None:
+                raise IdentityTaken(other["username"])
+            updated = self._connection.execute(
+                "UPDATE users SET oidc_subject = ?, email = COALESCE(?, email) "
+                "WHERE id = ?",
+                (subject, email, user_id),
+            ).rowcount
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        if not updated or row is None:
+            raise KeyError(user_id)
+        return _user_view(dict(row))
+
+    async def unlink_sso(self, user_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._unlink_sso, user_id)
+
+    def _unlink_sso(self, user_id: str) -> dict[str, Any]:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET oidc_subject = NULL WHERE id = ?", (user_id,)
+            )
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(user_id)
+        return _user_view(dict(row))
+
     async def delete_user(self, user_id: str) -> bool:
         """Delete an account with its sessions, request metadata and feedback.
 
@@ -1072,6 +1118,10 @@ def _month_start() -> float:
 
 # Stored for accounts created by single sign-on; no password matches it.
 NO_PASSWORD = "!"
+
+
+class IdentityTaken(ValueError):
+    """Another account already uses this single sign-on identity."""
 
 
 class StorageFull(ValueError):

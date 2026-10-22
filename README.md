@@ -359,7 +359,14 @@ The sign-in screen then shows the button. The gateway uses the authorization
 code flow with PKCE, and checks the ID token's issuer, audience, nonce and
 expiry. Accounts are linked by the provider's subject identifier; usernames
 come from the provider's preferred username or email. An SSO account can set
-a password on the Account page to also sign in with it. The client secret is
+a password on the Account page to also sign in with it.
+
+**Linking an existing account**: on the **Account** page, *Link Google
+account* (or *Link single sign-on*) connects the provider to the account you
+are signed in to, so an administrator who registered with a password can then
+sign in with Google too. If that Google account already signed in here once,
+it created a separate account: delete that one on the **Users** page first.
+*Unlink* is available to accounts that also have a password. The client secret is
 encrypted like provider keys. Serve the gateway over HTTPS, and if a proxy
 changes the address the gateway sees, set the callback URL override under
 **Advanced**.

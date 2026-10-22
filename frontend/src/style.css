@@ -708,3 +708,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .sso-steps a{color:#2f7a5f}
 .sso-steps code{font:10px var(--mono)}
 .account-button small.sync-error{color:#a1574f}
+.toast{position:fixed;left:50%;bottom:24px;z-index:60;display:flex;align-items:center;gap:10px;max-width:min(560px,calc(100vw - 32px));transform:translateX(-50%);border:1px solid #d9e7e1;border-radius:12px;padding:10px 10px 10px 16px;background:#fff;box-shadow:0 12px 30px #173e3822;color:#263e37;font-size:12px;line-height:1.5}
+.toast.ok{border-color:#9ccbb5}
+.toast.error{border-color:#e2b8b2;color:#8a3f37}
+.toast .icon-button{flex:none}

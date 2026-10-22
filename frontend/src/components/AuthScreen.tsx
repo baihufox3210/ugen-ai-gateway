@@ -50,7 +50,7 @@ function AuthScreen({ status, onSignedIn, initialError = '' }: { status: AuthSta
         <button type="button" role="tab" aria-selected={registering} className={registering ? 'selected' : ''} onClick={() => switchMode('register')}>Create account</button>
       </div>}
       {status.sso && <>
-        <button type="button" className="cancel-button sso-button" onClick={startSso}>{status.sso.provider === 'google' && <GoogleLogo/>}{status.sso.label}</button>
+        <button type="button" className="cancel-button sso-button" onClick={() => startSso()}>{status.sso.provider === 'google' && <GoogleLogo/>}{status.sso.label}</button>
         <div className="auth-divider"><span>or use a username</span></div>
       </>}
       <form className="auth-form" onSubmit={submit}>

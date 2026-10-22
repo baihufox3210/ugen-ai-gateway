@@ -30,9 +30,10 @@ function loadProviderSelection(): ProviderSelection {
   } catch { return 'auto'; }
 }
 
-type Props = { user: User | null; onSignOut: () => void; onAccountDeleted: () => void; onUserChange: (user: User) => void };
+type Notice = { ok: boolean; message: string };
+type Props = { user: User | null; onSignOut: () => void; onAccountDeleted: () => void; onUserChange: (user: User) => void; notice?: Notice | null; onDismissNotice?: () => void };
 
-function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
+function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismissNotice }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -297,6 +298,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange }: Props) {
     <section className="chat-column"><ResponsePanel setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
     {settingsPage && <SettingsDialog user={user} page={settingsPage} onPageChange={setSettingsPage} onUserChange={onUserChange} onSignOut={() => void flush().finally(onSignOut)} onClose={() => setSettingsPage(null)} onModelsSaved={() => setModelsVersion(version => version + 1)}
       onAccountDeleted={() => { forgetLocalHistory(user); onAccountDeleted(); }}/>}
+    {notice && <div className={`toast ${notice.ok ? 'ok' : 'error'}`} role="status"><span>{notice.message}</span><button className="icon-button" onClick={onDismissNotice} aria-label="Dismiss">×</button></div>}
     {deleteAction && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteAction(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="modal-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.8h6V7m2.5 0-.8 12h-9.4l-.8-12m4 3.5v5m3-5v5"/></svg></span><span className="eyebrow">DELETE CONFIRMATION</span><h2 id="delete-title">{deleteAction.type === 'all' ? 'Clear all conversations?' : deleteAction.type === 'turn' ? 'Delete this exchange?' : 'Delete this conversation?'}</h2><p id="delete-description">{deleteAction.type === 'all'
       ? user ? 'Every conversation in your account will be permanently deleted, on every device.' : 'Every conversation saved on this device will be permanently deleted.'
       : user ? 'This removes it from your history on every device.' : 'This removes it from the history saved on this device.'}</p><div className="modal-actions"><button className="cancel-button" onClick={() => setDeleteAction(null)}>Cancel</button><button className="danger-button" onClick={performDelete}>Delete</button></div></section></div>}
