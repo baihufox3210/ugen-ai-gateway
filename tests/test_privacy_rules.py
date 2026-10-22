@@ -36,8 +36,8 @@ def test_regex_rules_and_validation() -> None:
         CustomRule(name="Empty", kind="regex", pattern="x*")
     with pytest.raises(ValueError, match="different"):
         PrivacySettings(rules=[rule(), rule(name="project")])
-    with pytest.raises(ValueError, match="Unknown data types"):
-        PrivacySettings(never_cloud=["shoe_size"])
+    # Settings saved by older versions may carry never_cloud; it is ignored.
+    assert PrivacySettings(never_cloud=["email"]).never_cloud_types() == []
 
 
 class PrivacyEnv(ModelsEnv):
@@ -98,11 +98,11 @@ def test_custom_terms_never_reach_the_cloud_and_come_back_in_the_reply(
     assert "Falcon rollout plans" in reply.json()["content"]
 
 
-def test_keep_local_rules_and_builtin_types_stay_on_the_local_model(
+def test_keep_local_rules_stay_on_the_local_model(
     monkeypatch,
 ) -> None:
     env = PrivacyEnv(monkeypatch)
-    env.save(rules=[rule(keep_local=True)], never_cloud=["email"])
+    env.save(rules=[rule(keep_local=True)])
     falcon = env.chat(
         env.admin,
         messages=[{"role": "user", "content": "Compare the Falcon rollout plans"}],
@@ -113,7 +113,9 @@ def test_keep_local_rules_and_builtin_types_stay_on_the_local_model(
         env.admin,
         messages=[{"role": "user", "content": "Compare mail options for a@b.co"}],
     )
-    assert email.json()["provider"] == "local"
+    # Built-in personal data is redacted, not kept local.
+    assert email.json()["provider"] == "cloud"
+    assert "a@b.co" not in str(env.cloud.calls[-1]["messages"])
     plain = env.chat(
         env.admin, messages=[{"role": "user", "content": "Compare rollout plans"}]
     )
@@ -141,6 +143,4 @@ def test_only_administrators_manage_privacy(monkeypatch) -> None:
     member = env.token("bob")
     assert env.client.get("/v1/ugen/privacy", headers=bearer(member)).status_code == 403
     view = env.client.get("/v1/ugen/privacy", headers=bearer(env.admin)).json()
-    assert {"type": "credit_card", "label": "Credit card number"} in view[
-        "builtin_types"
-    ]
+    assert view == {"rules": []}

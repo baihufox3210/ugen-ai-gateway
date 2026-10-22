@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react';
 import { apiFetch, errorMessage } from '../api';
 
 type Rule = { name: string; kind: 'keyword' | 'regex'; pattern: string; case_sensitive: boolean; keep_local: boolean };
-type Privacy = { never_cloud: string[]; rules: Rule[]; builtin_types: { type: string; label: string }[] };
+type Privacy = { rules: Rule[] };
 type Preview = { redacted: string; matches: { type: string; label: string; value: string }[]; keeps_local: string[] };
 
 const blankRule = (): Rule => ({ name: '', kind: 'keyword', pattern: '', case_sensitive: false, keep_local: false });
 
 function PrivacyPage() {
   const [data, setData] = useState<Privacy | null>(null);
-  const [neverCloud, setNeverCloud] = useState<string[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -18,7 +17,7 @@ function PrivacyPage() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewError, setPreviewError] = useState('');
 
-  function apply(privacy: Privacy) { setData(privacy); setNeverCloud(privacy.never_cloud); setRules(privacy.rules); }
+  function apply(privacy: Privacy) { setData(privacy); setRules(privacy.rules); }
 
   useEffect(() => {
     apiFetch('/v1/ugen/privacy')
@@ -28,7 +27,7 @@ function PrivacyPage() {
 
   if (error) return <div className="settings-section first"><div className="error-box" role="alert"><span>{error}</span></div></div>;
   if (!data) return <div className="settings-section first"><p>Loading…</p></div>;
-  const settings = () => ({ never_cloud: neverCloud, rules: rules.map(rule => ({ ...rule, name: rule.name.trim() })) });
+  const settings = () => ({ rules: rules.map(rule => ({ ...rule, name: rule.name.trim() })) });
   const update = (index: number, patch: Partial<Rule>) => setRules(current => current.map((rule, i) => i === index ? { ...rule, ...patch } : rule));
 
   async function save() {
@@ -51,6 +50,7 @@ function PrivacyPage() {
   }
 
   return <>
+    <p className="models-note">Personal data (emails, phone numbers, ID, passport and card numbers, keys, passwords and more) is always redacted automatically before any model sees it, and restored in the reply. Add your own terms below to redact them too.</p>
     <div className="settings-section first">
       <h3>Custom terms</h3>
       <p>Words or patterns that must not reach the cloud as written, such as project code names, client names or internal hostnames. They are replaced by placeholders before any cloud request and restored in the reply.</p>
@@ -71,14 +71,6 @@ function PrivacyPage() {
         </div>
       </div>)}</div>
       <button type="button" className="cancel-button add-rule" onClick={() => setRules(current => [...current, blankRule()])}>+ Add a term</button>
-    </div>
-
-    <div className="settings-section">
-      <h3>Never send to the cloud</h3>
-      <p>Requests containing these always stay on the local model, even in Cloud mode. Other personal data is still redacted before the cloud sees it.</p>
-      <div className="type-grid">{data.builtin_types.map(item => <label key={item.type} className={neverCloud.includes(item.type) ? 'selected' : ''}>
-        <input type="checkbox" checked={neverCloud.includes(item.type)} onChange={event => setNeverCloud(current => event.target.checked ? [...current, item.type] : current.filter(type => type !== item.type))}/>{item.label}
-      </label>)}</div>
     </div>
 
     <div className="settings-section">

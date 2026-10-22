@@ -1,15 +1,12 @@
-"""Privacy rules managed by administrators: custom sensitive terms and the
-data types that never go to the cloud."""
+"""Privacy rules managed by administrators: custom sensitive terms, redacted
+like built-in personal data (which is always redacted)."""
 
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ugen_ai_gateway.analysis.custom_rules import (
-    BUILTIN_TYPES,
-    PrivacySettings,
-)
+from ugen_ai_gateway.analysis.custom_rules import PrivacySettings
 from ugen_ai_gateway.analysis.pii import find_personal_data
 from ugen_ai_gateway.analysis.redaction import RedactionVault
 from ugen_ai_gateway.api.access import audit_admin, check_admin_access
@@ -29,12 +26,7 @@ UsageStoreDependency = Annotated[UsageStore | None, Depends(get_usage_store)]
 
 
 def _view(privacy: PrivacySettings) -> dict[str, Any]:
-    return {
-        **privacy.model_dump(),
-        "builtin_types": [
-            {"type": key, "label": label} for key, label in BUILTIN_TYPES.items()
-        ],
-    }
+    return privacy.model_dump()
 
 
 @router.get("")
@@ -59,7 +51,6 @@ async def save_privacy(
         request,
         store,
         "privacy_updated",
-        never_cloud=body.never_cloud,
         rules=[
             {"name": rule.name, "kind": rule.kind, "keep_local": rule.keep_local}
             for rule in body.rules

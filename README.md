@@ -15,7 +15,7 @@ never saw the data.
 
 - **Privacy first**: reversible redaction of emails, phone numbers, national
   IDs, cards, keys and more, plus your own terms (project code names, client
-  names); data types you choose never leave the machine.
+  names), always on, with nothing to configure.
 - **Smart routing**: simple requests stay on the local model, complex ones go
   to the cloud; extra models and routing rules set up on the dashboard;
   automatic fallback when a provider is down.
@@ -679,10 +679,6 @@ Administrators can extend detection on the dashboard's **Privacy** page:
   names, client names or internal hostnames. Matches are replaced with
   placeholders like `[PROJECT_1]` and restored in the reply. A term can also
   keep any request containing it on the local model.
-- **Never send to the cloud**: data types (email, national ID, card number
-  and the rest) that keep a request on the local model whenever they appear,
-  even in Cloud mode. A `privacy.never_cloud` list in a `ROUTING_CONFIG` file
-  is added to these.
 - **Try it** shows what the cloud would receive for sample text, using the
   rules on screen before they are saved.
 

@@ -9,23 +9,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ugen_ai_gateway.analysis.pii import PersonalDataMatch, value_pattern
 
-# Built-in types an administrator can keep off the cloud, with readable names.
-BUILTIN_TYPES: dict[str, str] = {
-    "email": "Email address",
-    "taiwan_mobile": "Mobile phone number",
-    "taiwan_landline": "Landline phone number",
-    "taiwan_id": "National ID number",
-    "taiwan_resident_certificate": "Resident certificate number",
-    "taiwan_ubn": "Business ID (統一編號)",
-    "passport": "Passport number",
-    "nhi_card": "Health insurance card number",
-    "credit_card": "Credit card number",
-    "api_key": "API key",
-    "jwt": "Access token (JWT)",
-    "private_key": "Private key",
-    "password": "Password",
-}
-
 
 class CustomRule(BaseModel):
     name: str = Field(min_length=1, max_length=40)
@@ -89,16 +72,9 @@ class CustomRule(BaseModel):
 
 
 class PrivacySettings(BaseModel):
-    never_cloud: list[str] = Field(default_factory=list)
+    # All built-in personal data is always redacted; settings saved by older
+    # versions may still carry a "never_cloud" list, which is ignored.
     rules: list[CustomRule] = Field(default_factory=list, max_length=100)
-
-    @field_validator("never_cloud")
-    @classmethod
-    def known_types(cls, value: list[str]) -> list[str]:
-        unknown = set(value) - set(BUILTIN_TYPES)
-        if unknown:
-            raise ValueError(f"Unknown data types: {', '.join(sorted(unknown))}")
-        return list(dict.fromkeys(value))
 
     @model_validator(mode="after")
     def unique_names(self) -> "PrivacySettings":
@@ -108,10 +84,7 @@ class PrivacySettings(BaseModel):
         return self
 
     def never_cloud_types(self) -> list[str]:
-        return [
-            *self.never_cloud,
-            *(rule.type for rule in self.rules if rule.keep_local),
-        ]
+        return [rule.type for rule in self.rules if rule.keep_local]
 
 
 def rules_finder(rules: list[CustomRule]):
