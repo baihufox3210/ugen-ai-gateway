@@ -572,7 +572,7 @@ conversation; a marker shows how many earlier messages the memory covers.
 
 ### System prompts
 
-Up to four prompts go ahead of every conversation, as one system message, in
+Up to three prompts go ahead of every conversation, as one system message, in
 this order:
 
 1. The **system prompt** an administrator sets at the top of the Models page
@@ -584,15 +584,12 @@ this order:
    audit log records each change with its length only.
 2. Each account's **custom instructions**, set on the Account page: who they
    are or how they like answers.
-3. The conversation's **role**: a named prompt such as "Engineer", picked with
-   the Prompt button next to the message box. Every account can keep its own
-   roles on the Account page; administrators can also share roles with
-   everyone (`GET`/`POST /v1/ugen/roles`, `PUT`/`DELETE /v1/ugen/roles/{id}`).
-4. The conversation's own **prompt**, set in the same dialog.
+3. The conversation's own **prompt**, set with the Prompt button next to the
+   message box, for example "You are a senior engineer".
 
-Layers 2 to 4 apply only to a signed-in account's requests from the dashboard,
-never to API keys (an app writes its own prompts). Instructions and roles are
-stored encrypted like saved conversations.
+Layers 2 and 3 apply only to a signed-in account's requests from the dashboard,
+never to API keys (an app writes its own prompts). Instructions are stored
+encrypted like saved conversations.
 
 Then come the conversation memory and the client's own system messages. All
 of it is analyzed and redacted like any other text, so keep personal data out

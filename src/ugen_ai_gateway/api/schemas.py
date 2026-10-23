@@ -51,8 +51,7 @@ class ChatRequest(BaseModel):
         min_length=1, max_length=MAX_CHAT_MESSAGES
     )
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    # The dashboard's conversation settings (see prompt_routes).
-    role_id: str | None = Field(default=None, max_length=64)
+    # The dashboard's prompt for this conversation (see prompt_routes).
     conversation_prompt: str = Field(default="", max_length=MAX_PROMPT_CHARACTERS)
 
     @field_validator("messages")

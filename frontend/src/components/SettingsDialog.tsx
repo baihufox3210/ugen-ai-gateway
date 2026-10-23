@@ -6,7 +6,6 @@ import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
 import PrivacyPage from './PrivacyPage';
 import PromptEditor from './PromptEditor';
-import { RolesSection } from './Roles';
 import UsersPage from './UsersPage';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 
@@ -183,8 +182,6 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
       description="Added to every conversation you have here, after the administrators' system prompt: for example who you are or how you like answers. It is stored encrypted, and personal data in it is redacted before anything reaches a cloud model, like the rest of your messages."
       placeholder={'e.g. I am a nurse in Taipei. Answer in Traditional Chinese and keep it short.'}/>
 
-    <RolesSection isAdmin={user.is_admin}/>
-
     <SsoAccountSection user={user} onUserChange={onUserChange}/>
 
     <PasswordSection hasPassword={user.has_password !== false} onPasswordSet={() => onUserChange({ ...user, has_password: true })}/>
@@ -319,7 +316,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
       {current === 'users' && <UsersPage currentUserId={user?.id ?? null}/>}
       {current === 'models' && <>
         <PromptEditor first title="System prompt" path="/v1/ugen/system-prompt" maxLength={8000}
-          description="The top layer: added ahead of every request to every model, from the dashboard and the API alike, before each person's custom instructions and any conversation's role or prompt, which add to it but never override it. Until saved, a default introduces the assistant as Kiri. Use it for house rules such as language, tone or topics to decline. Avoid personal data here: it is redacted like any other text."
+          description="The top layer: added ahead of every request to every model, from the dashboard and the API alike, before each person's custom instructions and any conversation's own prompt, which add to it but never override it. Until saved, a default introduces the assistant as Kiri. Use it for house rules such as language, tone or topics to decline. Avoid personal data here: it is redacted like any other text."
           placeholder={'e.g. You are the assistant of Acme Clinic. Answer in Traditional Chinese and never give a diagnosis.'}/>
         <ModelsPage onSaved={onModelsSaved}/>
       </>}
