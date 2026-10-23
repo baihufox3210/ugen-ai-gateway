@@ -56,7 +56,7 @@ def fake_presidio(monkeypatch) -> dict[str, Any]:
     return created
 
 
-def test_presidio_finder_maps_entities_to_personal_data(fake_presidio: Any) -> None:
+def test_presidio_finder_finds_names_but_not_place_names(fake_presidio: Any) -> None:
     find = ner.build_presidio_finder(
         language="zh", spacy_model="zh_core_web_sm", score_threshold=0.6
     )
@@ -65,14 +65,13 @@ def test_presidio_finder_maps_entities_to_personal_data(fake_presidio: Any) -> N
 
     assert [(m.type, m.label, m.value) for m in matches] == [
         ("person_name", "PERSON_NAME", "王小明"),
-        ("location", "LOCATION", "台北"),
     ]
     assert fake_presidio["nlp_configuration"]["models"] == [
         {"lang_code": "zh", "model_name": "zh_core_web_sm"}
     ]
     call = fake_presidio["engine"].calls[0]
     assert call["score_threshold"] == 0.6
-    assert set(call["entities"]) == {"PERSON", "LOCATION"}
+    assert set(call["entities"]) == {"PERSON"}
 
 
 def test_missing_presidio_gives_an_install_hint(monkeypatch) -> None:

@@ -38,7 +38,7 @@ const PII_LABEL: Record<string, string> = {
   email: 'email', taiwan_mobile: 'mobile number', taiwan_landline: 'landline', taiwan_id: 'national ID',
   taiwan_resident_certificate: 'resident certificate', taiwan_ubn: 'business ID', passport: 'passport', nhi_card: 'NHI card',
   credit_card: 'credit card', api_key: 'API key', jwt: 'access token', private_key: 'private key', password: 'password',
-  person_name: 'name', location: 'location',
+  person_name: 'name', address: 'address',
 };
 
 function piiSummary(pii: PiiState): string {

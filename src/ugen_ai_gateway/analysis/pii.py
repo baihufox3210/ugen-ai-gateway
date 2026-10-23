@@ -24,6 +24,28 @@ TAIWAN_LANDLINE_PATTERN = re.compile(
     r"(?:\(0[2-8]\d{0,2}\)|0[2-8]\d{0,2}|\+?886[- ]?\(?[2-8]\d{0,2}\)?)"
     r"[- ]?\d{2,4}[- ]?\d{4}" + _NOT_BEFORE_WORD
 )
+# A street address down to the door number: a place name alone (a country or
+# a city) is not personal data, but where someone lives or works is.
+# Characters of a place name, leaving out the words that come before an
+# address ("住在", "寄到") so they stay outside the match.
+_CJK = r"(?:(?![在到於住家是從往去來和跟與及我你他她])[\u4e00-\u9fff])"
+TAIWAN_ADDRESS_PATTERN = re.compile(
+    r"(?:(?:[台臺]北|新北|桃園|[台臺]中|[台臺]南|高雄|基隆|新竹|嘉義|苗栗|彰化|南投"
+    r"|雲林|屏東|宜蘭|花蓮|[台臺]東|澎湖|金門|連江)[縣市])?"
+    r"(?:" + _CJK + r"{1,3}[區鄉鎮市])?"
+    r"(?:" + _CJK + r"{1,3}[村里](?:\d+鄰)?)?"
+    r"(?:" + _CJK + r"|\d){1,8}?(?:路|街|大道)"
+    r"(?:\s*[東西南北]?[一二三四五六七八九十\d]+段)?"
+    r"(?:\s*\d+\s*巷)?(?:\s*\d+\s*弄)?"
+    r"\s*\d+(?:[-之]\d+)?\s*號(?:\s*之\s*\d+)?"
+    r"(?:\s*\d+\s*[樓F](?:\s*之\s*\d+)?)?"
+)
+STREET_ADDRESS_PATTERN = re.compile(
+    _NOT_AFTER_WORD + r"\d{1,6}\s+(?:[A-Z][A-Za-z.'-]*\s+){1,4}"
+    r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Way|Court|Ct"
+    r"|Place|Pl|Terrace|Parkway|Pkwy)\b\.?"
+    r"(?:,?\s*(?:Apt|Suite|Unit|#)\.?\s*[A-Za-z0-9-]+)?"
+)
 TAIWAN_ID_PATTERN = re.compile(
     _NOT_AFTER_WORD + r"[A-Z][12]\d{8}" + _NOT_BEFORE_WORD, re.IGNORECASE
 )
@@ -231,6 +253,8 @@ DETECTORS: tuple[Detector, ...] = (
     Detector(
         "taiwan_landline", "TAIWAN_LANDLINE", TAIWAN_LANDLINE_PATTERN, _is_landline
     ),
+    Detector("address", "ADDRESS", TAIWAN_ADDRESS_PATTERN),
+    Detector("address", "ADDRESS", STREET_ADDRESS_PATTERN),
 )
 # Order used when listing detected types (stable regardless of match position).
 _TYPE_ORDER = (
@@ -243,6 +267,7 @@ _TYPE_ORDER = (
     "passport",
     "nhi_card",
     "credit_card",
+    "address",
     "api_key",
     "jwt",
     "private_key",
