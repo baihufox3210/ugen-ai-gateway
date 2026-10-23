@@ -535,10 +535,6 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .settings-section.first{border-top:0;padding-top:0}
 .prompt-editor textarea{display:block;margin-top:2px;font-size:12.5px;line-height:1.6}
 .prompt-editor .probe-row{margin-top:10px}
-.base-prompt{margin:0 0 10px;border:1px solid #e3ebe7;border-radius:9px;padding:8px 11px;background:#f6faf8}
-.base-prompt summary{color:#4f6a60;font-size:11px;font-weight:600;cursor:pointer}
-.base-prompt pre{margin:8px 0 6px;white-space:pre-wrap;color:#263e37;font:12px/1.6 var(--sans)}
-.base-prompt small{color:#62776e;font-size:10.5px}
 .prompt-editor + .models-page .settings-section.first{margin-top:18px;border-top:1px solid #eaf0ed;padding-top:16px}
 .settings-hint{display:block;margin-top:8px;color:#62776e;font-size:9.5px;line-height:1.6}
 .settings-line{display:flex;align-items:center;justify-content:space-between;gap:12px}
@@ -662,8 +658,8 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .rule-card{display:grid;gap:8px;border:1px solid #e3ebe7;border-radius:11px;padding:10px}
 .rule-head{display:flex;align-items:center;gap:8px}
 .rule-head input{flex:1}
-.settings-section select{border:1px solid #e1e9e6;border-radius:9px;padding:8px 9px;background:#fafcfb;color:#263e37;font-size:11.5px}
-.settings-section textarea{width:100%;resize:vertical;border:1px solid #e1e9e6;border-radius:9px;padding:9px 11px;background:#fafcfb;color:#263e37;font:12px/1.5 var(--sans);outline:none}
+.settings-section select,.conversation-prompt-modal select{border:1px solid #e1e9e6;border-radius:9px;padding:8px 9px;background:#fafcfb;color:#263e37;font-size:11.5px}
+.settings-section textarea,.conversation-prompt-modal textarea{width:100%;resize:vertical;border:1px solid #e1e9e6;border-radius:9px;padding:9px 11px;background:#fafcfb;color:#263e37;font:12px/1.5 var(--sans);outline:none}
 .settings-section textarea:focus{border-color:#89bba7;box-shadow:0 0 0 3px #64a88e15}
 .settings-section input.mono,.rule-card textarea{font-family:var(--mono);font-size:11.5px}
 .rule-options{display:flex;flex-wrap:wrap;gap:6px 16px}
@@ -750,3 +746,21 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .site-footer{padding:22px 0 6px;color:#62776e;font-size:10.5px;text-align:center}
 .auth-page .site-footer{align-self:end}
 .auth-page{grid-template-rows:1fr auto}
+
+.role-form{display:grid;gap:8px;margin:0 0 10px}
+.role-form input,.role-form textarea{width:100%;box-sizing:border-box}
+.role-form .key-check{display:flex;align-items:center;gap:6px;color:#4f6a60;font-size:11px}
+.role-list{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:6px}
+.role-list li{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;border:1px solid #e3ebe7;border-radius:9px;padding:8px 11px}
+.role-list li>div{min-width:0}
+.role-list small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:3px;color:#62776e;font-size:11px;line-height:1.5}
+.role-badge{margin-left:7px;border-radius:999px;padding:1px 7px;background:#e6f2ec;color:#2f6b55;font-size:9.5px;font-weight:600;vertical-align:1px}
+.role-actions{display:flex;gap:8px;flex-shrink:0}
+.conversation-prompt-modal{display:grid;gap:10px}
+.conversation-prompt-modal label{display:grid;gap:5px;color:#4f6a60;font-size:11px;font-weight:600}
+.conversation-prompt-modal select,.conversation-prompt-modal textarea{width:100%;box-sizing:border-box;font-weight:400}
+.conversation-prompt-modal select{font-size:12px}
+.role-preview{display:block;max-height:90px;overflow:auto;white-space:pre-wrap;border-radius:8px;padding:7px 10px;background:#f6faf8;color:#4f6a60;font-size:11px;line-height:1.55}
+.conversation-prompt-button{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid #dbe5e0;border-radius:999px;padding:4px 10px;background:transparent;color:#62776e;font-size:11px;cursor:pointer}
+.conversation-prompt-button.set{border-color:#9fcbb6;background:#eef7f2;color:#2f6b55}
+.conversation-prompt-button:disabled{opacity:.5;cursor:default}

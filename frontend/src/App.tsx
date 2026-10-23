@@ -3,6 +3,7 @@ import PromptPanel from './components/PromptPanel';
 import MonitorPanel from './components/MonitorPanel';
 import RequestFlow from './components/RequestFlow';
 import ResponsePanel from './components/ResponsePanel';
+import { ConversationPromptDialog, useRoles, type ConversationSettings } from './components/Roles';
 import SettingsDialog, { type SettingsPage } from './components/SettingsDialog';
 import Footer from './components/Footer';
 import ShareDialog from './components/ShareDialog';
@@ -62,6 +63,13 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const { conversations, setConversations, status: syncStatus, syncError, flush, refreshNow } = useConversations(user, busy);
   const [shareOpen, setShareOpen] = useState(false);
   const activeConversation = conversations.find(item => item.id === activeId) ?? null;
+  // Role and prompt chosen before a new conversation's first message.
+  const [draftSettings, setDraftSettings] = useState<ConversationSettings>({});
+  const [promptOpen, setPromptOpen] = useState(false);
+  const conversationSettings: ConversationSettings = activeConversation ? { roleId: activeConversation.roleId, prompt: activeConversation.prompt } : draftSettings;
+  const { roles, reload: reloadRoles } = useRoles(Boolean(user));
+  const roleName = roles?.find(role => role.id === conversationSettings.roleId)?.name;
+  const promptLabel = roleName ? `Role: ${roleName}${conversationSettings.prompt ? ' + prompt' : ''}` : conversationSettings.prompt ? 'Prompt set' : '';
   const turns = activeConversation?.turns ?? [];
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [modelsVersion, setModelsVersion] = useState(0);
@@ -206,7 +214,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
     const existing = activeConversation;
     const conversationId = existing?.id ?? newId();
     const turnId = newId();
-    const base: Conversation = existing ?? { id: conversationId, title: userText.slice(0, 36), updatedAt: Date.now(), turns: [] };
+    const base: Conversation = existing ?? { id: conversationId, title: userText.slice(0, 36), updatedAt: Date.now(), turns: [], ...draftSettings };
+    if (!existing) setDraftSettings({});
     const keptTurns = replaceFrom === undefined ? base.turns : base.turns.slice(0, replaceFrom);
     // Editing a turn that is already in memory makes that memory stale.
     let conversation: Conversation = { ...base, turns: keptTurns, memory: base.memory && base.memory.coveredTurns <= keptTurns.length ? base.memory : undefined };
@@ -249,7 +258,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       const messages = requestMessages(conversation, [...keptTurns, turn]);
       const response = await apiFetch('/v1/ugen/chat/stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2 }),
+        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2, role_id: conversation.roleId ?? null, conversation_prompt: conversation.prompt ?? '' }),
       });
       if (!response.ok) throw new Error(response.status === 401 ? 'Your session has ended. Sign in again.' : await errorMessage(response));
       if (!response.body) throw new Error('The server did not return a progress stream.');
@@ -331,7 +340,13 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
     <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section><Footer/></main>
-    <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}/></section>
+    <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}
+      promptLabel={promptLabel} onOpenPrompt={user ? () => setPromptOpen(true) : undefined}/></section>
+    {promptOpen && <ConversationPromptDialog settings={conversationSettings} onClose={() => setPromptOpen(false)} onSave={next => {
+      if (activeConversation) setConversations(current => current.map(item => item.id === activeConversation.id ? { ...item, roleId: next.roleId, prompt: next.prompt } : item));
+      else setDraftSettings(next);
+      setPromptOpen(false); void reloadRoles();
+    }}/>}
     {settingsPage && <SettingsDialog user={user} page={settingsPage} onPageChange={setSettingsPage} onUserChange={onUserChange} onSignOut={() => void flush().finally(onSignOut)} onClose={() => setSettingsPage(null)} onModelsSaved={() => setModelsVersion(version => version + 1)}
       onAccountDeleted={() => { forgetLocalHistory(user); onAccountDeleted(); }}/>}
     {shareOpen && activeConversation && user && <ShareDialog conversation={activeConversation} user={user} onClose={() => setShareOpen(false)}

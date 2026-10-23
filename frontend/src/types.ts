@@ -32,7 +32,9 @@ export type ConversationMemory = { text: string; coveredTurns: number; updatedAt
 /** Set by the gateway for a shared chat: its owner, members and the viewer's role. */
 export type SharedInfo = { owner: string; members: string[]; role: 'owner' | 'member' };
 /** ``sharedFrom``: this is the viewer's own copy of someone's share link. */
-export type Conversation = { id: string; title: string; updatedAt: number; turns: ConversationTurn[]; memory?: ConversationMemory; shared?: SharedInfo; sharedFrom?: { id: string; owner: string } };
+export type Conversation = { id: string; title: string; updatedAt: number; turns: ConversationTurn[]; memory?: ConversationMemory;
+  /** The conversation's role and its own prompt (see Roles.tsx). */
+  roleId?: string; prompt?: string; shared?: SharedInfo; sharedFrom?: { id: string; owner: string } };
 export type GatewayEvent = { type: string; [key: string]: unknown };
 export type PiiState = { found: boolean; types: string[]; redacted?: number };
 export type AnalysisSource = 'llm' | 'rules' | 'cache';

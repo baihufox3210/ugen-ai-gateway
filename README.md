@@ -572,26 +572,27 @@ conversation; a marker shows how many earlier messages the memory covers.
 
 ### System prompts
 
-Three optional prompts go ahead of every conversation, as one system message,
-in this order:
+Up to four prompts go ahead of every conversation, as one system message, in
+this order:
 
-0. The **base prompt**, set on the server only (`BASE_SYSTEM_PROMPT`, or
-   `BASE_SYSTEM_PROMPT_FILE` for a longer one, for example
-   `/app/data/base-prompt.md` copied in with `docker compose cp`). No page
-   changes it, so only whoever runs the server controls it. It applies to the
-   dashboard and the API alike, and says that the prompts after it add to it
-   but never override it. By default it introduces the assistant as Kiri;
-   set `BASE_SYSTEM_PROMPT=` to send none. Administrators see it, read-only,
-   above the system prompt on the Models page.
 1. The **system prompt** an administrator sets at the top of the Models page
    (`GET`/`PUT /v1/ugen/system-prompt` with `{"text": "..."}`, at most 8,000
-   characters). It applies to every request, from the dashboard and the
-   OpenAI-compatible API alike, for house rules such as language, tone or
-   topics to decline. The audit log records each change with its length only.
+   characters). It is the top layer: it applies to every request, from the
+   dashboard and the OpenAI-compatible API alike, and says that the prompts
+   after it add to it but never override it. Until one is saved, a default
+   introduces the assistant as **Kiri**; saving an empty one sends none. The
+   audit log records each change with its length only.
 2. Each account's **custom instructions**, set on the Account page: who they
-   are or how they like answers. They apply to that account's requests while
-   it is signed in, never to API keys (an app writes its own prompts). They
-   are stored encrypted like saved conversations.
+   are or how they like answers.
+3. The conversation's **role**: a named prompt such as "Engineer", picked with
+   the Prompt button next to the message box. Every account can keep its own
+   roles on the Account page; administrators can also share roles with
+   everyone (`GET`/`POST /v1/ugen/roles`, `PUT`/`DELETE /v1/ugen/roles/{id}`).
+4. The conversation's own **prompt**, set in the same dialog.
+
+Layers 2 to 4 apply only to a signed-in account's requests from the dashboard,
+never to API keys (an app writes its own prompts). Instructions and roles are
+stored encrypted like saved conversations.
 
 Then come the conversation memory and the client's own system messages. All
 of it is analyzed and redacted like any other text, so keep personal data out

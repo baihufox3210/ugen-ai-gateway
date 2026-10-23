@@ -108,6 +108,17 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 CREATE INDEX IF NOT EXISTS conversations_updated
     ON conversations (user_id, updated_at);
+-- Named prompts conversations can use; owner_id NULL means shared with every
+-- account. The prompt is encrypted.
+CREATE TABLE IF NOT EXISTS prompt_roles (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT REFERENCES users (id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS prompt_roles_owner ON prompt_roles (owner_id);
 -- Read-only snapshots of a conversation, opened by link.
 CREATE TABLE IF NOT EXISTS shares (
     id TEXT PRIMARY KEY,
@@ -702,6 +713,29 @@ class UsageStore:
     ) -> dict[str, Any] | None:
         """Store (or with None, remove) a user's avatar image as a data URL."""
         return await asyncio.to_thread(self._set_avatar, user_id, avatar)
+
+    async def list_roles(self, user_id: str) -> list[dict[str, Any]]:
+        """Shared roles and this account's own, by name."""
+        return await asyncio.to_thread(self._list_roles, user_id)
+
+    async def get_role(self, role_id: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._get_role, role_id)
+
+    async def count_roles(self, owner_id: str | None) -> int:
+        return await asyncio.to_thread(self._count_roles, owner_id)
+
+    async def create_role(
+        self, role_id: str, owner_id: str | None, name: str, prompt: str
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._create_role, role_id, owner_id, name, prompt
+        )
+
+    async def update_role(self, role_id: str, name: str, prompt: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._update_role, role_id, name, prompt)
+
+    async def delete_role(self, role_id: str) -> None:
+        await asyncio.to_thread(self._delete_role, role_id)
 
     async def get_instructions(self, user_id: str) -> str:
         """A user's custom instructions, as stored (sealed by the caller)."""
@@ -1361,6 +1395,56 @@ class UsageStore:
         with self._lock, self._connection:
             self._connection.execute(
                 "DELETE FROM sessions WHERE token_hash = ?", (_key_hash(token),)
+            )
+
+    def _list_roles(self, user_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM prompt_roles WHERE owner_id IS NULL OR owner_id = ? "
+                "ORDER BY owner_id IS NOT NULL, name COLLATE NOCASE",
+                (user_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _get_role(self, role_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM prompt_roles WHERE id = ?", (role_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def _count_roles(self, owner_id: str | None) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(*) FROM prompt_roles WHERE owner_id IS ?", (owner_id,)
+            ).fetchone()
+        return int(row[0])
+
+    def _create_role(
+        self, role_id: str, owner_id: str | None, name: str, prompt: str
+    ) -> dict[str, Any]:
+        now = time.time()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO prompt_roles (id, owner_id, name, prompt, created_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (role_id, owner_id, name, prompt, now, now),
+            )
+        return self._get_role(role_id) or {}
+
+    def _update_role(self, role_id: str, name: str, prompt: str) -> dict[str, Any]:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE prompt_roles SET name = ?, prompt = ?, updated_at = ? "
+                "WHERE id = ?",
+                (name, prompt, time.time(), role_id),
+            )
+        return self._get_role(role_id) or {}
+
+    def _delete_role(self, role_id: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "DELETE FROM prompt_roles WHERE id = ?", (role_id,)
             )
 
     def _get_instructions(self, user_id: str) -> str:

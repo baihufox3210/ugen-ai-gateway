@@ -6,7 +6,7 @@ type Props = { title: string; description: string; path: string; maxLength: numb
 /** A text box for a prompt saved on the gateway; ``path`` answers GET and PUT with { text }. */
 function PromptEditor({ title, description, path, maxLength, placeholder, first = false }: Props) {
   const [saved, setSaved] = useState<string | null>(null);
-  const [base, setBase] = useState('');
+  const [fallback, setFallback] = useState('');
   const [text, setText] = useState('');
   const [state, setState] = useState<{ ok: boolean; message: string } | null>(null);
   const [working, setWorking] = useState(false);
@@ -14,8 +14,8 @@ function PromptEditor({ title, description, path, maxLength, placeholder, first 
   useEffect(() => {
     apiFetch(path).then(async response => {
       if (!response.ok) { setState({ ok: false, message: await errorMessage(response) }); return; }
-      const body = await response.json() as { text: string; base?: string };
-      setSaved(body.text); setText(body.text); setBase(body.base ?? '');
+      const body = await response.json() as { text: string; default?: string };
+      setSaved(body.text); setText(body.text); setFallback(body.default ?? '');
     }).catch(() => setState({ ok: false, message: 'Cannot reach the gateway' }));
   }, [path]);
 
@@ -34,14 +34,10 @@ function PromptEditor({ title, description, path, maxLength, placeholder, first 
   return <form className={`settings-section prompt-editor${first ? ' first' : ''}`} onSubmit={save}>
     <h3>{title}</h3>
     <p>{description}</p>
-    {base && <details className="base-prompt">
-      <summary>Base prompt, set on the server: comes first, applies to every request</summary>
-      <pre>{base}</pre>
-      <small>Only whoever runs the server changes it, with BASE_SYSTEM_PROMPT or BASE_SYSTEM_PROMPT_FILE.</small>
-    </details>}
     <textarea value={text} onChange={event => { setText(event.target.value); setState(null); }} rows={5} maxLength={maxLength} placeholder={placeholder} aria-label={title} disabled={saved === null}/>
     <div className="probe-row">
       <button className="cancel-button" type="submit" disabled={working || saved === null || text.trim() === saved}>{working ? 'Saving…' : 'Save'}</button>
+      {fallback && text !== fallback && <button className="text-action" type="button" onClick={() => { setText(fallback); setState(null); }}>Restore default</button>}
       <span className="char-count">{text.length.toLocaleString('en-US')} / {maxLength.toLocaleString('en-US')}</span>
       {state && <span className={`probe ${state.ok ? 'ok' : 'error'}`} role="status">{state.message}</span>}
     </div>
