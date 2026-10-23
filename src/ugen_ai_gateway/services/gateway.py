@@ -987,7 +987,15 @@ class GatewayService:
 
     @staticmethod
     def _redactable(analysis: RequestAnalysis) -> bool:
-        """Whether every detected personal-data item can actually be redacted."""
+        """Whether every detected personal-data item can actually be redacted.
+
+        With named-entity recognition on, names and places are looked for in
+        every message by the redaction itself, so personal data the analysis
+        model reports but cannot point to adds nothing that could be
+        redacted: small models report it out of caution even for plain
+        technical requests. Without NER the claim keeps the request local."""
+        if has_slow_finders():
+            return True
         unredactable_types = {
             data_type.casefold()
             for data_type in analysis.personal_data_types

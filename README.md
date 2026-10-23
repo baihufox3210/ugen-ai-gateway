@@ -850,7 +850,13 @@ Name, address, and other free-form data do not have a universal deterministic
 pattern. Detection of those values depends on the analysis model; if the model
 reports personal data it cannot point to exactly (a type without the values),
 the request is kept on the local model (`routing.rule` is
-`privacy.unredactable`) and is only refused when no local model is available. PII detection is a safeguard,
+`privacy.unredactable`) and is only refused when no local model is available.
+With name and place detection on (`PII_NER=presidio`, the Docker default),
+names and places are looked for in every message before anything is sent,
+so such a claim no longer keeps a request local: small analysis models raise
+it out of caution even for plain technical requests, and it names nothing
+that could be redacted. Values the model does point to are still redacted.
+PII detection is a safeguard,
 not a guarantee that every sensitive value will be recognized.
 
 ## Security
