@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     # llm: always ask the local model. rules: regular expressions only.
     # hybrid: rules when the request stays local anyway, the local model otherwise.
     analysis_mode: Literal["llm", "rules", "hybrid"] = "hybrid"
+    # The lowest difficulty sent to the cloud model in Auto mode.
+    cloud_from: Literal["moderate", "complex"] = "moderate"
     analysis_cache_size: int = Field(default=256, ge=0)
     analysis_cache_ttl_seconds: float = Field(default=600, gt=0)
 

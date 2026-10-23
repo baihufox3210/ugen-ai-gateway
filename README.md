@@ -701,11 +701,11 @@ call that only looks for personal data, run alongside it: however long the
 conversation, a request needs at most two model calls, and the values found
 are cached per message again.
 
-The analysis model classifies each request. Moderate and complex tasks use the cloud
-provider when cloud routing is enabled. Strong complexity cues in the prompt,
-such as architecture design, comparisons, implementation, debugging, and
-multi-step planning, promote an underestimated simple classification to complex.
-Simple tasks stay local. If cloud routing is disabled, requests stay local. The
+Each request is classified simple, moderate or complex (see *How difficulty
+is judged* above). By default moderate and complex tasks use the cloud provider
+when cloud routing is enabled; the Models page's **What goes to the cloud**
+setting (`CLOUD_FROM=complex` before the page is saved) sends only complex ones,
+which suits a capable local model. Simple tasks stay local. If cloud routing is disabled, requests stay local. The
 returned `routing` object reports the estimated complexity, task type, detected
 personal-data types, selected provider, and the reason for that decision.
 

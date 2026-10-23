@@ -10,9 +10,9 @@ import "@fontsource/dm-sans/600.css";
 import "@fontsource/dm-sans/700.css";
 import "@fontsource/dm-sans/400-italic.css";
 import "@fontsource/dm-sans/700-italic.css";
-// Chinese: regular and bold only; other weights use the nearest one.
-import "@fontsource/noto-sans-tc/400.css";
-import "@fontsource/noto-sans-tc/700.css";
+// Chinese uses the system's own font (PingFang, Microsoft JhengHei, Noto CJK):
+// a web font split into a hundred subsets swapped in mid-answer whenever new
+// characters streamed in, making the text jump.
 import "./style.css";
 
 applyTheme(loadTheme());

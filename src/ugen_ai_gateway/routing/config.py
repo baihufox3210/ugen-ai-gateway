@@ -149,6 +149,21 @@ def load_routing_config(path: str | Path) -> RoutingConfig:
         return RoutingConfig.model_validate(yaml.safe_load(file) or {})
 
 
+def cloud_rule(cloud_from: str, cloud: Target) -> Rule:
+    """The default rule: requests at least this difficult go to the cloud."""
+    if cloud_from == "complex":
+        return Rule(
+            name="complex-to-cloud",
+            when=Condition(complexity=["complex"]),
+            route=cloud,
+        )
+    return Rule(
+        name="moderate-or-complex-to-cloud",
+        when=Condition(complexity=["moderate", "complex"]),
+        route=cloud,
+    )
+
+
 def config_from_settings(settings: Settings, *, cloud_enabled: bool) -> RoutingConfig:
     """The configuration equivalent to the LOCAL_* / CLOUD_* settings."""
     providers = [
@@ -183,13 +198,7 @@ def config_from_settings(settings: Settings, *, cloud_enabled: bool) -> RoutingC
             )
         )
         cloud = Target(provider="cloud")
-        rules.append(
-            Rule(
-                name="moderate-or-complex-to-cloud",
-                when=Condition(complexity=["moderate", "complex"]),
-                route=cloud,
-            )
-        )
+        rules.append(cloud_rule(settings.cloud_from, cloud))
     return RoutingConfig(
         providers=providers,
         defaults=Defaults(local=Target(provider="local"), cloud=cloud),

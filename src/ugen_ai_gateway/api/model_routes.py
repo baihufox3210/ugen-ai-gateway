@@ -71,6 +71,7 @@ class ModelsUpdate(BaseModel):
     cloud_enabled: bool = False
     cloud: CloudUpdate = Field(default_factory=CloudUpdate)
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
+    cloud_from: Literal["moderate", "complex"] = "moderate"
     extra: list[ExtraUpdate] = Field(default_factory=list, max_length=20)
     rules: list[RouteRule] = Field(default_factory=list, max_length=50)
 
@@ -152,6 +153,7 @@ async def save_models(
             cloud_enabled=body.cloud_enabled,
             cloud=cloud,
             analysis_mode=body.analysis_mode,
+            cloud_from=body.cloud_from,
             extra=extra,
             rules=body.rules,
         )
@@ -184,6 +186,7 @@ async def save_models(
         cloud_base_url=models.cloud.base_url,
         cloud_model=models.cloud.model,
         analysis_mode=models.analysis_mode,
+        cloud_from=models.cloud_from,
         extra=[
             {"name": m.name, "locality": m.locality, "model": m.model}
             for m in models.extra

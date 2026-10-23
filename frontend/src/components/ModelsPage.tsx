@@ -13,9 +13,10 @@ type Condition = { complexity: string[]; task_type: string[]; contains_personal_
 type Rule = { name: string; when: Condition; target: string };
 type ModelsResponse = {
   source: 'database' | 'env' | 'routing_file';
-  config: { local: SavedConnection; cloud_enabled: boolean; cloud: SavedConnection; analysis_mode: 'hybrid' | 'llm'; extra: SavedExtra[]; rules: Rule[] };
+  config: { local: SavedConnection; cloud_enabled: boolean; cloud: SavedConnection; analysis_mode: 'hybrid' | 'llm'; cloud_from?: CloudFrom; extra: SavedExtra[]; rules: Rule[] };
 };
 /** A connection being edited. ``apiKey`` undefined keeps the saved key; '' removes it. */
+type CloudFrom = 'moderate' | 'complex';
 type Draft = { baseUrl: string; model: string; alias: string; apiKey?: string; hasKey: boolean; keyHint: string; inputCost: string; outputCost: string; analysisModel: string; embeddingModel: string };
 type Extra = { id: string; name: string; locality: Locality; draft: Draft };
 type Probe = { state: 'idle' | 'working' | 'ok' | 'error'; message?: string };
@@ -115,6 +116,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<'hybrid' | 'llm'>('hybrid');
+  const [cloudFrom, setCloudFrom] = useState<CloudFrom>('moderate');
   const [models, setModels] = useState<Record<string, string[]>>({});
   const [probes, setProbes] = useState<Record<string, Probe>>({});
   const [saving, setSaving] = useState(false);
@@ -126,7 +128,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     setDrafts({ local: toDraft(config.local), cloud: toDraft(config.cloud) });
     setExtras((config.extra ?? []).map(extra => ({ id: extra.id, name: extra.name, locality: extra.locality, draft: toDraft(extra) })));
     setRules(config.rules ?? []);
-    setCloudEnabled(config.cloud_enabled); setAnalysisMode(config.analysis_mode);
+    setCloudEnabled(config.cloud_enabled); setAnalysisMode(config.analysis_mode); setCloudFrom(config.cloud_from ?? 'moderate');
   }
 
   useEffect(() => {
@@ -175,7 +177,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
       const response = await apiFetch('/v1/ugen/models', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          local: connection(drafts!.local, 'local'), cloud: connection(drafts!.cloud, 'cloud'), cloud_enabled: cloudEnabled, analysis_mode: analysisMode,
+          local: connection(drafts!.local, 'local'), cloud: connection(drafts!.cloud, 'cloud'), cloud_enabled: cloudEnabled, analysis_mode: analysisMode, cloud_from: cloudFrom,
           extra: extras.map(extra => ({ id: extra.id, name: extra.name.trim() || 'Model', locality: extra.locality, ...connection(extra.draft, 'extra') })),
           rules: rules.map(rule => ({ ...rule, name: rule.name.trim() || 'Rule' })),
         }),
@@ -245,6 +247,15 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
       <div className="mode-options" role="radiogroup" aria-label="How requests are judged">
         <label className={analysisMode === 'hybrid' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'hybrid'} onChange={() => setAnalysisMode('hybrid')}/><span><b>Fast</b><small>Rules settle clear cases on their own, such as small talk, definitions, short rewrites or explicit design and debugging work. The local model judges everything else, so a word like “design” alone never decides.</small></span></label>
         <label className={analysisMode === 'llm' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'llm'} onChange={() => setAnalysisMode('llm')}/><span><b>Thorough</b><small>The local model judges every request’s difficulty and task first. Catches short hard questions and makes task-based rules reliable, at the cost of one extra local call each time.</small></span></label>
+      </div>
+    </div>
+
+    <div className="settings-section">
+      <h3>What goes to the cloud</h3>
+      <p>In Auto mode, requests at least this difficult go to the cloud model; easier ones stay local. Routing rules above are checked first.</p>
+      <div className="mode-options" role="radiogroup" aria-label="Which requests go to the cloud">
+        <label className={cloudFrom === 'moderate' ? 'selected' : ''}><input type="radio" name="cloud-from" checked={cloudFrom === 'moderate'} onChange={() => setCloudFrom('moderate')}/><span><b>Moderate and complex</b><small>Anything that needs a real explanation or several steps, such as how HTTPS works or a function with some logic. Best answers; uses the cloud more.</small></span></label>
+        <label className={cloudFrom === 'complex' ? 'selected' : ''}><input type="radio" name="cloud-from" checked={cloudFrom === 'complex'} onChange={() => setCloudFrom('complex')}/><span><b>Complex only</b><small>Only design, proofs, debugging and multi-part analysis. Explanations and everyday tasks stay local. Suits a capable local model and saves cost.</small></span></label>
       </div>
     </div>
 
