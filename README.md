@@ -117,6 +117,10 @@ docker compose pull && docker compose up -d   # update, with UGEN_IMAGE set
 docker compose logs -f gateway             # follow the logs
 ```
 
+Without `UGEN_IMAGE` the image is built from the source here, so
+`docker compose pull` alone changes nothing. After an update, reload the
+dashboard with Ctrl+Shift+R.
+
 Accounts, API keys, settings, saved conversations, usage metadata and the
 audit log live in one SQLite file in the `ugen-data` volume, which survives
 rebuilds (`docker compose down -v` deletes it). Conversations, provider API
@@ -882,6 +886,35 @@ not a guarantee that every sensitive value will be recognized.
   return HTTP `429`.
 - Provider timeouts return HTTP `504`.
 - Other upstream provider errors return HTTP `502`.
+
+## Troubleshooting
+
+**Is the new version running?** `git log -1 --oneline` shows the source the
+image was built from. With `UGEN_IMAGE`, the image's commit is:
+
+```sh
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$UGEN_IMAGE"
+```
+
+**Why did a request stay local?** The footer under each answer says why:
+
+| Footer shows | Reason | What to do |
+| --- | --- | --- |
+| `Complexity: simple` | Judged simple (see [How difficulty is judged](#routing-behavior)) | Expected; or choose **Cloud** below the message box for this one |
+| `Complexity: moderate` with **Complex only** set | Only complex requests go to the cloud | Models page → *What goes to the cloud* |
+| `Cannot redact safely: kept local` | The analysis model reported personal data it could not point to | Turn on name and place detection (`PII_NER=presidio`); then this no longer blocks the cloud |
+| `Privacy policy: kept local` | A privacy rule marked the data as never leaving | Privacy page |
+| `Budget used up` / `Key restriction` | A budget or an API key's limit | Users or API keys page |
+| `Possible injection: kept local` | The injection guard (`INJECTION_ACTION=local`) | Rephrase, or set the guard to `flag` |
+| No such note, `Local` | No cloud model, cloud turned off, or **Local** chosen | Models page; choose **Auto** below the message box |
+
+**How well does routing judge requests?** Run
+`docker compose exec gateway python -m ugen_ai_gateway.cli check-routing`:
+it judges 600 labeled requests with your models and lists the misses.
+
+**Answers contain `[LOCATION]` or `[PERSON_NAME]`.** An older `.env` may still
+set `OUTPUT_PII_ACTION=redact`; remove it (the default `off` masks data only
+on its way to a model, never in answers).
 
 ## Development
 
