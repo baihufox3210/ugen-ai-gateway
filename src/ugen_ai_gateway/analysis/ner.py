@@ -1,4 +1,7 @@
-"""Optional named-entity detection (people, places) through Microsoft Presidio.
+"""Optional named-entity detection of people's names through Microsoft Presidio.
+
+Place names alone (countries, cities) are not personal data, so they are not
+looked for here; street addresses are matched by a pattern in ``pii``.
 
 Install with ``uv sync --extra ner`` plus a spaCy model for your language, for
 example ``uv run python -m spacy download zh_core_web_sm``.
@@ -13,7 +16,6 @@ from ugen_ai_gateway.services.errors import GatewayConfigurationError
 # Presidio entity -> (personal-data type, placeholder label)
 ENTITY_TYPES: dict[str, tuple[str, str]] = {
     "PERSON": ("person_name", "PERSON_NAME"),
-    "LOCATION": ("location", "LOCATION"),
 }
 
 
@@ -30,7 +32,7 @@ _LATIN = re.compile(r"[A-Za-z]")
 def build_presidio_finder(
     *, language: str, spacy_model: str, score_threshold: float
 ) -> Finder:
-    """A finder for people and places. ``language`` and ``spacy_model`` may
+    """A finder for people's names. ``language`` and ``spacy_model`` may
     list several, comma-separated and in the same order (``zh,en`` with
     ``zh_core_web_sm,en_core_web_sm``) for text that mixes languages."""
     languages = [code.strip() for code in language.split(",") if code.strip()]
@@ -72,6 +74,8 @@ def build_presidio_finder(
                 score_threshold=score_threshold,
             )
             for result in results:
+                if result.entity_type not in ENTITY_TYPES:
+                    continue
                 data_type, label = ENTITY_TYPES[result.entity_type]
                 value = text[result.start : result.end]
                 overlaps = any(

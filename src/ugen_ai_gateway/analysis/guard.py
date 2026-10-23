@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from ugen_ai_gateway.analysis.pii import find_personal_data
+from ugen_ai_gateway.analysis.pii import PersonalDataMatch, find_personal_data
 
 _INJECTION_SIGNALS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -105,7 +105,7 @@ class OutputGuard:
     the model produced on its own, is replaced with a ``[LABEL]`` marker. In
     streaming mode text is released only at boundaries no value can cross.
 
-    Names and places (named-entity recognition) are not checked: answers
+    Names (named-entity recognition) and addresses are not checked: answers
     mention them all the time ("Tokyo", "Einstein"), and the model cannot leak
     one the user never gave it. Only structured data is: numbers, keys, cards.
     """
@@ -148,7 +148,7 @@ class OutputGuard:
         begin = buffer.rfind("-----BEGIN")
         if begin != -1 and "-----END" not in buffer[begin:]:
             cut = min(cut, begin)
-        for match in find_personal_data(buffer, entities=False):
+        for match in _structured(buffer):
             if match.start < cut < match.end:
                 cut = match.start
         return cut
@@ -157,7 +157,7 @@ class OutputGuard:
         if not text:
             return text
         output = text
-        for match in reversed(find_personal_data(text, entities=False)):
+        for match in reversed(_structured(text)):
             if _comparable(match.value) in self._allowed:
                 continue
             self.findings.append(match.type)
@@ -166,3 +166,12 @@ class OutputGuard:
                     output[: match.start] + f"[{match.label}]" + output[match.end :]
                 )
         return output
+
+
+def _structured(text: str) -> list[PersonalDataMatch]:
+    """Personal data an answer is checked for: not names or addresses."""
+    return [
+        match
+        for match in find_personal_data(text, entities=False)
+        if match.type != "address"
+    ]

@@ -257,3 +257,36 @@ def test_old_resident_certificates_need_a_keyword(
         if m.type == "taiwan_resident_certificate"
     ]
     assert found == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "address"),
+    [
+        ("我住在台北市信義區松仁路 100 號", "台北市信義區松仁路 100 號"),
+        ("寄到臺中市西屯區臺灣大道三段99號5樓", "臺中市西屯區臺灣大道三段99號5樓"),
+        (
+            "公司在新北市板橋區文化路一段188巷44號3樓之2",
+            "新北市板橋區文化路一段188巷44號3樓之2",
+        ),
+        ("我家在松仁路100號附近", "松仁路100號"),
+        ("I live at 221 Baker Street, London", "221 Baker Street"),
+    ],
+)
+def test_street_addresses_are_personal_data(text: str, address: str) -> None:
+    assert [(m.type, m.value) for m in find_personal_data(text)] == [
+        ("address", address)
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "台灣的首都是哪裡？",
+        "去台南玩三天",
+        "台北市大安區",
+        "中山路很塞",
+        "Where is Paris?",
+    ],
+)
+def test_place_names_alone_are_not_personal_data(text: str) -> None:
+    assert find_personal_data(text) == []

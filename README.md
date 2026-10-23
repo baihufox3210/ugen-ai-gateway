@@ -618,7 +618,7 @@ own. It is off by default (`OUTPUT_PII_ACTION=off`): personal data is hidden
 from models, not from the person reading the answer, and placeholders are
 restored in replies. `redact` replaces such data with a `[LABEL]` marker and
 `flag` only records it. Values from the request are left
-alone. Names and places are not checked in answers (answers mention them
+alone. Names and addresses are not checked in answers (answers mention them
 all the time, and the model cannot leak one it was never given); only
 structured data such as numbers, keys and cards is. When streaming, text is released only at points no value can span (the
 last 24 characters are held until the next safe break), so a value is never
@@ -796,6 +796,7 @@ format has one):
 | `taiwan_ubn` | 統一編號 (checksum validated) |
 | `passport`, `nhi_card` | Passport and 健保卡 numbers |
 | `credit_card` | Card numbers (Luhn validated) |
+| `address` | Street addresses down to the door number, such as 台北市信義區松仁路 100 號 or 221 Baker Street. A country, city or district alone is not personal data and is left alone |
 | `api_key`, `jwt`, `private_key`, `password` | `sk-…`, `AKIA…`, `ghp_…`, JWTs, PEM private keys, `password=…` |
 
 Short numeric identifiers (統一編號, passport, 健保卡) only count when a keyword
@@ -805,16 +806,18 @@ only the value is replaced and the keyword stays readable. The analysis model
 can also report additional exact personal-data values, which are redacted from
 text message content. Matching works inside Chinese text without spaces.
 
-Names and places are also detected with
+People's names are also detected with
 [Presidio](https://microsoft.github.io/presidio/) named-entity recognition
-(spaCy models), so "王小明", "台北市" or "John Smith in Seattle" are redacted
-even when the analysis model misses them. The Docker image includes it for
+(spaCy models), so "王小明" or "John Smith" are redacted even when the
+analysis model misses them. Place names on their own ("台灣", "Seattle") are
+not redacted: they identify no one, and hiding them makes questions such as
+「台灣的首都是哪裡？」 unanswerable. The Docker image includes it for
 Chinese and English and turns it on (`PII_NER=presidio`,
 `PII_NER_LANGUAGE=zh,en`, `PII_NER_SPACY_MODEL=zh_core_web_sm,en_core_web_sm`):
 each language's model only runs on text in its script. Set `PII_NER=none` in
 `.env` to turn it off, or build with `--build-arg PII_NER=none` for an image
-about 300 MB smaller without it. The small models catch common names and
-places but not every one; the analysis model remains the main detector.
+about 300 MB smaller without it. The small models catch common names
+but not every one; the analysis model remains the main detector.
 Outside Docker:
 
 ```sh
@@ -862,8 +865,8 @@ pattern. Detection of those values depends on the analysis model; if the model
 reports personal data it cannot point to exactly (a type without the values),
 the request is kept on the local model (`routing.rule` is
 `privacy.unredactable`) and is only refused when no local model is available.
-With name and place detection on (`PII_NER=presidio`, the Docker default),
-names and places are looked for in every message before anything is sent,
+With name detection on (`PII_NER=presidio`, the Docker default), names
+are looked for in every message before anything is sent,
 so such a claim no longer keeps a request local: small analysis models raise
 it out of caution even for plain technical requests, and it names nothing
 that could be redacted. Values the model does point to are still redacted.
@@ -909,7 +912,7 @@ docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revis
 | --- | --- | --- |
 | `Complexity: simple` | Judged simple (see [How difficulty is judged](#routing-behavior)) | Expected; or choose **Cloud** below the message box for this one |
 | `Complexity: moderate` with **Complex only** set | Only complex requests go to the cloud | Models page → *What goes to the cloud* |
-| `Cannot redact safely: kept local` | The analysis model reported personal data it could not point to | Turn on name and place detection (`PII_NER=presidio`); then this no longer blocks the cloud |
+| `Cannot redact safely: kept local` | The analysis model reported personal data it could not point to | Turn on name detection (`PII_NER=presidio`); then this no longer blocks the cloud (an address it cannot quote still keeps the request local) |
 | `Privacy policy: kept local` | A privacy rule marked the data as never leaving | Privacy page |
 | `Budget used up` / `Key restriction` | A budget or an API key's limit | Users or API keys page |
 | `Possible injection: kept local` | The injection guard (`INJECTION_ACTION=local`) | Rephrase, or set the guard to `flag` |
@@ -919,7 +922,7 @@ docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revis
 `docker compose exec gateway python -m ugen_ai_gateway.cli check-routing`:
 it judges 600 labeled requests with your models and lists the misses.
 
-**Answers contain `[LOCATION]` or `[PERSON_NAME]`.** An older `.env` may still
+**Answers contain `[PERSON_NAME]` or `[ADDRESS]`.** An older `.env` may still
 set `OUTPUT_PII_ACTION=redact`; remove it (the default `off` masks data only
 on its way to a model, never in answers).
 

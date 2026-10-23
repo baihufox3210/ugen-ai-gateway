@@ -123,6 +123,14 @@ def test_output_guard_redacts_values_the_user_never_gave() -> None:
     assert guard.findings == ["taiwan_mobile"]
 
 
+def test_output_guard_leaves_addresses_in_answers() -> None:
+    guard = OutputGuard(set(), redact=True)
+
+    answer = "台北 101 在台北市信義區信義路五段 7 號。"
+    assert guard.check(answer) == answer
+    assert guard.findings == []
+
+
 def test_output_guard_flag_mode_leaves_text_unchanged() -> None:
     guard = OutputGuard(set(), redact=False)
 
