@@ -205,6 +205,61 @@ def test_unredactable_personal_data_never_leaves_the_machine(
         assert response.routing.rule == "privacy.unredactable"
 
 
+def test_with_ner_a_claim_the_model_cannot_point_to_does_not_keep_it_local() -> None:
+    """NER looks for names and places in every message before anything is
+    sent; a vague "contains a name" from the analysis model, with nothing it
+    can point to, no longer keeps a technical request local."""
+    from ugen_ai_gateway.analysis.pii import (
+        PersonalDataMatch,
+        clear_registered_finders,
+        register_finder,
+    )
+
+    def names(text: str) -> list[PersonalDataMatch]:
+        start = text.find("Alex Chen")
+        if start < 0:
+            return []
+        return [
+            PersonalDataMatch(
+                "person_name", "PERSON_NAME", start, start + 9, "Alex Chen"
+            )
+        ]
+
+    analyzer = FakeAnalyzer(
+        RequestAnalysis(
+            contains_personal_data=True,
+            personal_data_types=["name"],
+            complexity="complex",
+            task_type="coding",
+            reason="Might contain a name.",
+        )
+    )
+    register_finder(names, types=["person_name"])
+    try:
+        service, _, cloud, _ = make_service(analyzer=analyzer)
+        plain = asyncio.run(
+            service.chat(
+                ChatRequest(messages=[{"role": "user", "content": "Design a router"}])
+            )
+        )
+        named = asyncio.run(
+            service.chat(
+                ChatRequest(
+                    messages=[
+                        {"role": "user", "content": "Design a router for Alex Chen"}
+                    ]
+                )
+            )
+        )
+    finally:
+        clear_registered_finders()
+
+    assert plain.provider == "cloud" and plain.routing.rule != "privacy.unredactable"
+    # Names NER finds are still replaced before the cloud sees them.
+    assert named.provider == "cloud"
+    assert "Alex Chen" not in str(cloud.calls[-1]["messages"])
+
+
 def test_unredactable_personal_data_is_refused_without_a_local_model() -> None:
     from tests.test_routing import config
 
