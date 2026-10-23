@@ -162,6 +162,16 @@ def _size(text: str) -> int:
     return len(text) + len(_CJK.findall(text))
 
 
+def _instruction_lines(text: str) -> list[str] | None:
+    """The lines of a longer multi-line message that can hold its instruction:
+    its first and last line when they are short (possibly none). None for a
+    message read as a whole: a single line, or a short message."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 2 or _size(text) < 200:
+        return None
+    return [line for line in dict.fromkeys((lines[0], lines[-1])) if _size(line) <= 160]
+
+
 def assess_complexity(text: str, previous: str | None = None) -> Assessment:
     """Judge ``text``, the latest user message; ``previous`` is the user
     message before it, if any."""
@@ -183,13 +193,18 @@ def assess_complexity(text: str, previous: str | None = None) -> Assessment:
     if _CHITCHAT.search(stripped) or _ACKNOWLEDGEMENT.search(stripped):
         return Assessment("simple", True, "Small talk.")
 
-    # A rewrite or translation of a pasted passage: only the instruction line
-    # says what is asked ("translate this: <text mentioning distributed
-    # systems>"). Any other multi-line request is read as a whole.
-    first_line, _, rest = stripped.partition("\n")
-    pasted = bool(rest.strip()) and len(rest) > len(first_line)
-    instruction = first_line if pasted and _LIGHT_TASK.search(first_line) else stripped
-    hard = _HARD.search(instruction)
+    # In a longer multi-line message the instruction is a short first or last
+    # line ("翻譯成英文：…" or "…\n請把上面翻譯成英文"); the lines between may
+    # be pasted text whose words ask for nothing. Design or debugging words
+    # there do not make the rules sure; the analysis model decides.
+    edges = _instruction_lines(stripped)
+    transform = edges is not None and any(
+        _LIGHT_TASK.search(line) and not _HARD.search(line) for line in edges
+    )
+    if edges is None:
+        hard = _HARD.search(stripped)
+    else:
+        hard = None if transform else _HARD.search("\n".join(edges))
     has_code = bool(_CODE.search(stripped))
     # Only when nothing else is asked ("什麼是 CAP 定理？請舉例說明取捨" is more).
     definition = (
@@ -211,7 +226,7 @@ def assess_complexity(text: str, previous: str | None = None) -> Assessment:
         size >= 400
         and len(_LIST_ITEM.findall(stripped)) >= 3
         and _BUILD.search(stripped)
-        and not (pasted and _LIGHT_TASK.search(first_line))
+        and not transform
     ):
         return Assessment("complex", True, "A multi-part brief to implement.")
 

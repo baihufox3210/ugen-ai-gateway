@@ -131,3 +131,53 @@ def test_an_unclear_follow_up_is_judged_with_the_request_before_it() -> None:
         "我想開早午餐店，預算 250 萬\n\n如果預算砍到 150 萬要怎麼改？"
         in analyzer.inputs
     )
+
+
+ARTICLE = (
+    "我們團隊去年完成了一套分散式系統的重構，處理高併發與容錯，也做了除錯與效能優化。"
+    * 6
+)
+CODE = "def add(a, b):\n    return a - b\n\nprint(add(1, 2))\n" * 3
+
+
+@pytest.mark.parametrize(
+    ("text", "complexity", "certain"),
+    [
+        # The instruction may come first or last; pasted text in between asks
+        # for nothing, whatever words it contains.
+        ("請把以下翻譯成英文：\n" + ARTICLE, "simple", True),
+        (ARTICLE + "\n\n請把上面這段翻譯成英文", "simple", True),
+        (
+            "We rebuilt our distributed system and debugged race conditions. " * 6
+            + "\n\nTranslate the above into Traditional Chinese.",
+            "simple",
+            True,
+        ),
+        # Hard words only inside pasted text never make the rules sure.
+        (ARTICLE + "\n\n這篇在講什麼？", "moderate", False),
+        (
+            "我們公司今年要導入新的會員系統，需要和舊的 POS 與客服系統整合，" * 5
+            + "\n"
+            + "另外要注意資料遷移、權限控管與高併發時的穩定性。" * 5,
+            "moderate",
+            False,
+        ),
+        # Explaining code is for the model to judge; debugging it is hard work.
+        (CODE + "\n請解釋這段程式碼在做什麼", "moderate", False),
+        (CODE + "\n幫我除錯這段程式", "complex", True),
+        (
+            "背景：我們是 20 人的電商團隊。\n"
+            + ARTICLE
+            + "\n請幫我設計一套可容錯的微服務架構",
+            "complex",
+            True,
+        ),
+        # A translation that also asks for analysis is not a plain rewrite.
+        (ARTICLE + "\n\n翻譯成英文，然後分析它的論證並提出反駁", "simple", False),
+    ],
+)
+def test_the_instruction_line_decides_not_pasted_text(
+    text: str, complexity: str, certain: bool
+) -> None:
+    result = assess_complexity(text)
+    assert (result.complexity, result.certain) == (complexity, certain)
