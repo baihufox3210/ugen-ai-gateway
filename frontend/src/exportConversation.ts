@@ -10,7 +10,7 @@ export function conversationMarkdown(conversation: Conversation): string {
     lines.push('## You', '', turn.user, '');
     if (turn.result) {
       const where = turn.result.provider === 'cloud' ? 'cloud' : 'local';
-      lines.push(`## UGen (${where}${turn.result.stopped ? ', stopped' : ''})`, '', turn.result.content, '');
+      lines.push(`## Kiri (${where}${turn.result.stopped ? ', stopped' : ''})`, '', turn.result.content, '');
     }
   }
   return lines.join('\n');

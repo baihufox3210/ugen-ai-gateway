@@ -535,6 +535,10 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .settings-section.first{border-top:0;padding-top:0}
 .prompt-editor textarea{display:block;margin-top:2px;font-size:12.5px;line-height:1.6}
 .prompt-editor .probe-row{margin-top:10px}
+.base-prompt{margin:0 0 10px;border:1px solid #e3ebe7;border-radius:9px;padding:8px 11px;background:#f6faf8}
+.base-prompt summary{color:#4f6a60;font-size:11px;font-weight:600;cursor:pointer}
+.base-prompt pre{margin:8px 0 6px;white-space:pre-wrap;color:#263e37;font:12px/1.6 var(--sans)}
+.base-prompt small{color:#62776e;font-size:10.5px}
 .prompt-editor + .models-page .settings-section.first{margin-top:18px;border-top:1px solid #eaf0ed;padding-top:16px}
 .settings-hint{display:block;margin-top:8px;color:#62776e;font-size:9.5px;line-height:1.6}
 .settings-line{display:flex;align-items:center;justify-content:space-between;gap:12px}

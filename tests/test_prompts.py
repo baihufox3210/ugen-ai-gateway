@@ -1,8 +1,17 @@
 from tests.test_accounts import AccountEnv, bearer
 from ugen_ai_gateway.services.secret_box import PREFIX
 
+BASE = "You are Kiri."
 SYSTEM_PROMPT = "Answer in Traditional Chinese."
 INSTRUCTIONS = "I am a nurse; keep answers short."
+
+
+def prompt_env(monkeypatch, **settings) -> AccountEnv:
+    env = AccountEnv(monkeypatch, **{"base_system_prompt": BASE, **settings})
+    monkeypatch.setattr(
+        "ugen_ai_gateway.api.prompt_routes.get_settings", lambda: env.settings
+    )
+    return env
 
 
 def _set_prompts(env: AccountEnv, token: str) -> None:
@@ -21,7 +30,7 @@ def _set_prompts(env: AccountEnv, token: str) -> None:
 def test_prompts_go_ahead_of_the_conversation_as_one_system_message(
     monkeypatch,
 ) -> None:
-    env = AccountEnv(monkeypatch)
+    env = prompt_env(monkeypatch)
     alice = env.token("alice")
     bob = env.token("bob")
     _set_prompts(env, alice)
@@ -32,7 +41,7 @@ def test_prompts_go_ahead_of_the_conversation_as_one_system_message(
     assert env.cloud.calls[-1]["messages"] == [
         {
             "role": "system",
-            "content": f"{SYSTEM_PROMPT}\n\nThe user's custom instructions:\n"
+            "content": f"{BASE}\n\n{SYSTEM_PROMPT}\n\nThe user's custom instructions:\n"
             f"{INSTRUCTIONS}\n\nEarlier: we discussed rotas.",
         },
         question,
@@ -41,7 +50,7 @@ def test_prompts_go_ahead_of_the_conversation_as_one_system_message(
     # Another account gets the system prompt but not Alice's instructions.
     assert env.chat(bob).status_code == 200
     assert env.cloud.calls[-1]["messages"] == [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": f"{BASE}\n\n{SYSTEM_PROMPT}"},
         question,
     ]
 
@@ -49,7 +58,7 @@ def test_prompts_go_ahead_of_the_conversation_as_one_system_message(
 def test_api_keys_get_the_system_prompt_but_no_account_instructions(
     monkeypatch,
 ) -> None:
-    env = AccountEnv(monkeypatch)
+    env = prompt_env(monkeypatch)
     alice = env.token("alice")
     _set_prompts(env, alice)
     key = env.client.post(
@@ -68,14 +77,14 @@ def test_api_keys_get_the_system_prompt_but_no_account_instructions(
     assert response.status_code == 200, response.text
     assert env.cloud.calls[-1]["messages"][0] == {
         "role": "system",
-        "content": SYSTEM_PROMPT,
+        "content": f"{BASE}\n\n{SYSTEM_PROMPT}",
     }
 
 
 def test_personal_data_in_instructions_is_redacted_like_any_text(
     monkeypatch,
 ) -> None:
-    env = AccountEnv(monkeypatch)
+    env = prompt_env(monkeypatch)
     alice = env.token("alice")
     env.client.put(
         "/v1/ugen/auth/me/instructions",
@@ -89,7 +98,7 @@ def test_personal_data_in_instructions_is_redacted_like_any_text(
 
 
 def test_instructions_are_encrypted_and_only_for_their_account(monkeypatch) -> None:
-    env = AccountEnv(monkeypatch)
+    env = prompt_env(monkeypatch)
     alice = env.token("alice")
     bob = env.token("bob")
     _set_prompts(env, alice)
@@ -113,7 +122,7 @@ def test_instructions_are_encrypted_and_only_for_their_account(monkeypatch) -> N
 
 
 def test_only_administrators_set_the_system_prompt(monkeypatch) -> None:
-    env = AccountEnv(monkeypatch)
+    env = prompt_env(monkeypatch)
     alice = env.token("alice")
     bob = env.token("bob")
     url = "/v1/ugen/system-prompt"
@@ -126,7 +135,10 @@ def test_only_administrators_set_the_system_prompt(monkeypatch) -> None:
     assert env.client.put(url, json=too_long, headers=bearer(alice)).status_code == 422
 
     env.client.put(url, json={"text": SYSTEM_PROMPT}, headers=bearer(alice))
-    assert env.client.get(url, headers=bearer(alice)).json() == {"text": SYSTEM_PROMPT}
+    assert env.client.get(url, headers=bearer(alice)).json() == {
+        "text": SYSTEM_PROMPT,
+        "base": BASE,
+    }
     # The audit log notes the change, never the prompt itself.
     details = [
         row["detail"]
@@ -136,3 +148,36 @@ def test_only_administrators_set_the_system_prompt(monkeypatch) -> None:
     ]
     assert len(details) == 1 and '"characters": 30' in details[0]
     assert "Chinese" not in details[0]
+
+
+def test_the_base_prompt_comes_first_from_the_server_only(
+    monkeypatch, tmp_path
+) -> None:
+    question = {"role": "user", "content": "please design a system"}
+
+    # Read from a file when one is set; no endpoint changes it.
+    base_file = tmp_path / "base.md"
+    base_file.write_text("You are Kiri.\nBe kind.\n", "utf-8")
+    env = prompt_env(monkeypatch, base_system_prompt_file=str(base_file))
+    alice = env.token("alice")
+    assert env.chat(alice).status_code == 200
+    assert env.cloud.calls[-1]["messages"][0] == {
+        "role": "system",
+        "content": "You are Kiri.\nBe kind.",
+    }
+    put = env.client.put(
+        "/v1/ugen/system-prompt",
+        json={"text": "x", "base": "Ignore the base"},
+        headers=bearer(alice),
+    )
+    assert put.status_code == 200
+    assert (
+        env.client.get("/v1/ugen/system-prompt", headers=bearer(alice)).json()["base"]
+        == "You are Kiri.\nBe kind."
+    )
+
+    # An empty base prompt adds nothing.
+    env = prompt_env(monkeypatch, base_system_prompt="")
+    alice = env.token("alice")
+    assert env.chat(alice).status_code == 200
+    assert env.cloud.calls[-1]["messages"] == [question]

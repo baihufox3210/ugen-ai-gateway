@@ -1,13 +1,18 @@
-"""System prompts added ahead of chat conversations.
+"""System prompts added ahead of chat conversations, in this order:
 
-The administrator's system prompt goes ahead of every request, from the
-dashboard and the OpenAI-compatible API alike. Each account's custom
-instructions go ahead of the requests it makes while signed in; API keys
-never carry them, since an app writes its own prompts. Both are sent as system
-messages, so they are checked and redacted like any other text before
-reaching a cloud model. Account instructions are stored encrypted.
+1. The base system prompt, set on the server (BASE_SYSTEM_PROMPT or
+   BASE_SYSTEM_PROMPT_FILE): only whoever runs the server can change it.
+2. The administrators' system prompt, set on the Models page.
+3. The signed-in account's custom instructions; API keys never carry them,
+   since an app writes its own prompts.
+
+The first two go ahead of every request, from the dashboard and the
+OpenAI-compatible API alike. All are sent as system messages, so they are
+checked and redacted like any other text before reaching a cloud model.
+Account instructions are stored encrypted.
 """
 
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -20,6 +25,7 @@ from ugen_ai_gateway.api.access import (
     presented_api_key,
 )
 from ugen_ai_gateway.api.schemas import ChatRequest
+from ugen_ai_gateway.config import get_settings
 from ugen_ai_gateway.dependencies import get_secret_box, get_usage_store
 from ugen_ai_gateway.services.keys import Principal
 from ugen_ai_gateway.services.usage import UsageStore
@@ -42,6 +48,13 @@ class Instructions(BaseModel):
     text: str = Field(default="", max_length=MAX_INSTRUCTIONS_CHARACTERS)
 
 
+def base_system_prompt() -> str:
+    settings = get_settings()
+    if settings.base_system_prompt_file:
+        return Path(settings.base_system_prompt_file).read_text("utf-8").strip()
+    return settings.base_system_prompt.strip()
+
+
 def system_prompt(store: UsageStore | None) -> str:
     saved = store.load_setting(SYSTEM_PROMPT_SETTING) if store else None
     return str(saved.get("text") or "") if isinstance(saved, dict) else ""
@@ -50,9 +63,9 @@ def system_prompt(store: UsageStore | None) -> str:
 async def with_prompts(
     request: ChatRequest, store: UsageStore | None, principal: Principal
 ) -> ChatRequest:
-    """``request`` with the system prompt and the signed-in account's custom
-    instructions ahead of its own messages."""
-    prompts = [system_prompt(store)]
+    """``request`` with the base and administrators' system prompts and the
+    signed-in account's custom instructions ahead of its own messages."""
+    prompts = [base_system_prompt(), system_prompt(store)]
     if store is not None and principal.user_id:
         instructions = get_secret_box().open(
             await store.get_instructions(principal.user_id)
@@ -103,7 +116,8 @@ async def get_system_prompt(
     store: UsageStoreDependency, request: Request
 ) -> dict[str, str]:
     await check_admin_access(request, store)
-    return {"text": system_prompt(store)}
+    # The base prompt is shown, read-only: only the server's settings change it.
+    return {"text": system_prompt(store), "base": base_system_prompt()}
 
 
 @router.put("/system-prompt")

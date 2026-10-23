@@ -572,8 +572,17 @@ conversation; a marker shows how many earlier messages the memory covers.
 
 ### System prompts
 
-Two optional prompts go ahead of every conversation, as one system message:
+Three optional prompts go ahead of every conversation, as one system message,
+in this order:
 
+0. The **base prompt**, set on the server only (`BASE_SYSTEM_PROMPT`, or
+   `BASE_SYSTEM_PROMPT_FILE` for a longer one, for example
+   `/app/data/base-prompt.md` copied in with `docker compose cp`). No page
+   changes it, so only whoever runs the server controls it. It applies to the
+   dashboard and the API alike, and says that the prompts after it add to it
+   but never override it. By default it introduces the assistant as Kiri;
+   set `BASE_SYSTEM_PROMPT=` to send none. Administrators see it, read-only,
+   above the system prompt on the Models page.
 1. The **system prompt** an administrator sets at the top of the Models page
    (`GET`/`PUT /v1/ugen/system-prompt` with `{"text": "..."}`, at most 8,000
    characters). It applies to every request, from the dashboard and the
