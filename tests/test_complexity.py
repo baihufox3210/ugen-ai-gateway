@@ -50,6 +50,25 @@ def test_rules_only_mode_gets_most_requests_right() -> None:
         ("幫我設計一個會員系統", None, "complex", True),
         ("證明根號2是無理數", None, "complex", True),
         ("implement an LRU cache", None, "complex", True),
+        # A multi-line brief is read as a whole, not just its first line.
+        (
+            "請設計一套適用於資源受限環境的 AI Gateway 路由判定系統，使用 Python 實作。\n"
+            "需求：\n1. 實作 classify_by_rules(text)\n2. 實作 classify_request(text)\n"
+            "3. 提供至少 20 個 pytest 測試案例，並用 mock 驗證模型呼叫次數\n"
+            + "環境限制：本地模型可能逾時或無法連線，必須有安全降級策略。"
+            * 4,
+            None,
+            "complex",
+            True,
+        ),
+        ("設計一套可容錯的微服務架構", None, "complex", True),
+        # Rewriting a pasted passage: only the instruction line counts.
+        (
+            "幫我翻譯成英文：\n" + "我們設計了一套分散式系統，處理高併發與容錯。" * 8,
+            None,
+            "simple",
+            True,
+        ),
         ("第二點再詳細一點", "幫我設計一個會員系統", "complex", True),
         ("謝謝，很清楚！", "幫我設計一個會員系統", "simple", True),
         # No clear signal: the analysis model decides.

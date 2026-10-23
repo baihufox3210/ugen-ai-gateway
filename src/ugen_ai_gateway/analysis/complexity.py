@@ -54,7 +54,7 @@ _HARD = _any(
     r"完整方案|全面分析|深入分析|詳細分析|分散式|高可用|高併發|併發|競態|死結|記憶體洩漏|"
     r"時間複雜度|證明|推導|演算法|資料結構|商業計畫|營運計畫|可行性(?:分析|評估)|"
     r"風險評估|預算(?:規劃|編列)|時程(?:規劃|安排)|"
-    r"(?:設計|建置|規劃|開發|實作|架設)[^，。、；：！？,.;:!?\n]{0,24}?"
+    r"(?:設計|建置|規劃|開發|實作|架設)[^，。、；：！？,.;:!?\n]{0,40}?"
     r"(?:系統|資料庫|API|後端|架構|演算法|平台|服務|網站|App|應用程式|微服務|流程)",
 )
 # Everyday task words: demanding in some requests, casual in others.
@@ -146,6 +146,12 @@ _SUBSTANTIAL = _any(
 _CODE = re.compile(
     r"```|^\s{4,}\S|\b(?:def|class|function|import|return)\b|[{};]\s*$", re.MULTILINE
 )
+# Asks for code to be written or tested.
+_BUILD = _any(
+    r"實作|寫(?:一個|個|一支)?程式|撰寫程式|程式碼|函式|單元測試|測試案例|"
+    r"\bimplement|\bwrite (?:the |a |some )?(?:code|function|class|module|tests?)\b|"
+    r"\bunit tests?\b|\bpytest\b",
+)
 _LIST_ITEM = re.compile(r"(?:^|\n)\s*(?:\d+[.)、]|[-*•])\s*\S")
 _CJK = re.compile(r"[㐀-鿿豈-﫿]")
 
@@ -177,12 +183,12 @@ def assess_complexity(text: str, previous: str | None = None) -> Assessment:
     if _CHITCHAT.search(stripped) or _ACKNOWLEDGEMENT.search(stripped):
         return Assessment("simple", True, "Small talk.")
 
-    # With a pasted passage after the instruction, only the instruction says
-    # what is asked ("translate this: <text mentioning distributed systems>").
+    # A rewrite or translation of a pasted passage: only the instruction line
+    # says what is asked ("translate this: <text mentioning distributed
+    # systems>"). Any other multi-line request is read as a whole.
     first_line, _, rest = stripped.partition("\n")
-    instruction = (
-        first_line if rest.strip() and len(rest) > len(first_line) else stripped
-    )
+    pasted = bool(rest.strip()) and len(rest) > len(first_line)
+    instruction = first_line if pasted and _LIGHT_TASK.search(first_line) else stripped
     hard = _HARD.search(instruction)
     has_code = bool(_CODE.search(stripped))
     # Only when nothing else is asked ("什麼是 CAP 定理？請舉例說明取捨" is more).
@@ -199,6 +205,15 @@ def assess_complexity(text: str, previous: str | None = None) -> Assessment:
         return Assessment(
             "complex", True, "Design, proof, algorithm or debugging work."
         )
+    # A long brief listing several things to build: a specification to
+    # implement, whatever its individual words.
+    if (
+        size >= 400
+        and len(_LIST_ITEM.findall(stripped)) >= 3
+        and _BUILD.search(stripped)
+        and not (pasted and _LIGHT_TASK.search(first_line))
+    ):
+        return Assessment("complex", True, "A multi-part brief to implement.")
 
     light = bool(_LIGHT_TASK.search(stripped))
     task_words = {word.lower() for word in _TASK_WORDS.findall(stripped)}
