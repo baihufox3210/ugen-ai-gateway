@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } fr
 import type { User } from '../api';
 import { copyText } from '../clipboard';
 import type { ConversationMemory, ConversationTurn, SharedInfo } from '../types';
+import kiriAvatar from '../assets/kiri-avatar.webp';
 import Avatar from './Avatar';
 
 // The Markdown and LaTeX renderer is large, so it loads with the first reply instead of the page.
@@ -134,7 +135,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
           </div>
         </article>
         {result ? <article className="chat-message assistant-message">
-          <span className="message-avatar assistant-avatar">✳</span>
+          <img className="message-avatar assistant-avatar" src={kiriAvatar} alt="" aria-hidden="true"/>
           <div className="message-body">
             <div className="message-author"><b>Kiri</b><span className="message-actions">
               <CopyButton text={result.content}/>
@@ -155,7 +156,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
             </div>
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>
-          <span className="message-avatar assistant-avatar">✳</span><div className="message-body"><div className="message-author"><b>Kiri</b></div>{busy && index === turns.length - 1 && streamingText
+          <img className="message-avatar assistant-avatar" src={kiriAvatar} alt="" aria-hidden="true"/><div className="message-body"><div className="message-author"><b>Kiri</b></div>{busy && index === turns.length - 1 && streamingText
             ? <div className="markdown-wrap streaming"><StreamingMarkdown text={streamingText}/></div>
             : <p>{busy && index === turns.length - 1 ? (memoryBusy ? 'Saving older messages to memory…' : 'Analyzing and generating a response…') : 'No response received for this message'}</p>}</div>
         </article>}

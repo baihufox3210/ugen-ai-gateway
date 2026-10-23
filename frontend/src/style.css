@@ -310,7 +310,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .assistant-message{margin-top:14px}
 .message-avatar{display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:50%;font-size:11px;font-weight:600}
 .user-avatar{background:#e5eee9;color:#35785e}
-.assistant-avatar{background:#e6f2ec;color:#43896e}
+.assistant-avatar{background:#e6f2ec;object-fit:cover}
 .message-body{flex:1;min-width:0}
 .message-author{display:flex;align-items:center;gap:8px;min-height:21px;color:#38564a;font-size:11px}
 .message-author>b{font-weight:600}
