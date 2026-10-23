@@ -136,7 +136,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
         {result ? <article className="chat-message assistant-message">
           <span className="message-avatar assistant-avatar">✳</span>
           <div className="message-body">
-            <div className="message-author"><b>UGen</b><span className="message-actions">
+            <div className="message-author"><b>Kiri</b><span className="message-actions">
               <CopyButton text={result.content}/>
               {index === turns.length - 1 && <button className="message-action" onClick={() => onRegenerate(turn.id)} disabled={busy} title="Answer again">Regenerate</button>}
               {result.id && <span className="feedback" role="group" aria-label="Rate this answer">
@@ -155,7 +155,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
             </div>
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>
-          <span className="message-avatar assistant-avatar">✳</span><div className="message-body"><div className="message-author"><b>UGen</b></div>{busy && index === turns.length - 1 && streamingText
+          <span className="message-avatar assistant-avatar">✳</span><div className="message-body"><div className="message-author"><b>Kiri</b></div>{busy && index === turns.length - 1 && streamingText
             ? <div className="markdown-wrap streaming"><StreamingMarkdown text={streamingText}/></div>
             : <p>{busy && index === turns.length - 1 ? (memoryBusy ? 'Saving older messages to memory…' : 'Analyzing and generating a response…') : 'No response received for this message'}</p>}</div>
         </article>}

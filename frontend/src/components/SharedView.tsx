@@ -71,7 +71,7 @@ function SharedView({ id, signedIn, onSignIn, onOpenApp }: { id: string; signedI
             {!signedIn && <p className="shared-meta">Sign in to continue this conversation as your own; {shared.owner} will not see what you add.</p>}
             <div className="shared-thread">{shared.turns.map(turn => <section key={turn.id} className="shared-turn">
               <div className="shared-question"><b>{turn.author ?? shared.owner}</b><p>{turn.user}</p></div>
-              {turn.answer && <div className="shared-answer"><b>UGen{turn.model ? ` · ${turn.provider === 'cloud' ? 'Cloud' : 'Local'}` : ''}{turn.stopped ? ' · stopped' : ''}</b>
+              {turn.answer && <div className="shared-answer"><b>Kiri{turn.model ? ` · ${turn.provider === 'cloud' ? 'Cloud' : 'Local'}` : ''}{turn.stopped ? ' · stopped' : ''}</b>
                 <div className="markdown-wrap"><Suspense fallback={<div className="markdown plain">{turn.answer}</div>}><Markdown text={turn.answer}/></Suspense></div></div>}
             </section>)}</div>
           </>}

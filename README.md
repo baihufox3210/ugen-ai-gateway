@@ -572,17 +572,24 @@ conversation; a marker shows how many earlier messages the memory covers.
 
 ### System prompts
 
-Two optional prompts go ahead of every conversation, as one system message:
+Up to three prompts go ahead of every conversation, as one system message, in
+this order:
 
 1. The **system prompt** an administrator sets at the top of the Models page
    (`GET`/`PUT /v1/ugen/system-prompt` with `{"text": "..."}`, at most 8,000
-   characters). It applies to every request, from the dashboard and the
-   OpenAI-compatible API alike, for house rules such as language, tone or
-   topics to decline. The audit log records each change with its length only.
+   characters). It is the top layer: it applies to every request, from the
+   dashboard and the OpenAI-compatible API alike, and says that the prompts
+   after it add to it but never override it. Until one is saved, a default
+   introduces the assistant as **Kiri**; saving an empty one sends none. The
+   audit log records each change with its length only.
 2. Each account's **custom instructions**, set on the Account page: who they
-   are or how they like answers. They apply to that account's requests while
-   it is signed in, never to API keys (an app writes its own prompts). They
-   are stored encrypted like saved conversations.
+   are or how they like answers.
+3. The conversation's own **prompt**, set with the Prompt button next to the
+   message box, for example "You are a senior engineer".
+
+Layers 2 and 3 apply only to a signed-in account's requests from the dashboard,
+never to API keys (an app writes its own prompts). Instructions are stored
+encrypted like saved conversations.
 
 Then come the conversation memory and the client's own system messages. All
 of it is analyzed and redacted like any other text, so keep personal data out

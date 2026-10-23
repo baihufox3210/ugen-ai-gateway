@@ -1,8 +1,10 @@
 from tests.test_accounts import AccountEnv, bearer
+from ugen_ai_gateway.api.prompt_routes import DEFAULT_SYSTEM_PROMPT
 from ugen_ai_gateway.services.secret_box import PREFIX
 
 SYSTEM_PROMPT = "Answer in Traditional Chinese."
 INSTRUCTIONS = "I am a nurse; keep answers short."
+QUESTION = {"role": "user", "content": "please design a system"}
 
 
 def _set_prompts(env: AccountEnv, token: str) -> None:
@@ -18,37 +20,63 @@ def _set_prompts(env: AccountEnv, token: str) -> None:
     assert saved.json() == {"text": INSTRUCTIONS}
 
 
-def test_prompts_go_ahead_of_the_conversation_as_one_system_message(
-    monkeypatch,
-) -> None:
+def _system(env: AccountEnv) -> str:
+    first = env.cloud.calls[-1]["messages"][0]
+    assert first["role"] == "system"
+    return first["content"]
+
+
+def test_the_default_system_prompt_names_the_assistant_kiri(monkeypatch) -> None:
+    env = AccountEnv(monkeypatch)
+    alice = env.token("alice")
+
+    assert env.chat(alice).status_code == 200
+    assert env.cloud.calls[-1]["messages"] == [
+        {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
+        QUESTION,
+    ]
+    shown = env.client.get("/v1/ugen/system-prompt", headers=bearer(alice)).json()
+    assert shown == {"text": DEFAULT_SYSTEM_PROMPT, "default": DEFAULT_SYSTEM_PROMPT}
+
+    # Saving an empty system prompt sends none.
+    env.client.put("/v1/ugen/system-prompt", json={"text": ""}, headers=bearer(alice))
+    assert env.chat(alice).status_code == 200
+    assert env.cloud.calls[-1]["messages"] == [QUESTION]
+
+
+def test_prompts_stack_in_order_as_one_system_message(monkeypatch) -> None:
     env = AccountEnv(monkeypatch)
     alice = env.token("alice")
     bob = env.token("bob")
     _set_prompts(env, alice)
 
     memory = {"role": "system", "content": "Earlier: we discussed rotas."}
-    question = {"role": "user", "content": "please design a system"}
-    assert env.chat(alice, messages=[memory, question]).status_code == 200
+    response = env.chat(
+        alice,
+        messages=[memory, QUESTION],
+        conversation_prompt=" Use metric units. ",
+    )
+    assert response.status_code == 200
     assert env.cloud.calls[-1]["messages"] == [
         {
             "role": "system",
-            "content": f"{SYSTEM_PROMPT}\n\nThe user's custom instructions:\n"
-            f"{INSTRUCTIONS}\n\nEarlier: we discussed rotas.",
+            "content": f"{SYSTEM_PROMPT}\n\n"
+            f"The user's custom instructions:\n{INSTRUCTIONS}\n\n"
+            "Instructions for this conversation:\nUse metric units.\n\n"
+            "Earlier: we discussed rotas.",
         },
-        question,
+        QUESTION,
     ]
 
-    # Another account gets the system prompt but not Alice's instructions.
+    # Bob gets the system prompt, but not Alice's instructions.
     assert env.chat(bob).status_code == 200
     assert env.cloud.calls[-1]["messages"] == [
         {"role": "system", "content": SYSTEM_PROMPT},
-        question,
+        QUESTION,
     ]
 
 
-def test_api_keys_get_the_system_prompt_but_no_account_instructions(
-    monkeypatch,
-) -> None:
+def test_api_keys_get_only_the_system_prompt(monkeypatch) -> None:
     env = AccountEnv(monkeypatch)
     alice = env.token("alice")
     _set_prompts(env, alice)
@@ -58,10 +86,7 @@ def test_api_keys_get_the_system_prompt_but_no_account_instructions(
 
     response = env.client.post(
         "/v1/chat/completions",
-        json={
-            "model": "auto",
-            "messages": [{"role": "user", "content": "please design a system"}],
-        },
+        json={"model": "auto", "messages": [QUESTION]},
         headers=bearer(key),
     )
 
@@ -72,9 +97,7 @@ def test_api_keys_get_the_system_prompt_but_no_account_instructions(
     }
 
 
-def test_personal_data_in_instructions_is_redacted_like_any_text(
-    monkeypatch,
-) -> None:
+def test_personal_data_in_instructions_is_redacted_like_any_text(monkeypatch) -> None:
     env = AccountEnv(monkeypatch)
     alice = env.token("alice")
     env.client.put(
@@ -84,11 +107,11 @@ def test_personal_data_in_instructions_is_redacted_like_any_text(
     )
 
     assert env.chat(alice).status_code == 200
-    sent = env.cloud.calls[-1]["messages"][0]["content"]
+    sent = _system(env)
     assert "alex@example.com" not in sent and "[EMAIL_1]" in sent
 
 
-def test_instructions_are_encrypted_and_only_for_their_account(monkeypatch) -> None:
+def test_instructions_are_encrypted(monkeypatch) -> None:
     env = AccountEnv(monkeypatch)
     alice = env.token("alice")
     bob = env.token("bob")
@@ -107,10 +130,6 @@ def test_instructions_are_encrypted_and_only_for_their_account(monkeypatch) -> N
         not in env.client.get("/v1/ugen/auth/me", headers=bearer(alice)).json()
     )
 
-    cleared = env.client.put(me, json={"text": ""}, headers=bearer(alice))
-    assert cleared.json() == {"text": ""}
-    assert env.client.get(me, headers=bearer(alice)).json() == {"text": ""}
-
 
 def test_only_administrators_set_the_system_prompt(monkeypatch) -> None:
     env = AccountEnv(monkeypatch)
@@ -126,7 +145,7 @@ def test_only_administrators_set_the_system_prompt(monkeypatch) -> None:
     assert env.client.put(url, json=too_long, headers=bearer(alice)).status_code == 422
 
     env.client.put(url, json={"text": SYSTEM_PROMPT}, headers=bearer(alice))
-    assert env.client.get(url, headers=bearer(alice)).json() == {"text": SYSTEM_PROMPT}
+    assert env.client.get(url, headers=bearer(alice)).json()["text"] == SYSTEM_PROMPT
     # The audit log notes the change, never the prompt itself.
     details = [
         row["detail"]

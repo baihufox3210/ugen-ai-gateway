@@ -8,6 +8,8 @@ from ugen_ai_gateway.analysis.schemas import TaskType, TokenUsage
 MAX_CHAT_MESSAGES = 64
 MAX_CHAT_TEXT_CHARACTERS = 32_000
 MAX_MODEL_NAME_CHARACTERS = 128
+# Account instructions, roles and conversation prompts.
+MAX_PROMPT_CHARACTERS = 4000
 
 
 class RoutingInfo(BaseModel):
@@ -49,6 +51,8 @@ class ChatRequest(BaseModel):
         min_length=1, max_length=MAX_CHAT_MESSAGES
     )
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    # The dashboard's prompt for this conversation (see prompt_routes).
+    conversation_prompt: str = Field(default="", max_length=MAX_PROMPT_CHARACTERS)
 
     @field_validator("messages")
     @classmethod
