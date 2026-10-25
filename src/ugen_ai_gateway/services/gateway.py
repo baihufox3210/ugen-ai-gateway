@@ -694,7 +694,9 @@ class GatewayService:
             raise ProviderTimeout("Model provider timed out") from exc
         except Exception as exc:
             error = ProviderOutage if is_outage(exc) else ProviderRequestError
-            raise error(f"Model provider request failed: {exc}") from exc
+            failure = error(f"Model provider request failed: {exc}")
+            failure.status_code = getattr(exc, "status_code", None)  # type: ignore[attr-defined]
+            raise failure from exc
 
         if not completion.choices:
             raise RuntimeError("Model provider returned no choices")
