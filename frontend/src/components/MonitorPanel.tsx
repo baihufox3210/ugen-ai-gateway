@@ -42,6 +42,18 @@ function LogBlock({ entry, number, open }: { entry: LogEntry; number: number; op
   </details>;
 }
 
+/** Say how far the savings figure can be trusted: models without a price count as no saving. */
+function pricingNotes(stats: UsageStats | null) {
+  const pricing = stats?.pricing;
+  if (!pricing || (!pricing.unknown.length && !pricing.fuzzy.length && !pricing.baseline_unknown.length)) return null;
+  const count = (items: { requests: number }[]) => items.reduce((sum, item) => sum + item.requests, 0);
+  return <section className="pricing-notes" aria-label="About the cost figures">
+    {pricing.unknown.length > 0 && <p className="warn"><b>No price for {pricing.unknown.map(item => item.model).join(', ')}.</b> {count(pricing.unknown)} request{count(pricing.unknown) === 1 ? '' : 's'} counted as no saving. Add the price under Settings → Models → Model prices.</p>}
+    {pricing.baseline_unknown.length > 0 && <p className="warn"><b>The comparison model {pricing.baseline_unknown.map(item => item.model ?? 'cloud model').join(', ')} has no price,</b> so savings read as $0 for {count(pricing.baseline_unknown)} request{count(pricing.baseline_unknown) === 1 ? '' : 's'}.</p>}
+    {pricing.fuzzy.length > 0 && <p><b>Priced by similar name:</b> {pricing.fuzzy.map(item => `${item.model} → ${item.matched}`).join(', ')}. Check these under Model prices.</p>}
+  </section>;
+}
+
 function MonitorPanel({ conversations, phase, refreshKey, log, onClearLog }: Props) {
   const stats = useUsageStats(refreshKey);
   const turns = conversations.flatMap(conversation => conversation.turns.map(turn => ({ ...turn, updatedAt: conversation.updatedAt })));
@@ -85,6 +97,7 @@ function MonitorPanel({ conversations, phase, refreshKey, log, onClearLog }: Pro
         <small className="metric-card-caption">{stats ? `Spent ${formatUsd(stats.cost_usd)} · all-cloud ${formatUsd(stats.baseline_cost_usd)}` : 'Needs gateway usage data'}</small>
       </article>
     </section>
+    {pricingNotes(stats)}
     <section className="panel activity-panel">
       <div className="monitor-panel-heading"><div><span className="eyebrow">ACTIVITY / 7 DAYS</span><h2>Request activity</h2></div><span className="activity-total">{days.reduce((sum, day) => sum + day.count, 0)} total</span></div>
       <div className="activity-chart" role="img" aria-label={`${days.reduce((sum, day) => sum + day.count, 0)} requests in the last 7 days`}>

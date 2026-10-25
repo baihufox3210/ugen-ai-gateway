@@ -169,6 +169,13 @@ class UsageRecord:
     total_ms: float = 0.0
     cost_usd: float = 0.0
     baseline_cost_usd: float = 0.0
+    # How the price was found (configured, custom, catalog, ...-fuzzy, local,
+    # unknown), the list entry it matched, and the same for the baseline model.
+    price_source: str | None = None
+    price_model: str | None = None
+    price_match: str | None = None
+    baseline_source: str | None = None
+    baseline_model: str | None = None
     injection_signals: list[str] = field(default_factory=list)
     output_redactions: int = 0
     created_at: float = field(default_factory=time.time)
@@ -187,6 +194,11 @@ def token_cost(
 
 _ADDED_COLUMNS = {
     "requests": {
+        "price_source": "TEXT",
+        "price_model": "TEXT",
+        "price_match": "TEXT",
+        "baseline_source": "TEXT",
+        "baseline_model": "TEXT",
         "injection_signals": "TEXT NOT NULL DEFAULT '[]'",
         "output_redactions": "INTEGER NOT NULL DEFAULT 0",
         "user_id": "TEXT",
@@ -410,11 +422,59 @@ class UsageStore:
         result["savings_usd"] = max(
             result["baseline_cost_usd"] - result["cost_usd"], 0.0
         )
+        result["pricing"] = self._pricing_notes(since, scope, key)
         result["days"] = days
         result["daily"] = [dict(row) for row in daily]
         result["rules"] = [dict(row) for row in rules]
         result["feedback"] = dict(feedback)
         return result
+
+    def _pricing_notes(
+        self, since: float, scope: str, key: tuple[str | None, ...]
+    ) -> dict[str, Any]:
+        """Models whose price was missing or only guessed from a similar name,
+        so the savings figure can say how far to trust it."""
+        with self._lock:
+
+            def rows(sql: str) -> list[dict[str, Any]]:
+                return [
+                    dict(row)
+                    for row in self._connection.execute(
+                        sql.replace("{scope}", scope), (since, *key)
+                    )
+                ]
+
+            unknown = rows(
+                "SELECT price_model AS model, COUNT(*) AS requests FROM requests "
+                "WHERE created_at >= ? AND status = 'ok' AND price_source = 'unknown' "
+                "AND {scope} GROUP BY price_model ORDER BY requests DESC"
+            )
+            fuzzy = rows(
+                "SELECT price_model AS model, price_match AS matched, COUNT(*) AS requests "
+                "FROM requests WHERE created_at >= ? AND status = 'ok' "
+                "AND price_source LIKE '%-fuzzy' AND {scope} "
+                "GROUP BY price_model, price_match ORDER BY requests DESC"
+            )
+            baseline = rows(
+                "SELECT baseline_model AS model, COUNT(*) AS requests FROM requests "
+                "WHERE created_at >= ? AND status = 'ok' AND baseline_source = 'unknown' "
+                "AND {scope} GROUP BY baseline_model ORDER BY requests DESC"
+            )
+        return {"unknown": unknown, "fuzzy": fuzzy, "baseline_unknown": baseline}
+
+    def _price_usage(self, days: int) -> list[dict[str, Any]]:
+        since = time.time() - days * 86400
+        with self._lock:
+            return [
+                dict(row)
+                for row in self._connection.execute(
+                    "SELECT price_model AS model, price_source, price_match, COUNT(*) AS requests "
+                    "FROM requests WHERE created_at >= ? AND status = 'ok' "
+                    "AND price_model IS NOT NULL AND provider = 'cloud' "
+                    "GROUP BY price_model, price_source, price_match ORDER BY requests DESC",
+                    (since,),
+                )
+            ]
 
     def _recent(
         self, limit: int, before: float | None, scope: _Scope
@@ -709,6 +769,10 @@ class UsageStore:
     async def get_instructions(self, user_id: str) -> str:
         """A user's custom instructions, as stored (sealed by the caller)."""
         return await asyncio.to_thread(self._get_instructions, user_id)
+
+    async def price_usage(self, days: int = 30) -> list[dict[str, Any]]:
+        """Cloud models used lately and how each one's price was found."""
+        return await asyncio.to_thread(self._price_usage, days)
 
     async def set_redact_off(
         self, *, user_id: str | None = None, key_id: str | None = None, off: list[str]
