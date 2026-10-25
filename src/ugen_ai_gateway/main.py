@@ -12,6 +12,7 @@ from ugen_ai_gateway.api.auth_routes import router as auth_router
 from ugen_ai_gateway.api.conversation_routes import router as conversation_router
 from ugen_ai_gateway.api.model_routes import router as model_router
 from ugen_ai_gateway.api.openai_routes import router as openai_router
+from ugen_ai_gateway.api.pricing_routes import router as pricing_router
 from ugen_ai_gateway.api.privacy_routes import router as privacy_router
 from ugen_ai_gateway.api.prompt_routes import router as prompt_router
 from ugen_ai_gateway.api.routes import router
@@ -133,6 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(model_router)
     app.include_router(user_router)
     app.include_router(privacy_router)
+    app.include_router(pricing_router)
     app.include_router(prompt_router)
     app.include_router(conversation_router)
     app.include_router(sharing_router)

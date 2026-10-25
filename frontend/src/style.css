@@ -786,3 +786,26 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .key-list li .key-redaction{flex-basis:100%}
 .key-redaction .settings-section{margin:4px 0 0;padding:12px 0 0;border-top:1px solid #e3ebe7;border-bottom:0}
 @media(max-width:560px){.redaction-grid{grid-template-columns:1fr}}
+.pricing-notes{display:grid;gap:6px;margin:0 0 12px;border:1px solid #ecd9b0;border-radius:11px;padding:10px 13px;background:#fbf6ec;color:#6f5a2c;font-size:10.5px;line-height:1.6}
+.pricing-notes p{margin:0}
+.pricing-notes .warn{color:#8a5a14}
+.pricing-page h4{margin:18px 0 6px;color:#2c4a3f;font-size:12px}
+.pricing-warning{display:grid;gap:4px;margin:10px 0;border:1px solid #ecd9b0;border-radius:10px;padding:10px 12px;background:#fbf6ec;color:#6f5a2c;font-size:10.5px}
+.pricing-warning .text-action{margin:0 10px 0 0}
+.pricing-check,.pricing-filter{display:flex;gap:8px;margin:10px 0}
+.pricing-check input,.pricing-filter input{flex:1;min-width:0}
+.pricing-result{display:grid;gap:4px}
+.pricing-result.unknown{border-color:#ecd9b0}
+.price-pill{display:inline-block;margin-left:6px;border-radius:999px;padding:1px 8px;background:#e6f2ec;color:#2f6b55;font-size:10px;font-weight:600}
+.pricing-rows{display:grid;gap:6px;margin:8px 0}
+.pricing-row{display:grid;grid-template-columns:minmax(0,2fr) 90px 90px minmax(0,1.4fr) auto;gap:6px;align-items:center}
+.pricing-row input{min-width:0}
+.pricing-toggle{margin:0}
+.price-table-wrap{max-height:340px;overflow:auto;border:1px solid #e3ebe7;border-radius:10px}
+.price-table{width:100%;border-collapse:collapse;font-size:10.5px}
+.price-table th{position:sticky;top:0;background:#f4f8f6;color:#4f6a60;font-weight:600;text-align:left}
+.price-table th,.price-table td{padding:6px 9px;border-bottom:1px solid #edf1ef;vertical-align:top}
+.price-table td small{display:block;color:#8a9c93;font-size:9px}
+.price-table tr.dim td{color:#8a9c93}
+@media(max-width:700px){.pricing-row{grid-template-columns:1fr 1fr}.pricing-row input:first-child,.pricing-row input:nth-child(4){grid-column:1/3}}
+.pricing-toggle{color:#2c4a3f;font-weight:600;font-size:12px}

@@ -50,6 +50,7 @@ from ugen_ai_gateway.services.errors import (
     RequestTooLarge,
 )
 from ugen_ai_gateway.services.keys import Principal
+from ugen_ai_gateway.services.pricing import Price, PriceBook
 from ugen_ai_gateway.services.resilience import CircuitBreaker, is_outage
 from ugen_ai_gateway.services.usage import UsageRecord, UsageStore, token_cost
 
@@ -153,6 +154,7 @@ class GatewayService:
         provider name to its client."""
         self._settings = settings
         self._usage_store = usage_store
+        self._prices = PriceBook.load(usage_store)
         self._analyzer = analyzer
         self._policy = policy
         self._configured = routing is not None or bool(settings.local_model)
@@ -607,6 +609,22 @@ class GatewayService:
         model = prepared.route.model
         baseline = self._engine.config.defaults.cloud
         baseline_model = self._engine.config.resolve(baseline)[1] if baseline else None
+        price = self._prices.resolve(
+            [model.id, model.alias or "", response.model],
+            local=prepared.locality == "local",
+            configured_input=model.input_cost_per_million,
+            configured_output=model.output_cost_per_million,
+        )
+        baseline_price = (
+            self._prices.resolve(
+                [baseline_model.id, baseline_model.alias or ""],
+                local=False,
+                configured_input=baseline_model.input_cost_per_million,
+                configured_output=baseline_model.output_cost_per_million,
+            )
+            if baseline_model
+            else Price()
+        )
         record.provider = prepared.locality
         record.provider_name = prepared.route.provider.name
         record.model = response.model
@@ -618,20 +636,24 @@ class GatewayService:
             record.generation_ms = response.performance.generation_ms
             record.total_ms = response.performance.total_ms
         record.cost_usd = token_cost(
+            prompt_tokens, completion_tokens, price.input, price.output
+        )
+        record.baseline_cost_usd = token_cost(
             prompt_tokens,
             completion_tokens,
-            model.input_cost_per_million,
-            model.output_cost_per_million,
+            baseline_price.input,
+            baseline_price.output,
         )
-        record.baseline_cost_usd = (
-            token_cost(
-                prompt_tokens,
-                completion_tokens,
-                baseline_model.input_cost_per_million,
-                baseline_model.output_cost_per_million,
-            )
-            if baseline_model
-            else 0.0
+        if not price.known:
+            # A model with no known price must not look like a saving: its cost is
+            # counted as zero, so the baseline is too.
+            record.baseline_cost_usd = record.cost_usd
+        record.price_source = price.label
+        record.price_model = model.id
+        record.price_match = price.matched
+        record.baseline_source = baseline_price.label if baseline_model else "none"
+        record.baseline_model = baseline_price.matched or (
+            baseline_model.id if baseline_model else None
         )
 
     async def _generate(

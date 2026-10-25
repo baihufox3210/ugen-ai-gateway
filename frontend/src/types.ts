@@ -45,6 +45,8 @@ export type UsageStats = {
   prompt_tokens: number; completion_tokens: number; tokens_per_second: number | null;
   cost_usd: number; baseline_cost_usd: number; savings_usd: number;
   with_personal_data: number; redacted_values: number; fallbacks: number;
+  /** Models whose price was missing or only matched by a similar name. */
+  pricing?: { unknown: { model: string; requests: number }[]; fuzzy: { model: string; matched: string; requests: number }[]; baseline_unknown: { model: string; requests: number }[] };
   daily: { day: string; requests: number; cloud: number }[];
   feedback: { up: number; down: number };
 };

@@ -656,10 +656,35 @@ timings, and cost. Usage records never contain message text or personal-data
 values; the only message text on the server is in [saved
 conversations](#saved-conversations), encrypted.
 
-Cost uses the per-million-token prices in the routing configuration. Savings
-compare it with the same tokens on the default cloud model, so answers kept on
-the local model count as saved. The dashboard shows these totals, and its
-👍/👎 buttons send feedback.
+Cost uses per-million-token prices. Savings compare it with the same tokens on
+the default cloud model, so answers kept on the local model count as saved. The
+dashboard shows these totals, and its 👍/👎 buttons send feedback.
+
+**Where prices come from**, in this order:
+
+1. A price typed for the model in its own settings (or `routing.yaml`).
+2. **Your prices**: entries you add or correct under Settings → Models → *Model
+   prices*.
+3. The **built-in list** (`services/model_prices.json`): Claude, GPT, Gemini and
+   DeepSeek, plus a few well-known models from other vendors (Grok, Mistral,
+   Llama, Qwen, Kimi). Anthropic's prices come from its pricing page; the rest
+   from third-party trackers and should be checked against each vendor's page
+   (the list says which is which, and when it was updated).
+
+Model names are matched loosely, so a model behind a proxy or cloud platform
+still finds its price: `anthropic/claude-haiku-5-5`, `claude-haiku-5-5-20260101`,
+`claude-haiku-5.5` and `us.anthropic.claude-haiku-5-5-v1:0` all mean
+`claude-haiku-5-5`. Version numbers and size words (`mini`, `nano`, `pro`,
+`flash`, `lite`) must agree exactly, so `gpt-5-mini` never gets `gpt-5`'s price;
+only small spelling slips are matched by similarity, and those are flagged.
+
+A model found nowhere is **never guessed**: its cost counts as zero and so does
+its saving, and the dashboard lists it next to the savings figure (with the
+requests affected), together with any model priced only by a similar name and a
+comparison model that has no price. The *Model prices* section can check a name
+(`GET /v1/ugen/pricing/match?name=…`), edit your prices (`GET`/`PUT
+/v1/ugen/pricing`) and download everything as JSON. Local models are free unless
+you give them a price.
 
 Provider usage values depend on what the upstream model API reports; missing
 usage is `null`. `analysis_ms` measures the local analysis request,

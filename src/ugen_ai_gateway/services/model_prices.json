@@ -1,0 +1,516 @@
+{
+  "updated": "2026-10-25",
+  "unit": "USD per 1M tokens",
+  "note": "Standard list prices (not cached, not batch). Anthropic prices come from its pricing page; the rest come from third-party trackers and need checking against each vendor's page. Edit prices on the Models page: your changes are kept separately and win over this list.",
+  "models": [
+    {
+      "id": "claude-fable-5-1",
+      "provider": "Anthropic",
+      "input": 10,
+      "output": 50,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-fable-5",
+      "provider": "Anthropic",
+      "input": 10,
+      "output": 50,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-mythos-5-1",
+      "provider": "Anthropic",
+      "input": 10,
+      "output": 50,
+      "status": "limited",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true,
+      "note": "Limited availability"
+    },
+    {
+      "id": "claude-mythos-5",
+      "provider": "Anthropic",
+      "input": 10,
+      "output": 50,
+      "status": "limited",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true,
+      "note": "Limited availability"
+    },
+    {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic",
+      "input": 4,
+      "output": 20,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-opus-5",
+      "provider": "Anthropic",
+      "input": 5,
+      "output": 25,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-opus-4-8",
+      "provider": "Anthropic",
+      "input": 5,
+      "output": 25,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-opus-4-7",
+      "provider": "Anthropic",
+      "input": 5,
+      "output": 25,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-opus-4-6",
+      "provider": "Anthropic",
+      "input": 5,
+      "output": 25,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-opus-4-5",
+      "provider": "Anthropic",
+      "input": 5,
+      "output": 25,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-opus-4-1",
+      "provider": "Anthropic",
+      "input": 15,
+      "output": 75,
+      "status": "retired",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true,
+      "note": "Retired except on Bedrock and Google Cloud"
+    },
+    {
+      "id": "claude-opus-4",
+      "provider": "Anthropic",
+      "input": 15,
+      "output": 75,
+      "status": "retired",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true,
+      "note": "Retired except on Google Cloud"
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "provider": "Anthropic",
+      "input": 2,
+      "output": 10,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-sonnet-5",
+      "provider": "Anthropic",
+      "input": 2,
+      "output": 10,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "provider": "Anthropic",
+      "input": 3,
+      "output": 15,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "provider": "Anthropic",
+      "input": 3,
+      "output": 15,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-sonnet-4",
+      "provider": "Anthropic",
+      "input": 3,
+      "output": 15,
+      "status": "retired",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true,
+      "note": "Retired except on Bedrock and Google Cloud"
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "provider": "Anthropic",
+      "input": 0.1,
+      "output": 0.5,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true,
+      "note": "$0.50 / $2.50 for prompts over 100,000 tokens"
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "provider": "Anthropic",
+      "input": 1,
+      "output": 5,
+      "status": "current",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true
+    },
+    {
+      "id": "claude-haiku-3-5",
+      "provider": "Anthropic",
+      "input": 0.8,
+      "output": 4,
+      "status": "retired",
+      "source": "official: platform.claude.com/docs/en/about-claude/pricing",
+      "verified": true,
+      "note": "Retired except on Google Cloud"
+    },
+    {
+      "id": "gpt-5.5",
+      "provider": "OpenAI",
+      "input": 5,
+      "output": 30,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-5.4",
+      "provider": "OpenAI",
+      "input": 2.5,
+      "output": 15,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "provider": "OpenAI",
+      "input": 0.75,
+      "output": 4.5,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Some trackers list half this price"
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "provider": "OpenAI",
+      "input": 0.2,
+      "output": 1.25,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-5",
+      "provider": "OpenAI",
+      "input": 1.25,
+      "output": 10,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-5-mini",
+      "provider": "OpenAI",
+      "input": 0.25,
+      "output": 2,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-5-nano",
+      "provider": "OpenAI",
+      "input": 0.05,
+      "output": 0.4,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-4.1",
+      "provider": "OpenAI",
+      "input": 2,
+      "output": 8,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-4.1-mini",
+      "provider": "OpenAI",
+      "input": 0.4,
+      "output": 1.6,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-4.1-nano",
+      "provider": "OpenAI",
+      "input": 0.1,
+      "output": 0.4,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-4o",
+      "provider": "OpenAI",
+      "input": 2.5,
+      "output": 10,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gpt-4o-mini",
+      "provider": "OpenAI",
+      "input": 0.15,
+      "output": 0.6,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "o3",
+      "provider": "OpenAI",
+      "input": 2,
+      "output": 8,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "o4-mini",
+      "provider": "OpenAI",
+      "input": 1.1,
+      "output": 4.4,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "o3-pro",
+      "provider": "OpenAI",
+      "input": 20,
+      "output": 80,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "provider": "Google",
+      "input": 1.5,
+      "output": 9,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Some trackers list it as deprecated in favour of a newer Flash"
+    },
+    {
+      "id": "gemini-3.1-pro",
+      "provider": "Google",
+      "input": 2,
+      "output": 12,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "$4 / $18 for prompts over 200,000 tokens"
+    },
+    {
+      "id": "gemini-3-flash",
+      "provider": "Google",
+      "input": 0.5,
+      "output": 3,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gemini-3.1-flash-lite",
+      "provider": "Google",
+      "input": 0.25,
+      "output": 1.5,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gemini-2.5-pro",
+      "provider": "Google",
+      "input": 1.25,
+      "output": 10,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "provider": "Google",
+      "input": 0.3,
+      "output": 2.5,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "provider": "Google",
+      "input": 0.1,
+      "output": 0.4,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "provider": "DeepSeek",
+      "input": 1.32,
+      "output": 3.96,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Peak-hours price; off-peak is half"
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "provider": "DeepSeek",
+      "input": 0.3,
+      "output": 1.2,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Peak-hours price; off-peak is half"
+    },
+    {
+      "id": "deepseek-chat",
+      "provider": "DeepSeek",
+      "input": 0.28,
+      "output": 0.42,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Alias of an older V3.2 model; may be retired"
+    },
+    {
+      "id": "deepseek-reasoner",
+      "provider": "DeepSeek",
+      "input": 0.55,
+      "output": 2.19,
+      "status": "legacy",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Alias of an older V3.2 thinking model; may be retired"
+    },
+    {
+      "id": "grok-4.7",
+      "provider": "xAI",
+      "input": 2,
+      "output": 6,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "$4 / $12 for prompts over 200,000 tokens"
+    },
+    {
+      "id": "mistral-large-3",
+      "provider": "Mistral",
+      "input": 0.5,
+      "output": 1.5,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "llama-4-maverick",
+      "provider": "Meta (hosted)",
+      "input": 0.15,
+      "output": 0.6,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Price of third-party hosts such as DeepInfra; varies by host",
+      "aliases": [
+        "llama-4-maverick-17b-128e-instruct"
+      ]
+    },
+    {
+      "id": "llama-4-scout",
+      "provider": "Meta (hosted)",
+      "input": 0.08,
+      "output": 0.3,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false,
+      "note": "Price of third-party hosts such as DeepInfra; varies by host",
+      "aliases": [
+        "llama-4-scout-17b-16e-instruct"
+      ]
+    },
+    {
+      "id": "qwen3.8-max",
+      "provider": "Alibaba",
+      "input": 2,
+      "output": 6,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "qwen3.8-flash",
+      "provider": "Alibaba",
+      "input": 0.15,
+      "output": 0.47,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "kimi-k2.6",
+      "provider": "Moonshot",
+      "input": 0.95,
+      "output": 4,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    },
+    {
+      "id": "kimi-k3",
+      "provider": "Moonshot",
+      "input": 3,
+      "output": 15,
+      "status": "current",
+      "source": "reported by third-party price trackers; check the vendor's page",
+      "verified": false
+    }
+  ]
+}

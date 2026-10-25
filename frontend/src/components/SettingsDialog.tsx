@@ -5,6 +5,7 @@ import AvatarCropper from './AvatarCropper';
 import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
 import PrivacyPage from './PrivacyPage';
+import PricingPage from './PricingPage';
 import PromptEditor from './PromptEditor';
 import RedactionSettings from './RedactionSettings';
 import UsersPage from './UsersPage';
@@ -332,6 +333,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
           description="The top layer: added ahead of every request to every model, from the dashboard and the API alike, before each person's custom instructions and any conversation's own prompt, which add to it but never override it. Until saved, a default introduces the assistant as Kiri. Use it for house rules such as language, tone or topics to decline. Avoid personal data here: it is redacted like any other text."
           placeholder={'e.g. You are the assistant of Acme Clinic. Answer in Traditional Chinese and never give a diagnosis.'}/>
         <ModelsPage onSaved={onModelsSaved}/>
+        <PricingPage/>
       </>}
       {current === 'privacy' && <PrivacyPage/>}
       {current === 'keys' && <ApiKeysPage/>}
