@@ -1031,6 +1031,7 @@ class GatewayService:
         request: ChatRequest, vault: RedactionVault
     ) -> list[ChatCompletionMessageParam]:
         vault.reserve(_message_texts(request.messages))
+        vault.allow_words(_message_texts(request.messages[: request.trusted_messages]))
         messages: list[ChatCompletionMessageParam] = []
         for position, message in enumerate(request.messages):
             trusted = position < request.trusted_messages

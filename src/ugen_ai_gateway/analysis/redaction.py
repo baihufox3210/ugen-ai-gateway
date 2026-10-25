@@ -21,6 +21,9 @@ PLACEHOLDER_INSTRUCTION = (
 )
 
 
+_WORD = re.compile(r"[A-Za-z][A-Za-z'’-]*|[\u4e00-\u9fff]+")
+
+
 class RedactionVault:
     """Per-request mapping between placeholders and the values they replace.
 
@@ -38,6 +41,10 @@ class RedactionVault:
         # Types of personal data left as written, chosen by the account or API
         # key; "other" stands for values only the analysis model pointed out.
         self._skip_types = frozenset(skip_types)
+        # Words of the administrators' own prompt: name recognition finds
+        # "Gateway" or "Personality" in earlier answers that repeat them, but a
+        # word the prompt itself uses is not somebody's name.
+        self._known_words: frozenset[str] = frozenset()
         # Custom terms to use instead of the installed ones (previews only).
         self._custom_finder = custom_finder
         self._additional_values = sorted(
@@ -53,6 +60,16 @@ class RedactionVault:
 
     def __len__(self) -> int:
         return len(self._value_by_placeholder)
+
+    def allow_words(self, texts: Iterable[str]) -> None:
+        """Never take names made only of words in these texts for people."""
+        self._known_words = self._known_words | {
+            word.casefold() for text in texts for word in _WORD.findall(text)
+        }
+
+    def _is_known_word(self, value: str) -> bool:
+        words = [word.casefold() for word in _WORD.findall(value)]
+        return bool(words) and all(word in self._known_words for word in words)
 
     def values(self) -> list[str]:
         return list(self._value_by_placeholder.values())
@@ -88,6 +105,8 @@ class RedactionVault:
             )
         ):
             if match.type in self._skip_types:
+                continue
+            if match.type == "person_name" and self._is_known_word(match.value):
                 continue
             placeholder = self._placeholder(match.value, match.label, match.type)
             redacted = redacted[: match.start] + placeholder + redacted[match.end :]
