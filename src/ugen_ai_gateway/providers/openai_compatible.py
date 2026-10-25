@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from typing import Any
 
+import openai
 from openai import AsyncOpenAI
 from openai.types.chat import (
     ChatCompletion,
@@ -18,6 +19,22 @@ class OpenAICompatibleProvider:
         self._client = client
         self.name = name
         self.locality: Locality = locality
+        # Models that rejected a temperature (some accept only their default).
+        self._no_temperature: set[str] = set()
+
+    async def _create(self, model: str, temperature: float, **kwargs: Any) -> Any:
+        """Create a completion; if the model refuses the temperature, retry
+        without it and remember that for this model."""
+        if model not in self._no_temperature:
+            try:
+                return await self._client.chat.completions.create(
+                    model=model, temperature=temperature, **kwargs
+                )
+            except openai.BadRequestError as exc:
+                if "temperature" not in str(exc).lower():
+                    raise
+                self._no_temperature.add(model)
+        return await self._client.chat.completions.create(model=model, **kwargs)
 
     async def health_check(self) -> None:
         await self._client.models.list()
@@ -33,12 +50,7 @@ class OpenAICompatibleProvider:
         temperature: float = 0.2,
         **options: Any,
     ) -> ChatCompletion:
-        return await self._client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            **options,
-        )
+        return await self._create(model, temperature, messages=messages, **options)
 
     async def stream(
         self,
@@ -48,10 +60,10 @@ class OpenAICompatibleProvider:
         temperature: float = 0.2,
         **options: Any,
     ) -> AsyncIterator[ChatCompletionChunk]:
-        response = await self._client.chat.completions.create(
-            model=model,
+        response = await self._create(
+            model,
+            temperature,
             messages=messages,
-            temperature=temperature,
             **options,
             stream=True,
             stream_options={"include_usage": True},

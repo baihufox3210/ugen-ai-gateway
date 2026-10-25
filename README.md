@@ -939,6 +939,7 @@ docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revis
 | `Complexity: simple` | Judged simple (see [How difficulty is judged](#routing-behavior)) | Expected; or choose **Cloud** below the message box for this one |
 | `Complexity: moderate` with **Complex only** set | Only complex requests go to the cloud | Models page → *What goes to the cloud* |
 | `Cannot redact safely: kept local` | The analysis model reported personal data it could not point to | Turn on name detection (`PII_NER=presidio`); then this no longer blocks the cloud (an address it cannot quote still keeps the request local) |
+| `Model provider request failed (HTTP 400)` | The model rejected the request; the upstream message is in `docker compose logs gateway`. A model that accepts only its default temperature (some Claude models behind LiteLLM) is retried without it automatically | Read the log line starting `Model provider request failed:` |
 | `Privacy policy: kept local` | A privacy rule marked the data as never leaving | Privacy page |
 | `Budget used up` / `Key restriction` | A budget or an API key's limit | Users or API keys page |
 | `Possible injection: kept local` | The injection guard (`INJECTION_ACTION=local`) | Rephrase, or set the guard to `flag` |

@@ -29,7 +29,12 @@ def http_error_for(exc: Exception) -> tuple[int, str]:
     if isinstance(exc, ProviderTimeout | TimeoutError):
         return 504, "Model provider timed out"
     if isinstance(exc, ProviderRequestError):
-        return 502, "Model provider request failed"
+        # The upstream message stays in the server log; it may echo request details.
+        status = getattr(exc, "status_code", None)
+        return (
+            502,
+            f"Model provider request failed{f' (HTTP {status})' if status else ''}",
+        )
     if isinstance(exc, ValueError):
         return 503, str(exc)
     logger.exception("Unhandled chat completion error", exc_info=exc)
