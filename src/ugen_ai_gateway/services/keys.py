@@ -19,6 +19,8 @@ class Principal:
     user_id: str | None = None
     username: str | None = None
     is_admin: bool = False
+    # Types of personal data this caller chose not to redact (none by default).
+    redact_off: frozenset[str] = frozenset()
 
     @property
     def usage_scope(self) -> dict[str, str | None]:
@@ -35,6 +37,7 @@ class Principal:
             allow_cloud=bool(key["allow_cloud"]),
             monthly_budget_usd=key["monthly_budget_usd"],
             rate_limit_per_minute=key["rate_limit_per_minute"],
+            redact_off=frozenset(key.get("redact_off") or ()),
         )
 
     @classmethod
@@ -45,4 +48,5 @@ class Principal:
             username=user["username"],
             is_admin=bool(user["is_admin"]),
             monthly_budget_usd=user.get("monthly_budget_usd"),
+            redact_off=frozenset(user.get("redact_off") or ()),
         )

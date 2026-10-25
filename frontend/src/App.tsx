@@ -4,6 +4,7 @@ import MonitorPanel from './components/MonitorPanel';
 import RequestFlow from './components/RequestFlow';
 import ResponsePanel from './components/ResponsePanel';
 import ConversationPromptDialog from './components/ConversationPromptDialog';
+import { applyEvent, failEntry, finishEntry, MAX_LOG_ENTRIES, newEntry, type LogEntry } from './requestLog';
 import SettingsDialog, { type SettingsPage } from './components/SettingsDialog';
 import Footer from './components/Footer';
 import ShareDialog from './components/ShareDialog';
@@ -64,6 +65,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const [shareOpen, setShareOpen] = useState(false);
   const activeConversation = conversations.find(item => item.id === activeId) ?? null;
   // Prompt chosen before a new conversation's first message.
+  // The request log is kept in memory only, so a refresh clears it.
+  const [requestLog, setRequestLog] = useState<LogEntry[]>([]);
   const [draftPrompt, setDraftPrompt] = useState('');
   const [promptOpen, setPromptOpen] = useState(false);
   const conversationPrompt = activeConversation ? activeConversation.prompt ?? '' : draftPrompt;
@@ -223,6 +226,9 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
     setActiveId(conversationId); setPrompt(''); setStreamingText(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setFallbackFrom(null); setInjectionSignals([]); setError('');
     const controller = new AbortController();
     abortRef.current = controller;
+    const logId = newId();
+    const logUpdate = (change: (entry: LogEntry) => LogEntry) => setRequestLog(current => current.map(entry => entry.id === logId ? change(entry) : entry));
+    setRequestLog(current => [newEntry(logId, userText, providerSelection), ...current].slice(0, MAX_LOG_ENTRIES));
     let streamed = '';
     // Show streamed text at most every STREAM_FRAME_MS: re-rendering the page
     // for every token made long answers stutter.
@@ -262,6 +268,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       const received: { result: ChatResult | null } = { result: null }; let streamError = '';
       const onEvent = (event: GatewayEvent) => {
+        logUpdate(entry => applyEvent(entry, event));
         if (event.type === 'analysis_started') setPhase('analyzing');
         if (event.type === 'analysis_completed') { setPhase('analyzed'); setAnalysisSource(isSource(event.source) ? event.source : null); setPii({ found: Boolean(event.contains_personal_data), types: Array.isArray(event.personal_data_types) ? event.personal_data_types.map(String) : [] }); }
         if (event.type === 'routed') { streamProvider = event.provider === 'cloud' ? 'cloud' : 'local'; setProvider(streamProvider); setPhase('routing'); setPii(current => current && { ...current, redacted: Number(event.redacted_values ?? 0) }); }
@@ -282,12 +289,16 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       if (streamError) throw new Error(streamError);
       const finalResult = received.result;
       if (!finalResult) throw new Error('The gateway closed the connection without a model response.');
-      updateTurn(conversationId, turnId, finalResult); setStreamingText(''); setStatsVersion(version => version + 1);
+      logUpdate(entry => finishEntry(entry, finalResult));
+      // The masked values stay in the log only; the saved conversation keeps just the counts.
+      const { redactions: _masked, ...savedRouting } = finalResult.routing;
+      updateTurn(conversationId, turnId, { ...finalResult, routing: savedRouting }); setStreamingText(''); setStatsVersion(version => version + 1);
       setProvider(finalResult.provider === 'cloud' ? 'cloud' : 'local'); setModel(finalResult.model);
       setPii(piiFromResult(finalResult)); setAnalysisSource(finalResult.routing.analysis_source ?? null); setFallbackFrom(finalResult.routing.fallback_from ?? null); setPhase('complete');
     } catch (cause) {
       setMemoryBusy(false); setStreamingText(''); setStatsVersion(version => version + 1);
       const message = cause instanceof Error ? cause.message : 'Could not reach the gateway.';
+      logUpdate(entry => failEntry(entry, controller.signal.aborted ? 'stopped by the user' : message, controller.signal.aborted));
       if (streamed) {
         // Keep what was generated before Stop or the error.
         updateTurn(conversationId, turnId, {
@@ -336,7 +347,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}><i aria-hidden="true">#</i>Chat{turns.length > 0 && <small>{turns.length}</small>}</button>
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
-    <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion}/></section><Footer/></main>
+    <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion} log={requestLog} onClearLog={() => setRequestLog([])}/></section><Footer/></main>
     <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}
       promptSet={Boolean(conversationPrompt)} onOpenPrompt={user ? () => setPromptOpen(true) : undefined}/></section>
     {promptOpen && <ConversationPromptDialog prompt={conversationPrompt} onClose={() => setPromptOpen(false)} onSave={next => {

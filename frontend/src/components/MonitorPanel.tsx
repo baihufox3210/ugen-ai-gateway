@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../api';
+import type { LogEntry } from '../requestLog';
 import type { Conversation, Phase, UsageStats } from '../types';
 
-type Props = { conversations: Conversation[]; phase: Phase; refreshKey: number };
+type Props = { conversations: Conversation[]; phase: Phase; refreshKey: number; log: LogEntry[]; onClearLog: () => void };
 const PHASE_LABEL: Record<Phase, string> = {
   idle: 'Waiting', sending: 'Sending', analyzing: 'Analyzing locally', analyzed: 'Analyzed',
   routing: 'Routing', generating: 'Generating', complete: 'Completed', failed: 'Failed',
@@ -26,7 +27,22 @@ function useUsageStats(refreshKey: number): UsageStats | null {
   return stats;
 }
 
-function MonitorPanel({ conversations, phase, refreshKey }: Props) {
+const clock = (at: number) => new Date(at).toLocaleTimeString('en-GB', { hour12: false });
+const STATUS_LABEL = { running: 'running', done: 'done', stopped: 'stopped', failed: 'failed' } as const;
+
+function LogBlock({ entry, number, open }: { entry: LogEntry; number: number; open: boolean }) {
+  const snippet = entry.prompt.replace(/\s+/g, ' ');
+  return <details className={`log-entry ${entry.status}`} open={open}>
+    <summary>
+      <span className={`terminal-provider ${entry.provider ?? 'pending'}`}>{entry.provider ? (entry.provider === 'cloud' ? 'CLOUD' : 'LOCAL') : '···'}</span>
+      <span className="log-title"><b>#{number} {entry.model || 'routing…'}</b><small>{snippet.slice(0, 60)}{snippet.length > 60 ? '…' : ''}</small></span>
+      <span className="log-meta">{clock(entry.startedAt)} · {STATUS_LABEL[entry.status]}</span>
+    </summary>
+    <div className="log-lines">{entry.lines.map((line, index) => <div className={`log-line ${line.tone}`} key={index}><time>{clock(line.at)}</time><span className="log-tag">{line.tag}</span><span className="log-text">{line.text}</span></div>)}</div>
+  </details>;
+}
+
+function MonitorPanel({ conversations, phase, refreshKey, log, onClearLog }: Props) {
   const stats = useUsageStats(refreshKey);
   const turns = conversations.flatMap(conversation => conversation.turns.map(turn => ({ ...turn, updatedAt: conversation.updatedAt })));
   const results = turns.flatMap(turn => turn.result ? [turn.result] : []);
@@ -36,7 +52,6 @@ function MonitorPanel({ conversations, phase, refreshKey }: Props) {
   const generationTokens = stats?.completion_tokens ?? results.reduce((sum, result) => sum + (result.usage?.generation?.completion_tokens ?? 0), 0);
   const generationSeconds = results.reduce((sum, result) => sum + (result.performance?.generation_ms ?? 0) / 1000, 0);
   const averageSpeed = stats ? stats.tokens_per_second?.toFixed(1) ?? '—' : generationSeconds > 0 ? (generationTokens / generationSeconds).toFixed(1) : '—';
-  const recent = [...turns].filter(turn => turn.result).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
   const serverDaily = new Map((stats?.daily ?? []).map(day => [day.day, day.requests]));
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - (6 - index));
@@ -77,20 +92,11 @@ function MonitorPanel({ conversations, phase, refreshKey }: Props) {
       </div>
     </section>
     <section className="panel terminal-panel">
-      <div className="monitor-panel-heading"><div><span className="eyebrow">LOCAL TELEMETRY</span><h2><i className={`terminal-status ${!['idle', 'complete', 'failed'].includes(phase) ? 'active' : ''}`}/>Request log</h2></div><span className="terminal-live">{PHASE_LABEL[phase]}</span></div>
+      <div className="monitor-panel-heading"><div><span className="eyebrow">LOCAL TELEMETRY</span><h2><i className={`terminal-status ${!['idle', 'complete', 'failed'].includes(phase) ? 'active' : ''}`}/>Request log</h2></div><div className="terminal-tools"><span className="terminal-live">{PHASE_LABEL[phase]}</span>{log.length > 0 && <button type="button" className="text-action" onClick={onClearLog}>Clear</button>}</div></div>
       <div className="terminal-body">
-        <div className="terminal-line system-line"><span>›</span> gateway <i>·</i> {PHASE_LABEL[phase]}</div>
-        {recent.length ? recent.map((turn, index) => {
-          const result = turn.result!;
-          const tokens = result.usage?.generation?.completion_tokens;
-          const seconds = (result.performance?.generation_ms ?? 0) / 1000;
-          const speed = tokens !== undefined && seconds > 0 ? `${(tokens / seconds).toFixed(1)} tok/s` : 'speed not reported';
-          return <div className="terminal-entry" key={turn.id} style={{ animationDelay: `${index * 45}ms` }}>
-            <span className={`terminal-provider ${result.provider}`}>{result.provider === 'cloud' ? 'CLOUD' : 'LOCAL'}</span>
-            <div className="terminal-entry-copy"><b>{result.model}</b><small>{turn.user.replace(/\s+/g, ' ').slice(0, 46)}{turn.user.length > 46 ? '…' : ''}</small></div>
-            <span className="terminal-speed">{speed}</span>
-          </div>;
-        }) : <div className="terminal-empty">No completed requests yet. Send a message to see where it was routed.</div>}
+        <div className="terminal-line system-line"><span>›</span> gateway <i>·</i> {PHASE_LABEL[phase]} <i>·</i> kept in this tab only; cleared when the page is refreshed</div>
+        {log.length ? log.map((entry, index) => <LogBlock key={entry.id} entry={entry} number={log.length - index} open={index === 0}/>)
+          : <div className="terminal-empty">No requests yet. Send a message to see how it is checked, why it was routed, and what was masked.</div>}
         <div className="terminal-cursor"><span>›</span><i/></div>
       </div>
     </section>

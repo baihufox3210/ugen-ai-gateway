@@ -12,6 +12,14 @@ MAX_MODEL_NAME_CHARACTERS = 128
 MAX_PROMPT_CHARACTERS = 4000
 
 
+class Redaction(BaseModel):
+    """One value replaced by a placeholder before the model saw the text."""
+
+    placeholder: str
+    type: str
+    value: str
+
+
 class RoutingInfo(BaseModel):
     complexity: Literal["simple", "moderate", "complex"]
     task_type: TaskType
@@ -26,6 +34,8 @@ class RoutingInfo(BaseModel):
     fallback_from: Literal["local", "cloud"] | None = None
     injection_signals: list[str] = Field(default_factory=list)
     output_findings: list[str] = Field(default_factory=list)
+    # Filled in for the dashboard and API caller who sent the text.
+    redactions: list[Redaction] = Field(default_factory=list)
 
 
 class UsageStats(BaseModel):

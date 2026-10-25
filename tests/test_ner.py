@@ -21,6 +21,7 @@ class FakeAnalyzerEngine:
             ("王小明", "PERSON"),
             ("台北", "LOCATION"),
             ("王", "PERSON"),
+            ("Kiri", "PERSON"),
         ):
             start = text.find(word)
             if start != -1:
@@ -72,6 +73,14 @@ def test_presidio_finder_finds_names_but_not_place_names(fake_presidio: Any) -> 
     call = fake_presidio["engine"].calls[0]
     assert call["score_threshold"] == 0.6
     assert set(call["entities"]) == {"PERSON"}
+
+
+def test_the_assistants_own_name_is_not_masked(fake_presidio: Any) -> None:
+    find = ner.build_presidio_finder(
+        language="en", spacy_model="en_core_web_sm", score_threshold=0.5
+    )
+
+    assert find("You are Kiri, the assistant of UGen") == []
 
 
 def test_missing_presidio_gives_an_install_hint(monkeypatch) -> None:

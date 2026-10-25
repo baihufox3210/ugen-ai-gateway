@@ -147,7 +147,11 @@ def _usage(response: ChatResponse) -> dict[str, int] | None:
 
 def _ugen_details(response: ChatResponse) -> dict[str, Any]:
     return {
-        "routing": response.routing.model_dump(mode="json"),
+        # The caller sent the text; the placeholders and types tell them what was
+        # replaced, without echoing the values back.
+        "routing": response.routing.model_dump(
+            mode="json", exclude={"redactions": {"__all__": {"value"}}}
+        ),
         "performance": (
             response.performance.model_dump(mode="json")
             if response.performance

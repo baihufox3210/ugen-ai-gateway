@@ -19,6 +19,10 @@ ENTITY_TYPES: dict[str, tuple[str, str]] = {
 }
 
 
+# The gateway's own names, which the models take for people (the system prompt
+# says "You are Kiri"); masking them would rename the assistant.
+PRODUCT_NAMES = frozenset({"kiri", "ugen"})
+
 # Which script a language's model reads, so a model only runs on text it can
 # understand (an English model learns nothing from Chinese text, and back).
 _SCRIPTS = {
@@ -82,7 +86,11 @@ def build_presidio_finder(
                     result.start < other.end and other.start < result.end
                     for other in matches
                 )
-                if len(value.strip()) >= 2 and not overlaps:
+                if (
+                    len(value.strip()) >= 2
+                    and value.strip().casefold() not in PRODUCT_NAMES
+                    and not overlaps
+                ):
                     matches.append(
                         PersonalDataMatch(
                             data_type, label, result.start, result.end, value

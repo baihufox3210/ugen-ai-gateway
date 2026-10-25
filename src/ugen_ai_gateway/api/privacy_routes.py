@@ -7,9 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ugen_ai_gateway.analysis.custom_rules import PrivacySettings, rules_finder
-from ugen_ai_gateway.analysis.pii import find_personal_data
+from ugen_ai_gateway.analysis.pii import find_personal_data, redaction_types
 from ugen_ai_gateway.analysis.redaction import RedactionVault
-from ugen_ai_gateway.api.access import audit_admin, check_admin_access
+from ugen_ai_gateway.api.access import (
+    SESSION_PREFIX,
+    audit_admin,
+    check_admin_access,
+    presented_api_key,
+)
 from ugen_ai_gateway.dependencies import (
     PRIVACY_SETTING,
     current_privacy,
@@ -22,6 +27,63 @@ from ugen_ai_gateway.services.usage import UsageStore
 router = APIRouter(prefix="/v1/ugen/privacy")
 
 UsageStoreDependency = Annotated[UsageStore | None, Depends(get_usage_store)]
+
+
+class RedactionChoice(BaseModel):
+    """Types of personal data to leave as written; everything else is redacted."""
+
+    off: list[str] = Field(default_factory=list, max_length=64)
+
+
+def redaction_catalog() -> list[str]:
+    """Types a person can switch off; "other" is what only the analysis model found."""
+    return [*redaction_types(), "other"]
+
+
+def checked_choice(body: RedactionChoice) -> list[str]:
+    unknown = sorted(set(body.off) - set(redaction_catalog()))
+    if unknown:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown data type: {', '.join(unknown)}"
+        )
+    return sorted(set(body.off))
+
+
+def _redaction_view(off: list[str]) -> dict[str, Any]:
+    return {"types": redaction_catalog(), "off": off}
+
+
+async def _session_user(request: Request, store: UsageStore | None) -> dict[str, Any]:
+    if store is None:
+        raise HTTPException(
+            status_code=503, detail="Accounts need a database; set USAGE_DB_PATH"
+        )
+    token = presented_api_key(request)
+    user = await store.find_session(token) if token.startswith(SESSION_PREFIX) else None
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    return user
+
+
+@router.get("/redaction")
+async def get_redaction(
+    store: UsageStoreDependency, request: Request
+) -> dict[str, Any]:
+    """Which data types the signed-in account has switched off (none by default)."""
+    user = await _session_user(request, store)
+    return _redaction_view(user["redact_off"])
+
+
+@router.put("/redaction")
+async def save_redaction(
+    body: RedactionChoice, store: UsageStoreDependency, request: Request
+) -> dict[str, Any]:
+    """Choose what is redacted for the signed-in account's requests."""
+    user = await _session_user(request, store)
+    off = checked_choice(body)
+    assert store is not None
+    await store.set_redact_off(user_id=user["id"], off=off)
+    return _redaction_view(off)
 
 
 def _view(privacy: PrivacySettings) -> dict[str, Any]:

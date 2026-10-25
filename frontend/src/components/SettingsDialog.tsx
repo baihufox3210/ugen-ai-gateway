@@ -6,6 +6,7 @@ import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
 import PrivacyPage from './PrivacyPage';
 import PromptEditor from './PromptEditor';
+import RedactionSettings from './RedactionSettings';
 import UsersPage from './UsersPage';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 
@@ -23,7 +24,7 @@ type Props = {
 type ApiKey = {
   id: string; name: string; prefix: string; created_at: number; revoked_at: number | null; last_used_at: number | null;
   allow_cloud: boolean; monthly_budget_usd: number | null; rate_limit_per_minute: number | null;
-  month_cost_usd: number; month_requests: number;
+  month_cost_usd: number; month_requests: number; redact_off: string[];
 };
 
 const usd = (value: number) => `$${value < 1 ? value.toFixed(4) : value.toFixed(2)}`;
@@ -182,6 +183,9 @@ function AccountPage({ user, onUserChange, onSignOut, onAccountDeleted }: { user
       description="Added to every conversation you have here, after the administrators' system prompt: for example who you are or how you like answers. It is stored encrypted, and personal data in it is redacted before anything reaches a cloud model, like the rest of your messages."
       placeholder={'e.g. I am a nurse in Taipei. Answer in Traditional Chinese and keep it short.'}/>
 
+    <RedactionSettings title="Personal data to redact" path="/v1/ugen/privacy/redaction"
+      description="Before a model sees your messages, each checked kind of personal data is replaced by a placeholder such as [EMAIL_1] and put back in the reply. Everything is checked by default. Uncheck a kind only if it is safe to share as written. This applies to your chats here; API keys have their own setting."/>
+
     <SsoAccountSection user={user} onUserChange={onUserChange}/>
 
     <PasswordSection hasPassword={user.has_password !== false} onPasswordSet={() => onUserChange({ ...user, has_password: true })}/>
@@ -213,6 +217,11 @@ function ApiKeysPage() {
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [working, setWorking] = useState(false);
+  const [redactionKey, setRedactionKey] = useState<string | null>(null);
+  const [redactionTypes, setRedactionTypes] = useState<string[]>([]);
+  useEffect(() => {
+    apiFetch('/v1/ugen/redaction-types').then(async response => { if (response.ok) setRedactionTypes((await response.json() as { types: string[] }).types); }).catch(() => undefined);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -280,7 +289,11 @@ function ApiKeysPage() {
       {keys.length ? <ul className="key-list">{keys.map(key => <li key={key.id} className={key.revoked_at ? 'revoked' : ''}>
         <div className="key-main"><b>{key.name}</b><small><code>{key.prefix}…</code> · {key.allow_cloud ? 'Cloud allowed' : 'Local only'}{key.monthly_budget_usd !== null ? ` · budget ${usd(key.monthly_budget_usd)}` : ''}{key.rate_limit_per_minute !== null ? ` · ${key.rate_limit_per_minute}/min` : ''}</small></div>
         <div className="key-usage"><b>{key.month_requests} req · {usd(key.month_cost_usd)}</b><small>{key.revoked_at ? `Revoked ${date(key.revoked_at)}` : `Last used ${date(key.last_used_at)}`}</small></div>
+        {!key.revoked_at && <button className="text-action" onClick={() => setRedactionKey(current => current === key.id ? null : key.id)}>{key.redact_off.length ? `Redaction (${key.redact_off.length} off)` : 'Redaction'}</button>}
         {!key.revoked_at && <button className="text-action" onClick={() => revoke(key)}>Revoke</button>}
+        {redactionKey === key.id && <div className="key-redaction"><RedactionSettings title="Personal data to redact for this key" path={`/v1/ugen/keys/${encodeURIComponent(key.id)}/redaction`} initialOff={key.redact_off} types={redactionTypes}
+          description="Requests made with this key replace each checked kind with a placeholder before a model sees it. Everything is checked by default."
+          onSaved={off => setKeys(list => list && list.map(item => item.id === key.id ? { ...item, redact_off: off } : item))}/></div>}
       </li>)}</ul> : <p className="key-empty">No API keys yet.</p>}
       <a className="audit-link" href={`${apiUrl}/v1/ugen/audit?format=csv`} onClick={async event => {
         event.preventDefault();

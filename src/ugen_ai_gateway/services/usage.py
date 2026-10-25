@@ -198,7 +198,9 @@ _ADDED_COLUMNS = {
         "oidc_subject": "TEXT",
         "email": "TEXT",
         "instructions": "TEXT",
+        "redact_off": "TEXT",
     },
+    "api_keys": {"redact_off": "TEXT"},
 }
 _GENESIS_HASH = "0" * 64
 
@@ -643,6 +645,7 @@ class UsageStore:
     def _key_view(row: dict[str, Any]) -> dict[str, Any]:
         row.pop("key_hash", None)
         row["allow_cloud"] = bool(row["allow_cloud"])
+        row["redact_off"] = json.loads(row.get("redact_off") or "[]")
         return row
 
     # Gateway settings changed from the dashboard, stored as JSON per key.
@@ -706,6 +709,12 @@ class UsageStore:
     async def get_instructions(self, user_id: str) -> str:
         """A user's custom instructions, as stored (sealed by the caller)."""
         return await asyncio.to_thread(self._get_instructions, user_id)
+
+    async def set_redact_off(
+        self, *, user_id: str | None = None, key_id: str | None = None, off: list[str]
+    ) -> bool:
+        """Choose the types an account or an API key leaves unredacted."""
+        return await asyncio.to_thread(self._set_redact_off, user_id, key_id, off)
 
     async def set_instructions(self, user_id: str, instructions: str) -> None:
         await asyncio.to_thread(self._set_instructions, user_id, instructions)
@@ -1363,6 +1372,17 @@ class UsageStore:
                 "DELETE FROM sessions WHERE token_hash = ?", (_key_hash(token),)
             )
 
+    def _set_redact_off(
+        self, user_id: str | None, key_id: str | None, off: list[str]
+    ) -> bool:
+        table, ident = ("users", user_id) if user_id else ("api_keys", key_id)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                f"UPDATE {table} SET redact_off = ? WHERE id = ?",
+                (json.dumps(sorted(set(off))) if off else None, ident),
+            )
+        return cursor.rowcount > 0
+
     def _get_instructions(self, user_id: str) -> str:
         with self._lock:
             row = self._connection.execute(
@@ -1463,6 +1483,7 @@ def _user_view(row: dict[str, Any]) -> dict[str, Any]:
         "email": row.get("email"),
         "sso": bool(row.get("oidc_subject")),
         "has_password": row.get("password_hash", NO_PASSWORD) != NO_PASSWORD,
+        "redact_off": json.loads(row.get("redact_off") or "[]"),
     }
 
 

@@ -840,8 +840,34 @@ request. When the reply comes back, placeholders are replaced with the original
 values (also in streamed deltas, even when a placeholder is split across
 chunks), so the user sees a complete answer while the model never saw the data.
 The response's `routing.redacted_values` reports how many values were replaced.
-Redaction and restoring are always on, for the local model as well as the
-cloud; there is nothing to switch on.
+Redaction and restoring are on by default, for the local model as well as the
+cloud, and for every kind of data.
+
+**Choosing what is redacted.** Each account can leave kinds of data as written
+under **Settings → Account → Personal data to redact** (all are checked by
+default; `GET`/`PUT /v1/ugen/privacy/redaction` with `{"off": ["email"]}`).
+Administrators set the same list for each API key on the **API keys** page
+(`PUT /v1/ugen/keys/{id}/redaction`; the list also appears as `redact_off` in
+`GET /v1/ugen/keys`). A key's list applies to the requests made with it, an
+account's list to its own chats. The type `other` stands for values only the
+analysis model pointed out. Custom terms from the Privacy page are always
+redacted, and data types an administrator marks "keep local" still keep the
+request on the local model whatever the choice.
+
+`routing.redactions` lists what was replaced (`placeholder`, `type`, and for the
+dashboard also the original `value`). API responses leave the values out.
+
+### Request log
+
+The dashboard's **Request log** (on the monitor page) is a terminal-style
+record of every request sent from this browser tab: the difficulty and task
+found by the local check, whether personal data was found, which model answered
+and **why** (the routing rule and reason, including why a request stayed
+local), fallbacks and guard findings, timings and tokens, and exactly which
+values were masked and what type each was. It is kept in the page's memory
+only: it is not saved on the server or in the browser, and refreshing the page
+clears it. Saved conversations keep only the number of masked values, never the
+values.
 
 ### Privacy page
 
