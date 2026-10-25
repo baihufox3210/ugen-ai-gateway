@@ -83,6 +83,8 @@ class _PreparedChat:
     messages: list[ChatCompletionMessageParam]
     analysis_ms: float
     vault: RedactionVault | None
+    # Types of personal data the caller chose to leave unredacted.
+    redact_off: frozenset[str] = frozenset()
 
     @property
     def locality(self) -> Locality:
@@ -436,10 +438,12 @@ class GatewayService:
         # event loop so other requests keep streaming meanwhile.
         if has_slow_finders():
             prepared = await asyncio.to_thread(
-                self._prepare, request, analysis, analysis_ms
+                self._prepare, request, analysis, analysis_ms, principal.redact_off
             )
         else:
-            prepared = self._prepare(request, analysis, analysis_ms)
+            prepared = self._prepare(
+                request, analysis, analysis_ms, principal.redact_off
+            )
         if force_local and prepared.route.rule != "privacy.never_cloud":
             reason, rule = force_local
             prepared.route = replace(prepared.route, reason=reason, rule=rule)
@@ -464,6 +468,7 @@ class GatewayService:
                 "reason": prepared.route.reason,
                 "complexity": analysis.complexity,
                 "redacted_values": len(prepared.vault or ()),
+                "redactions": prepared.vault.entries() if prepared.vault else [],
             },
         )
 
@@ -554,6 +559,7 @@ class GatewayService:
                 rule=prepared.route.rule,
                 reason=prepared.route.reason,
                 redacted_values=len(prepared.vault or ()),
+                redactions=prepared.vault.entries() if prepared.vault else [],
                 analysis_source=analysis_source,
                 fallback_from=fallback_from,
                 injection_signals=record.injection_signals,
@@ -769,7 +775,9 @@ class GatewayService:
             and not analysis.contains_personal_data
         ):
             return None
-        vault = RedactionVault(analysis.personal_data_values)
+        vault = RedactionVault(
+            analysis.personal_data_values, skip_types=prepared.redact_off
+        )
         return replace(
             prepared,
             route=replace(
@@ -952,7 +960,11 @@ class GatewayService:
         )
 
     def _prepare(
-        self, request: ChatRequest, analysis: RequestAnalysis, analysis_ms: float
+        self,
+        request: ChatRequest,
+        analysis: RequestAnalysis,
+        analysis_ms: float,
+        redact_off: frozenset[str] = frozenset(),
     ) -> _PreparedChat:
         route = self._route(request, analysis)
         if route.locality == "cloud" and not self._redactable(analysis):
@@ -973,7 +985,7 @@ class GatewayService:
         provider = self._provider_for(route)
 
         # Personal data is always redacted, whichever model answers.
-        vault = RedactionVault(analysis.personal_data_values)
+        vault = RedactionVault(analysis.personal_data_values, skip_types=redact_off)
         messages = self._redacted_messages(request, vault)
 
         return _PreparedChat(
@@ -983,6 +995,7 @@ class GatewayService:
             messages=messages,
             analysis_ms=analysis_ms,
             vault=vault,
+            redact_off=redact_off,
         )
 
     @staticmethod

@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field
 
 from ugen_ai_gateway.api.access import audit_admin, authenticate, check_admin_access
 from ugen_ai_gateway.api.errors import http_error_for
+from ugen_ai_gateway.api.privacy_routes import (
+    RedactionChoice,
+    checked_choice,
+    redaction_catalog,
+)
 from ugen_ai_gateway.api.prompt_routes import with_prompts
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
 from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
@@ -239,6 +244,31 @@ async def list_api_keys(
     """All keys with this month's request count and cost; secrets are never shown."""
     await check_admin_access(http_request, store)
     return {"data": await _require_store(store).list_keys()}
+
+
+@router.get("/v1/ugen/redaction-types")
+async def redaction_type_list(
+    store: UsageStoreDependency, http_request: Request
+) -> dict[str, Any]:
+    """Data types a key or account can switch redaction off for."""
+    await check_admin_access(http_request, store)
+    return {"types": redaction_catalog()}
+
+
+@router.put("/v1/ugen/keys/{key_id}/redaction")
+async def set_key_redaction(
+    key_id: str,
+    body: RedactionChoice,
+    store: UsageStoreDependency,
+    http_request: Request,
+) -> dict[str, Any]:
+    """Choose which data types requests made with this key leave unredacted."""
+    await check_admin_access(http_request, store)
+    off = checked_choice(body)
+    if not await _require_store(store).set_redact_off(key_id=key_id, off=off):
+        raise HTTPException(status_code=404, detail="Unknown key")
+    await audit_admin(http_request, store, "api_key_redaction", key_id=key_id, off=off)
+    return {"types": redaction_catalog(), "off": off}
 
 
 @router.delete("/v1/ugen/keys/{key_id}", status_code=204)

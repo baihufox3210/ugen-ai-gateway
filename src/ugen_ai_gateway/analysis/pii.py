@@ -306,6 +306,14 @@ def supported_types() -> frozenset[str]:
     )
 
 
+def redaction_types() -> list[str]:
+    """Types of personal data a person can choose to leave unredacted, in
+    display order: the built-in detectors and, when on, name recognition.
+    Administrators' custom terms are not listed: they are always redacted."""
+    built_in = [t for t in _TYPE_ORDER if t in {d.type for d in DETECTORS}]
+    return built_in + sorted(_extra_types)
+
+
 def has_slow_finders() -> bool:
     """Whether a slow detector (named-entity recognition) is registered, so
     callers should keep detection off the event loop and run it less often."""

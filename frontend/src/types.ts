@@ -19,6 +19,8 @@ export type ChatResult = {
     rule?: string | null;
     injection_signals?: string[];
     output_findings?: string[];
+    /** Sent once for the request log; never stored with the conversation. */
+    redactions?: { placeholder: string; type: string; value: string }[];
   };
   usage?: { generation?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
   performance?: { analysis_ms: number; generation_ms: number; total_ms: number };

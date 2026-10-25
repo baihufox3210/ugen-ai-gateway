@@ -29,8 +29,15 @@ class RedactionVault:
     """
 
     def __init__(
-        self, additional_values: Iterable[str] = (), *, custom_finder: Any = _INSTALLED
+        self,
+        additional_values: Iterable[str] = (),
+        *,
+        custom_finder: Any = _INSTALLED,
+        skip_types: Iterable[str] = (),
     ) -> None:
+        # Types of personal data left as written, chosen by the account or API
+        # key; "other" stands for values only the analysis model pointed out.
+        self._skip_types = frozenset(skip_types)
         # Custom terms to use instead of the installed ones (previews only).
         self._custom_finder = custom_finder
         self._additional_values = sorted(
@@ -40,6 +47,7 @@ class RedactionVault:
         )
         self._placeholder_by_value: dict[str, str] = {}
         self._value_by_placeholder: dict[str, str] = {}
+        self._type_by_placeholder: dict[str, str] = {}
         self._counters: dict[str, int] = {}
         self._reserved: set[str] = set()
 
@@ -48,6 +56,17 @@ class RedactionVault:
 
     def values(self) -> list[str]:
         return list(self._value_by_placeholder.values())
+
+    def entries(self) -> list[dict[str, str]]:
+        """What was replaced: placeholder, type of data and the original value."""
+        return [
+            {
+                "placeholder": placeholder,
+                "type": self._type_by_placeholder[placeholder],
+                "value": value,
+            }
+            for placeholder, value in self._value_by_placeholder.items()
+        ]
 
     def reserve(self, texts: Iterable[str]) -> None:
         """Never issue placeholders that already appear in the input."""
@@ -61,14 +80,18 @@ class RedactionVault:
         for match in reversed(
             find_personal_data(text, custom_finder=self._custom_finder)
         ):
-            placeholder = self._placeholder(match.value, match.label)
+            if match.type in self._skip_types:
+                continue
+            placeholder = self._placeholder(match.value, match.label, match.type)
             redacted = redacted[: match.start] + placeholder + redacted[match.end :]
 
         for value in self._additional_values:
-            if value not in redacted:
+            if "other" in self._skip_types or value not in redacted:
                 continue
             redacted = value_pattern(value).sub(
-                lambda _, value=value: self._placeholder(value, ADDITIONAL_VALUE_LABEL),
+                lambda _, value=value: self._placeholder(
+                    value, ADDITIONAL_VALUE_LABEL, "other"
+                ),
                 redacted,
             )
         return redacted
@@ -81,7 +104,7 @@ class RedactionVault:
             text,
         )
 
-    def _placeholder(self, value: str, label: str) -> str:
+    def _placeholder(self, value: str, label: str, kind: str) -> str:
         existing = self._placeholder_by_value.get(value)
         if existing is not None:
             return existing
@@ -92,6 +115,7 @@ class RedactionVault:
                 break
         self._placeholder_by_value[value] = placeholder
         self._value_by_placeholder[placeholder] = value
+        self._type_by_placeholder[placeholder] = kind
         return placeholder
 
 
