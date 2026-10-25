@@ -1,3 +1,5 @@
+import re
+
 from tests.test_accounts import AccountEnv, bearer
 from ugen_ai_gateway.api.prompt_routes import DEFAULT_SYSTEM_PROMPT
 from ugen_ai_gateway.services.secret_box import PREFIX
@@ -155,3 +157,44 @@ def test_only_administrators_set_the_system_prompt(monkeypatch) -> None:
     ]
     assert len(details) == 1 and '"characters": 30' in details[0]
     assert "Chinese" not in details[0]
+
+
+def test_name_recognition_does_not_mask_words_in_the_system_prompt(monkeypatch) -> None:
+    from ugen_ai_gateway.analysis.pii import (
+        PersonalDataMatch,
+        clear_registered_finders,
+        register_finder,
+    )
+
+    def names(text: str) -> list[PersonalDataMatch]:
+        # A name finder that mistakes ordinary capitalized words for people.
+        return [
+            PersonalDataMatch(
+                "person_name", "PERSON_NAME", m.start(), m.end(), m.group()
+            )
+            for m in re.finditer(r"Personality|Gateway|Alex", text)
+        ]
+
+    register_finder(names, types=["person_name"])
+    try:
+        env = AccountEnv(monkeypatch)
+        alice = env.token("alice")
+        env.client.put(
+            "/v1/ugen/system-prompt",
+            json={"text": "# Personality\nYou are the Gateway assistant."},
+            headers=bearer(alice),
+        )
+
+        response = env.chat(
+            alice,
+            messages=[{"role": "user", "content": "please design a system for Alex"}],
+        )
+
+        assert response.status_code == 200
+        sent = env.cloud.calls[-1]["messages"]
+        system = " ".join(str(m["content"]) for m in sent if m["role"] == "system")
+        user = next(m["content"] for m in sent if m["role"] == "user")
+        assert "# Personality" in system and "Gateway assistant" in system
+        assert "Alex" not in user and "[PERSON_NAME_" in user
+    finally:
+        clear_registered_finders()

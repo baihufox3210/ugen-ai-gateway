@@ -63,6 +63,9 @@ class ChatRequest(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     # The dashboard's prompt for this conversation (see prompt_routes).
     conversation_prompt: str = Field(default="", max_length=MAX_PROMPT_CHARACTERS)
+    # How many leading messages are the administrators' own system prompt (set
+    # by the gateway, never by a client).
+    trusted_messages: int = Field(default=0, exclude=True)
 
     @field_validator("messages")
     @classmethod
