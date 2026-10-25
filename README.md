@@ -597,7 +597,10 @@ of the prompts: a phone number there would be replaced by a placeholder on its
 way to a cloud model, and could keep requests local under privacy rules. The
 administrators' system prompt is the one exception for names: it is checked for
 numbers, keys and custom terms, but not for names, because name recognition
-takes ordinary words in a long prompt ("Personality", "Gateway") for people.
+takes ordinary words in a long prompt ("Personality", "Gateway") for people. For
+the same reason, a name made only of words that appear in the system prompt is
+never masked in the rest of the conversation, such as "Gateway" in an earlier
+answer that repeats it.
 
 ### Guards
 

@@ -198,3 +198,44 @@ def test_name_recognition_does_not_mask_words_in_the_system_prompt(monkeypatch) 
         assert "Alex" not in user and "[PERSON_NAME_" in user
     finally:
         clear_registered_finders()
+
+
+def test_words_the_system_prompt_uses_are_not_taken_for_names_in_history(
+    monkeypatch,
+) -> None:
+    from ugen_ai_gateway.analysis.pii import (
+        PersonalDataMatch,
+        clear_registered_finders,
+        register_finder,
+    )
+
+    def names(text: str) -> list[PersonalDataMatch]:
+        return [
+            PersonalDataMatch(
+                "person_name", "PERSON_NAME", m.start(), m.end(), m.group()
+            )
+            for m in re.finditer(r"Gateway|Alex", text)
+        ]
+
+    register_finder(names, types=["person_name"])
+    try:
+        env = AccountEnv(monkeypatch)
+        alice = env.token("alice")
+        env.client.put(
+            "/v1/ugen/system-prompt",
+            json={"text": "You are Kiri of the UGen AI Gateway."},
+            headers=bearer(alice),
+        )
+        history = [
+            {"role": "user", "content": "who are you"},
+            {"role": "assistant", "content": "I live in the Gateway."},
+            {"role": "user", "content": "please design a system for Alex"},
+        ]
+
+        assert env.chat(alice, messages=history).status_code == 200
+
+        sent = " ".join(str(m["content"]) for m in env.cloud.calls[-1]["messages"])
+        assert "I live in the Gateway." in sent
+        assert "Alex" not in sent and "[PERSON_NAME_1]" in sent
+    finally:
+        clear_registered_finders()
