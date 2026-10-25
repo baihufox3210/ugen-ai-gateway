@@ -87,7 +87,12 @@ async def with_prompts(
     added = [{"role": "system", "content": text} for text in prompts if text]
     if not added:
         return request
-    return request.model_copy(update={"messages": [*added, *request.messages]})
+    return request.model_copy(
+        update={
+            "messages": [*added, *request.messages],
+            "trusted_messages": 1 if prompts[0] else 0,
+        }
+    )
 
 
 async def _session_user(

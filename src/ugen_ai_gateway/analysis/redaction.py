@@ -75,10 +75,17 @@ class RedactionVault:
                 match.group() for match in PLACEHOLDER_PATTERN.finditer(text)
             )
 
-    def redact(self, text: str) -> str:
+    def redact(self, text: str, *, trusted: bool = False) -> str:
+        """Replace personal data in ``text``. ``trusted`` text, such as the
+        administrators' own system prompt, is only checked for structured data
+        (numbers, keys, custom terms): name recognition mistakes ordinary words
+        in a long prompt for people, and the model's own findings concern the
+        user's text."""
         redacted = text
         for match in reversed(
-            find_personal_data(text, custom_finder=self._custom_finder)
+            find_personal_data(
+                text, custom_finder=self._custom_finder, entities=not trusted
+            )
         ):
             if match.type in self._skip_types:
                 continue
@@ -86,7 +93,7 @@ class RedactionVault:
             redacted = redacted[: match.start] + placeholder + redacted[match.end :]
 
         for value in self._additional_values:
-            if "other" in self._skip_types or value not in redacted:
+            if trusted or "other" in self._skip_types or value not in redacted:
                 continue
             redacted = value_pattern(value).sub(
                 lambda _, value=value: self._placeholder(

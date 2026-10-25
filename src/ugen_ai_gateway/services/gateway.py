@@ -1032,11 +1032,12 @@ class GatewayService:
     ) -> list[ChatCompletionMessageParam]:
         vault.reserve(_message_texts(request.messages))
         messages: list[ChatCompletionMessageParam] = []
-        for message in request.messages:
+        for position, message in enumerate(request.messages):
+            trusted = position < request.trusted_messages
             redacted_message = cast(dict[str, Any], message).copy()
             content = redacted_message.get("content")
             if isinstance(content, str):
-                redacted_message["content"] = vault.redact(content)
+                redacted_message["content"] = vault.redact(content, trusted=trusted)
             elif content is not None and not isinstance(content, dict):
                 redacted_parts = []
                 for part in content:
@@ -1045,7 +1046,9 @@ class GatewayService:
                         continue
                     redacted_part = part.copy()
                     if isinstance(redacted_part.get("text"), str):
-                        redacted_part["text"] = vault.redact(redacted_part["text"])
+                        redacted_part["text"] = vault.redact(
+                            redacted_part["text"], trusted=trusted
+                        )
                     redacted_parts.append(redacted_part)
                 redacted_message["content"] = redacted_parts
             messages.append(cast(ChatCompletionMessageParam, redacted_message))
