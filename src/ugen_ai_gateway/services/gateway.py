@@ -27,6 +27,7 @@ from ugen_ai_gateway.analysis.redaction import (
 )
 from ugen_ai_gateway.analysis.rules import rule_analysis
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis, TokenUsage
+from ugen_ai_gateway.analysis.thinking import ThinkingFilter, strip_thinking
 from ugen_ai_gateway.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -36,6 +37,7 @@ from ugen_ai_gateway.api.schemas import (
 )
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.providers.base import Locality, ModelProvider
+from ugen_ai_gateway.providers.reasoning import request_options
 from ugen_ai_gateway.routing.config import RoutingConfig, config_from_settings
 from ugen_ai_gateway.routing.engine import Route, RuleEngine
 from ugen_ai_gateway.services.errors import (
@@ -277,18 +279,25 @@ class GatewayService:
         transcript = "\n\n".join(
             f"{message['role'].upper()}: {message['content']}" for message in messages
         )
+        # Summarizing needs no thinking, and thinking text must not end up in it.
+        memory_options, memory_messages = request_options(
+            route.model.reasoning,
+            [
+                {"role": "system", "content": MEMORY_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"Current memory:\n{previous or '(empty)'}\n\n"
+                    f"Older messages:\n{transcript}",
+                },
+            ],
+            analysis=True,
+        )
         try:
             completion = await self._provider_for(route).complete(
                 model=route.model.id,
-                messages=[
-                    {"role": "system", "content": MEMORY_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": f"Current memory:\n{previous or '(empty)'}\n\n"
-                        f"Older messages:\n{transcript}",
-                    },
-                ],
+                messages=memory_messages,
                 temperature=0.2,
+                **memory_options,
             )
         except TimeoutError as exc:
             raise ProviderTimeout("Local model timed out") from exc
@@ -296,6 +305,8 @@ class GatewayService:
             error = ProviderOutage if is_outage(exc) else ProviderRequestError
             raise error(f"Updating the memory failed: {exc}") from exc
         content = completion.choices[0].message.content if completion.choices else None
+        if isinstance(content, str):
+            content = strip_thinking(content)
         if not isinstance(content, str) or not content.strip():
             raise ProviderRequestError("The local model returned an empty memory")
         return content.strip()
@@ -670,16 +681,28 @@ class GatewayService:
         Text passes through placeholder restoration, then the output guard.
         """
         restore = prepared.vault is not None
+        reasoning = prepared.route.model.reasoning
+        effort = request.reasoning_effort
+        if effort is None and request.thinking and reasoning.style != "none":
+            effort = "none" if request.thinking == "off" else request.thinking
+        extra, messages = request_options(reasoning, prepared.messages, effort=effort)
+        options = {**options, **extra}
+        hide = self._engine.config.hide_thinking
         try:
             if stream:
                 restorer = StreamRestorer(prepared.vault) if restore else None  # type: ignore[arg-type]
+                filtered = (
+                    ThinkingFilter(start_inside=reasoning.thinks(effort))
+                    if hide
+                    else None
+                )
                 parts: list[str] = []
                 model = prepared.model
                 usage: TokenUsage | None = None
                 finish_reason: str | None = None
                 async for chunk in prepared.provider.stream(
                     model=prepared.model,
-                    messages=prepared.messages,
+                    messages=messages,
                     temperature=request.temperature,
                     **options,
                 ):
@@ -690,6 +713,13 @@ class GatewayService:
                             getattr(choice, "finish_reason", None) or finish_reason
                         )
                         text = getattr(choice.delta, "content", None)
+                        if text and filtered is not None:
+                            text = filtered.feed(text)
+                            if filtered.retracted:
+                                # The text sent so far was thinking: take it back.
+                                filtered.retracted = False
+                                parts.clear()
+                                yield GatewayEvent("reset", {})
                         if text and restorer is not None:
                             text = restorer.feed(text)
                         if text and guard is not None:
@@ -698,6 +728,10 @@ class GatewayService:
                             parts.append(text)
                             yield GatewayEvent("delta", {"content": text})
                 rest = restorer.flush() if restorer is not None else ""
+                if filtered is not None and (tail := filtered.flush()):
+                    rest = (
+                        restorer.feed(tail) if restorer is not None else tail
+                    ) + rest
                 if guard is not None:
                     rest = guard.feed(rest) + guard.flush()
                 if rest:
@@ -708,7 +742,7 @@ class GatewayService:
 
             completion = await prepared.provider.complete(
                 model=prepared.model,
-                messages=prepared.messages,
+                messages=messages,
                 temperature=request.temperature,
                 **options,
             )
@@ -725,6 +759,8 @@ class GatewayService:
         content = completion.choices[0].message.content
         if not isinstance(content, str):
             raise TypeError("Model provider returned no text content")
+        if hide:
+            content = strip_thinking(content)
         if restore:
             content = prepared.vault.restore(content)  # type: ignore[union-attr]
         if guard is not None:

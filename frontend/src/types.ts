@@ -1,6 +1,7 @@
 export type Phase = 'idle' | 'sending' | 'analyzing' | 'analyzed' | 'routing' | 'generating' | 'complete' | 'failed';
 export type Provider = 'local' | 'cloud';
 export type ProviderSelection = 'auto' | Provider;
+export type Thinking = 'default' | 'off' | 'low' | 'medium' | 'high';
 export type ChatResult = {
   id?: string;
   content: string;

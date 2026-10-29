@@ -10,6 +10,12 @@ providers:
     models:
       - id: qwen2.5:7b
         alias: house-model     # optional public name shown instead of the id
+        # For a model that thinks before it answers (Qwen3 ...). Nothing is sent
+        # unless a style is given. The difficulty check always asks for "off".
+        # reasoning:
+        #   style: chat_template   # or reasoning_effort, or no_think
+        #   level: off             # default | off | low | medium | high
+        #   prefilled: true        # the answer shows only "...</think>"
 
   - name: gemini
     locality: cloud            # cloud: always receives redacted text only
@@ -26,6 +32,9 @@ providers:
 defaults:
   local: {provider: ollama}                          # first model when omitted
   cloud: {provider: gemini, model: gemini-2.5-flash}
+
+# Remove thinking text (<think>...</think>) from answers (default: true).
+hide_thinking: true
 
 # The analysis model sees unredacted text, so it must be a local provider.
 analysis: {provider: ollama, model: qwen2.5:7b}

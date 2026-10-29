@@ -216,7 +216,10 @@ def _service_from_routing_config(
         local_provider=providers[local_provider.name],
         cloud_provider=None,
         analyzer=RequestAnalyzer(
-            provider=providers[analysis_provider.name], model=analysis_model.id
+            provider=providers[analysis_provider.name],
+            model=analysis_model.id,
+            reasoning=analysis_model.reasoning,
+            max_tokens=settings.analysis_max_tokens or None,
         ),
         policy=RoutingPolicy(),
         routing=routing,

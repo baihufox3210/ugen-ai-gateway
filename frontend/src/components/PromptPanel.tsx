@@ -1,18 +1,23 @@
-import type { ProviderSelection } from '../types';
+import type { ProviderSelection, Thinking } from '../types';
 
 type Props = {
   prompt: string; busy: boolean; error: string; providerSelection: ProviderSelection; cloudAvailable: boolean;
   onPromptChange: (value: string) => void; onProviderSelectionChange: (value: ProviderSelection) => void; onSubmit: () => void; onStop: () => void; onClear: () => void;
   /** Whether the conversation has its own prompt; the Prompt button is absent without an account. */
   promptSet?: boolean; onOpenPrompt?: () => void;
+  /** The thinking switch is shown only when a model can be told how much to think. */
+  thinking?: Thinking; onThinkingChange?: (value: Thinking) => void;
 };
+const THINKING_OPTIONS: { value: Thinking; label: string }[] = [
+  { value: 'default', label: 'Default' }, { value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
+];
 const PROVIDER_OPTIONS: { value: ProviderSelection; label: string; glyph: string; hint: string }[] = [
   { value: 'auto', label: 'Auto', glyph: '⇄', hint: 'Pick the model from the local analysis' },
   { value: 'local', label: 'Local', glyph: '⌂', hint: 'Always use the local model' },
   { value: 'cloud', label: 'Cloud', glyph: '✳', hint: 'Always use the cloud model (personal data is still redacted first)' },
 ];
 
-function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onStop, onClear, promptSet, onOpenPrompt }: Props) {
+function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onStop, onClear, promptSet, onOpenPrompt, thinking, onThinkingChange }: Props) {
   return <article className="panel prompt-panel">
     <div className="composer-topline">
       <span className="eyebrow">YOUR MESSAGE</span>
@@ -32,6 +37,12 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
           </button>;
         })}
       </div>
+      {thinking && onThinkingChange && <label className="thinking-switch" title="How much the model thinks before it answers. Default leaves it to the model's own setting.">
+        <span>Thinking</span>
+        <select value={thinking} onChange={event => onThinkingChange(event.target.value as Thinking)} disabled={busy} aria-label="Thinking">
+          {THINKING_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>}
       <div className="prompt-actions">{onOpenPrompt && <button type="button" className={`conversation-prompt-button ${promptSet ? 'set' : ''}`} onClick={onOpenPrompt} disabled={busy} title="Prompt for this conversation">✎ {promptSet ? 'Prompt set' : 'Prompt'}</button>}{prompt && <button className="clear-draft" onClick={onClear} disabled={busy}>Clear draft</button>}{busy
         ? <button className="send-button stop-button" onClick={onStop} title="Stop generating"><i className="spinner"/> Stop</button>
         : <button className="send-button" onClick={onSubmit} disabled={!prompt.trim()}>Send <span>↗</span></button>}</div></div>

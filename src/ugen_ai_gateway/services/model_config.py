@@ -10,6 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from ugen_ai_gateway.config import Settings
+from ugen_ai_gateway.providers.reasoning import Reasoning
 from ugen_ai_gateway.routing.config import (
     Condition,
     Defaults,
@@ -28,6 +29,8 @@ class LocalModel(BaseModel):
     api_key: str = Field(default="", max_length=500)
     model: str = Field(default="", max_length=200)
     alias: str = Field(default="", max_length=100)
+    # How the model is asked to think (nothing is sent until a style is chosen).
+    reasoning: Reasoning = Field(default_factory=Reasoning)
 
 
 class LocalSettings(LocalModel):
@@ -93,6 +96,8 @@ class StoredModels(BaseModel):
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
     # The lowest difficulty the cloud model answers in Auto mode.
     cloud_from: Literal["moderate", "complex"] = "moderate"
+    # Remove thinking text (<think>...</think>) from answers.
+    hide_thinking: bool = True
     extra: list[ExtraModel] = Field(default_factory=list, max_length=20)
     rules: list[RouteRule] = Field(default_factory=list, max_length=50)
 
@@ -184,9 +189,11 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
             base_url=local.base_url or None,
             api_key=local.api_key or "local",
             models=[
-                ModelConfig(id=local.model, alias=local.alias or None),
+                ModelConfig(
+                    id=local.model, alias=local.alias or None, reasoning=local.reasoning
+                ),
                 *(
-                    [ModelConfig(id=local.analysis_model)]
+                    [ModelConfig(id=local.analysis_model, reasoning=local.reasoning)]
                     if local.analysis_model and local.analysis_model != local.model
                     else []
                 ),
@@ -211,6 +218,7 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
                         alias=extra.alias or None,
                         input_cost_per_million=extra.input_cost_per_million,
                         output_cost_per_million=extra.output_cost_per_million,
+                        reasoning=extra.reasoning,
                     )
                 ],
             )
@@ -229,6 +237,7 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
                         alias=cloud.alias or None,
                         input_cost_per_million=cloud.input_cost_per_million,
                         output_cost_per_million=cloud.output_cost_per_million,
+                        reasoning=cloud.reasoning,
                     )
                 ],
             )
@@ -260,6 +269,7 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
         defaults=Defaults(local=Target(provider="local"), cloud=cloud_target),
         analysis=Target(provider="local", model=local.analysis_model or None),
         rules=rules,
+        hide_thinking=stored.hide_thinking,
     )
 
 
@@ -281,6 +291,7 @@ def public_view(stored: StoredModels) -> dict[str, Any]:
         "cloud": masked(stored.cloud),
         "analysis_mode": stored.analysis_mode,
         "cloud_from": stored.cloud_from,
+        "hide_thinking": stored.hide_thinking,
         "extra": [masked(model) for model in stored.extra],
         "rules": [rule.model_dump() for rule in stored.rules],
     }

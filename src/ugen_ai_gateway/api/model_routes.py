@@ -16,6 +16,7 @@ from ugen_ai_gateway.dependencies import (
     models_changed,
 )
 from ugen_ai_gateway.providers.openai_client import create_openai_client
+from ugen_ai_gateway.providers.reasoning import Reasoning
 from ugen_ai_gateway.services.model_config import (
     RouteRule,
     StoredModels,
@@ -43,6 +44,7 @@ class _Connection(BaseModel):
     api_key: str | None = Field(default=None, max_length=500)
     model: str = Field(default="", max_length=200)
     alias: str = Field(default="", max_length=100)
+    reasoning: Reasoning = Field(default_factory=Reasoning)
 
     @field_validator("base_url")
     @classmethod
@@ -72,6 +74,7 @@ class ModelsUpdate(BaseModel):
     cloud: CloudUpdate = Field(default_factory=CloudUpdate)
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
     cloud_from: Literal["moderate", "complex"] = "moderate"
+    hide_thinking: bool = True
     extra: list[ExtraUpdate] = Field(default_factory=list, max_length=20)
     rules: list[RouteRule] = Field(default_factory=list, max_length=50)
 
@@ -101,8 +104,11 @@ def _require_store(store: UsageStore | None) -> UsageStore:
 
 def _strip(model: _Connection) -> dict[str, Any]:
     """The fields the request set, trimmed; the API key is handled separately."""
-    data = model.model_dump(exclude={"api_key"}, exclude_unset=True)
-    return {k: v.strip() if isinstance(v, str) else v for k, v in data.items()}
+    data = model.model_dump(exclude={"api_key", "reasoning"}, exclude_unset=True)
+    data = {k: v.strip() if isinstance(v, str) else v for k, v in data.items()}
+    if "reasoning" in model.model_fields_set:
+        data["reasoning"] = model.reasoning.model_copy()
+    return data
 
 
 @router.get("")
@@ -154,6 +160,7 @@ async def save_models(
             cloud=cloud,
             analysis_mode=body.analysis_mode,
             cloud_from=body.cloud_from,
+            hide_thinking=body.hide_thinking,
             extra=extra,
             rules=body.rules,
         )
@@ -187,6 +194,11 @@ async def save_models(
         cloud_model=models.cloud.model,
         analysis_mode=models.analysis_mode,
         cloud_from=models.cloud_from,
+        hide_thinking=models.hide_thinking,
+        thinking={
+            "local": models.local.reasoning.model_dump(),
+            "cloud": models.cloud.reasoning.model_dump(),
+        },
         extra=[
             {"name": m.name, "locality": m.locality, "model": m.model}
             for m in models.extra

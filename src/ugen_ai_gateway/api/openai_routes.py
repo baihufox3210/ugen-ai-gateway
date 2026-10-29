@@ -68,6 +68,9 @@ class OpenAIChatRequest(BaseModel):
     presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
     frequency_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
     seed: int | None = None
+    reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
     n: int | None = None
     tools: list[Any] | None = None
 
@@ -127,6 +130,8 @@ def to_gateway_request(
     }
     if body.temperature is not None:
         payload["temperature"] = body.temperature
+    if body.reasoning_effort is not None:
+        payload["reasoning_effort"] = body.reasoning_effort
     try:
         request = ChatRequest.model_validate(payload)
     except ValidationError as exc:

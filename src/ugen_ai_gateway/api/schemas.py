@@ -66,6 +66,12 @@ class ChatRequest(BaseModel):
     # How many leading messages are the administrators' own system prompt (set
     # by the gateway, never by a client).
     trusted_messages: int = Field(default=0, exclude=True)
+    # OpenAI's reasoning_effort: how hard the model thinks. It is turned into
+    # whatever the chosen model understands (see providers.reasoning).
+    reasoning_effort: str | None = Field(default=None, max_length=16)
+    # The dashboard's thinking switch under the message box. Unlike
+    # reasoning_effort it only counts for a model that has a thinking style set.
+    thinking: Literal["off", "low", "medium", "high"] | None = None
 
     @field_validator("messages")
     @classmethod
