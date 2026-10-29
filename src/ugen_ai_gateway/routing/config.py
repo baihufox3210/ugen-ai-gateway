@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from ugen_ai_gateway.config import Settings
+from ugen_ai_gateway.providers.reasoning import Reasoning
 
 Locality = Literal["local", "cloud"]
 Complexity = Literal["simple", "moderate", "complex"]
@@ -24,6 +25,8 @@ class ModelConfig(BaseModel):
     # USD per million tokens; used for cost and savings reporting.
     input_cost_per_million: float = Field(default=0.0, ge=0)
     output_cost_per_million: float = Field(default=0.0, ge=0)
+    # How this model is asked to think, if it thinks (see providers.reasoning).
+    reasoning: Reasoning = Field(default_factory=Reasoning)
 
     @property
     def public_id(self) -> str:
@@ -91,6 +94,8 @@ class RoutingConfig(BaseModel):
     analysis: Target
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     rules: list[Rule] = Field(default_factory=list)
+    # Remove thinking text (<think>...</think>) from answers.
+    hide_thinking: bool = True
 
     @model_validator(mode="after")
     def check_references(self) -> "RoutingConfig":

@@ -750,6 +750,46 @@ which suits a capable local model. Simple tasks stay local. If cloud routing is 
 returned `routing` object reports the estimated complexity, task type, detected
 personal-data types, selected provider, and the reason for that decision.
 
+### Models that think
+
+Reasoning models (Qwen3, DeepSeek-R1, gpt-oss, GPT-5 ...) think before they
+answer. Three things matter:
+
+**Hiding the thinking.** Thinking shows up in the answer in one of two ways:
+`<think> ... </think>` before the answer (also `<thinking>`, `<reasoning>`,
+Magistral's `[THINK] ... [/THINK]`), or only a closing `</think>` when the
+model's chat template already opened the block in the prompt (Qwen3.5,
+Qwen3 Thinking-2507). The gateway removes both, in the dashboard and in the API
+(Models → *Thinking text*, or `hide_thinking` in the routing file; on by
+default). A server started with a reasoning parser (`trtllm-serve
+--reasoning_parser qwen3`, `vllm serve --reasoning-parser qwen3`) puts the
+thinking in a separate field and the gateway never sees it. While an answer
+streams, a model that is not marked *thinking starts in the prompt* shows its
+thinking first; the dashboard takes it back when the closing tag arrives, but
+API clients see it, so mark such models (Models → the model → *Thinking*).
+
+**Controlling how much it thinks.** Each model says how it is told, because
+servers differ; nothing is sent until you choose one:
+
+| Style | What is sent | For |
+| --- | --- | --- |
+| `chat_template` | `chat_template_kwargs: {"enable_thinking": false}` | Qwen3 on vLLM, SGLang, TensorRT-LLM (check that your build accepts it) |
+| `reasoning_effort` | `reasoning_effort: none / low / medium / high` | OpenAI, GPT-5, LiteLLM-style gateways |
+| `no_think` | ` /no_think` or ` /think` appended to the last user message | Qwen3's text switch |
+
+Qwen-style models only switch thinking on or off, so *low*, *medium* and *high*
+all mean on. An API client can also send `reasoning_effort` (`none`, `minimal`,
+`low`, `medium`, `high`, `xhigh`) per request: it is turned into the model's
+own style, or passed through unchanged when none is set.
+
+**The difficulty check never thinks.** It needs a small JSON object back, so
+for a model with a style chosen the check (and the conversation memory) always
+ask for thinking off, and the reply is limited to `ANALYSIS_MAX_TOKENS` (default
+1024). If the analysis model's reply is not usable, the log shows how it began;
+the usual causes are a model that thinks and runs out of tokens before its
+answer (turn thinking off, or raise the limit) or one that wraps the JSON in
+text, which is accepted.
+
 ### Routing rules and multiple models
 
 For more than one local and one cloud model, point `ROUTING_CONFIG` at a YAML

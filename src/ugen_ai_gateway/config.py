@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     analysis_mode: Literal["llm", "rules", "hybrid"] = "hybrid"
     # The lowest difficulty sent to the cloud model in Auto mode.
     cloud_from: Literal["moderate", "complex"] = "moderate"
+    # Longest reply asked of the analysis model (0: no limit). The reply is a
+    # small JSON object; a model that thinks first needs room to finish.
+    analysis_max_tokens: int = Field(default=1024, ge=0)
     analysis_cache_size: int = Field(default=256, ge=0)
     analysis_cache_ttl_seconds: float = Field(default=600, gt=0)
 

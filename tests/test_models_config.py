@@ -369,3 +369,42 @@ def test_cloud_from_complex_keeps_moderate_requests_local(monkeypatch) -> None:
     saved = env.put(body(cloud_enabled=True, cloud=CLOUD, cloud_from="complex"))
     assert saved.status_code == 200, saved.text
     assert env.get().json()["config"]["cloud_from"] == "complex"
+
+
+def test_thinking_settings_are_saved_per_model_and_reach_the_routing(
+    monkeypatch,
+) -> None:
+    env = ModelsEnv(monkeypatch)
+    thinking = {"level": "off", "style": "chat_template", "prefilled": True}
+
+    saved = env.put(
+        body(
+            cloud_enabled=True,
+            cloud={
+                **CLOUD,
+                "reasoning": {"level": "high", "style": "reasoning_effort"},
+            },
+            local={**LOCAL, "reasoning": thinking},
+            hide_thinking=False,
+        )
+    )
+
+    assert saved.status_code == 200, saved.text
+    view = env.get().json()["config"]
+    assert view["local"]["reasoning"] == thinking and view["hide_thinking"] is False
+    assert view["cloud"]["reasoning"]["level"] == "high"
+    routing = dependencies.get_gateway_service().routing
+    assert routing.hide_thinking is False
+    local_model = routing.providers[0].models[0]
+    assert (local_model.reasoning.level, local_model.reasoning.prefilled) == (
+        "off",
+        True,
+    )
+
+    # Saving again without the setting keeps nothing stale: it is not sent, so it stays.
+    again = env.put(body(local={**LOCAL, "alias": "House"}, hide_thinking=False))
+    assert again.json()["config"]["local"]["reasoning"] == thinking
+
+    # Unknown values are rejected.
+    bad = env.put(body(local={**LOCAL, "reasoning": {"level": "extreme"}}))
+    assert bad.status_code == 422

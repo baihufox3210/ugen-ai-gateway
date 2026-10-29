@@ -275,6 +275,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
         if (event.type === 'guard' && event.kind === 'injection') setInjectionSignals(Array.isArray(event.signals) ? event.signals.map(String) : []);
         if (event.type === 'fallback') { setFallbackFrom(event.from === 'cloud' ? 'cloud' : 'local'); streamProvider = event.to === 'cloud' ? 'cloud' : 'local'; setProvider(streamProvider); }
         if (event.type === 'generation_started') { streamProvider = event.provider === 'cloud' ? 'cloud' : 'local'; streamModel = String(event.model ?? ''); setProvider(streamProvider); setModel(streamModel); setPhase('generating'); }
+        if (event.type === 'reset') { streamed = ''; setStreamingText(''); }
         if (event.type === 'delta') { streamed += String(event.content ?? ''); if (!streamTimer) streamTimer = window.setTimeout(showStreamed, STREAM_FRAME_MS); }
         if (event.type === 'result') received.result = event.data as ChatResult;
         if (event.type === 'error') streamError = String(event.detail ?? 'The model request failed.');
