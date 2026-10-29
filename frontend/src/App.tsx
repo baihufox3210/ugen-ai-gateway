@@ -14,12 +14,13 @@ import { apiFetch, errorMessage, type User } from './api';
 import { forgetLocalHistory, useConversations } from './conversationStore';
 import { downloadConversation } from './exportConversation';
 import { FOLD_CHUNK, requestMessages, size, turnMessages, turnsToRemember } from './memory';
-import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection } from './types';
+import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection, Thinking } from './types';
 
 // crypto.randomUUID only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere.
 const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
 
 const PROVIDER_SELECTION_KEY = 'ugen-gateway-provider-selection';
+const THINKING_KEY = 'ugen-gateway-thinking';
 const STREAM_FRAME_MS = 50;
 type View = 'chat' | 'monitor';
 type DeleteAction = { type: 'conversation'; conversationId: string } | { type: 'turn'; conversationId: string; turnId: string } | { type: 'all' };
@@ -34,6 +35,13 @@ function loadProviderSelection(): ProviderSelection {
     const stored = localStorage.getItem(PROVIDER_SELECTION_KEY);
     return stored === 'local' || stored === 'cloud' ? stored : 'auto';
   } catch { return 'auto'; }
+}
+
+function loadThinking(): Thinking {
+  try {
+    const stored = localStorage.getItem(THINKING_KEY);
+    return stored === 'off' || stored === 'low' || stored === 'medium' || stored === 'high' ? stored : 'default';
+  } catch { return 'default'; }
 }
 
 type Notice = { ok: boolean; message: string };
@@ -60,13 +68,16 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const [view, setView] = useState<View>('chat');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [providerSelection, setProviderSelection] = useState<ProviderSelection>(loadProviderSelection);
+  // The thinking switch under the message box; shown when a model can be told how much to think.
+  const [thinking, setThinking] = useState<Thinking>(loadThinking);
+  const [thinkingControl, setThinkingControl] = useState(false);
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const { conversations, setConversations, status: syncStatus, syncError, flush, refreshNow } = useConversations(user, busy);
   const [shareOpen, setShareOpen] = useState(false);
   const activeConversation = conversations.find(item => item.id === activeId) ?? null;
-  // Prompt chosen before a new conversation's first message.
   // The request log is kept in memory only, so a refresh clears it.
   const [requestLog, setRequestLog] = useState<LogEntry[]>([]);
+  // Prompt chosen before a new conversation's first message.
   const [draftPrompt, setDraftPrompt] = useState('');
   const [promptOpen, setPromptOpen] = useState(false);
   const conversationPrompt = activeConversation ? activeConversation.prompt ?? '' : draftPrompt;
@@ -76,6 +87,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const [memoryBusy, setMemoryBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => { try { localStorage.setItem(THINKING_KEY, thinking); } catch { /* resets next visit */ } }, [thinking]);
   useEffect(() => { try { localStorage.setItem(PROVIDER_SELECTION_KEY, providerSelection); } catch { /* selection simply resets next visit */ } }, [providerSelection]);
   // A copy of someone's share link to continue, added once history has
   // loaded so opening the same link again reuses the earlier copy.
@@ -105,10 +117,10 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       try {
         const response = await apiFetch('/v1/ugen/config');
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
-          const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown; configured?: unknown };
+          const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown; configured?: unknown; thinking_control?: unknown };
           if (typeof candidate.local_model === 'string' && typeof candidate.cloud_model === 'string') {
             data = { local_model: candidate.local_model, cloud_model: candidate.cloud_model };
-            if (active) setModelsReady(candidate.configured !== false);
+            if (active) { setModelsReady(candidate.configured !== false); setThinkingControl(candidate.thinking_control === true); }
           }
         }
       } catch {
@@ -261,7 +273,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       const messages = requestMessages(conversation, [...keptTurns, turn]);
       const response = await apiFetch('/v1/ugen/chat/stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2, conversation_prompt: conversation.prompt ?? '' }),
+        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2, conversation_prompt: conversation.prompt ?? '', ...(thinkingControl && thinking !== 'default' ? { thinking } : {}) }),
       });
       if (!response.ok) throw new Error(response.status === 401 ? 'Your session has ended. Sign in again.' : await errorMessage(response));
       if (!response.body) throw new Error('The server did not return a progress stream.');
@@ -350,7 +362,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
     </nav>
     <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion} log={requestLog} onClearLog={() => setRequestLog([])}/></section><Footer/></main>
     <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}
-      promptSet={Boolean(conversationPrompt)} onOpenPrompt={user ? () => setPromptOpen(true) : undefined}/></section>
+      promptSet={Boolean(conversationPrompt)} onOpenPrompt={user ? () => setPromptOpen(true) : undefined}
+      thinking={thinkingControl ? thinking : undefined} onThinkingChange={setThinking}/></section>
     {promptOpen && <ConversationPromptDialog prompt={conversationPrompt} onClose={() => setPromptOpen(false)} onSave={next => {
       if (activeConversation) setConversations(current => current.map(item => item.id === activeConversation.id ? { ...item, prompt: next || undefined } : item));
       else setDraftPrompt(next);

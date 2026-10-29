@@ -275,3 +275,35 @@ def test_nothing_about_thinking_is_sent_by_default() -> None:
         "reasoning_effort" not in local.calls[-1]
         and "extra_body" not in local.calls[-1]
     )
+
+
+def test_the_dashboards_thinking_switch_counts_only_for_a_model_with_a_style() -> None:
+    styled = Reasoning(level="default", style="chat_template")
+    service, local, _ = _service(reasoning=styled)
+
+    _chat(service, stream=False, thinking="off")
+    assert local.calls[-1]["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+    _chat(service, stream=False, thinking="high")
+    assert local.calls[-1]["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": True}
+    }
+
+    # A model with no style set is never sent anything the switch picked.
+    plain, plain_local, _ = _service()
+    _chat(plain, stream=False, thinking="low")
+    assert "reasoning_effort" not in plain_local.calls[-1]
+    assert "extra_body" not in plain_local.calls[-1]
+
+
+def test_the_dashboard_is_told_when_a_model_can_be_asked_to_think(monkeypatch) -> None:
+    from tests.test_accounts import AccountEnv, bearer
+
+    env = AccountEnv(monkeypatch)
+    token = env.token("alice")
+    url = "/v1/ugen/config"
+
+    assert (
+        env.client.get(url, headers=bearer(token)).json()["thinking_control"] is False
+    )

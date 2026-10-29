@@ -682,18 +682,17 @@ class GatewayService:
         """
         restore = prepared.vault is not None
         reasoning = prepared.route.model.reasoning
-        extra, messages = request_options(
-            reasoning, prepared.messages, effort=request.reasoning_effort
-        )
+        effort = request.reasoning_effort
+        if effort is None and request.thinking and reasoning.style != "none":
+            effort = "none" if request.thinking == "off" else request.thinking
+        extra, messages = request_options(reasoning, prepared.messages, effort=effort)
         options = {**options, **extra}
         hide = self._engine.config.hide_thinking
         try:
             if stream:
                 restorer = StreamRestorer(prepared.vault) if restore else None  # type: ignore[arg-type]
                 filtered = (
-                    ThinkingFilter(
-                        start_inside=reasoning.thinks(request.reasoning_effort)
-                    )
+                    ThinkingFilter(start_inside=reasoning.thinks(effort))
                     if hide
                     else None
                 )

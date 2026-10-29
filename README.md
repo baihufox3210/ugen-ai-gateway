@@ -777,6 +777,10 @@ servers differ; nothing is sent until you choose one:
 | `reasoning_effort` | `reasoning_effort: none / low / medium / high` | OpenAI, GPT-5, LiteLLM-style gateways |
 | `no_think` | ` /no_think` or ` /think` appended to the last user message | Qwen3's text switch |
 
+The dashboard shows a **Thinking** switch under the message box (Default, Off,
+Low, Medium, High) once any model has a style chosen; it applies to the model that
+answers, and only if that model has a style set. It is remembered per browser.
+
 Qwen-style models only switch thinking on or off, so *low*, *medium* and *high*
 all mean on. An API client can also send `reasoning_effort` (`none`, `minimal`,
 `low`, `medium`, `high`, `xhigh`) per request: it is turned into the model's
