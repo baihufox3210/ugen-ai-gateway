@@ -374,7 +374,8 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 /* ── Composer ──────────────────────────────────────────────────── */
 .prompt-panel{border-color:#d6e5dd;background:#fffffffa;box-shadow:0 12px 32px #193e3416}
 .composer-topline{display:flex;align-items:center;gap:8px;margin:0 2px 8px}
-.char-count{color:#718c80;font-size:9px}
+.composer-topline .provider-switch{margin-left:6px}
+.char-count{color:#718c80;font-size:9px;margin-left:auto}
 .char-count i{color:#a8b5af;font-style:normal}
 .prompt-panel textarea{display:block;width:100%;min-height:88px;max-height:240px;resize:vertical;border:1px solid #e1e9e6;border-radius:12px;padding:12px 14px;background:#fafcfb;color:#263e37;font-size:13px;line-height:1.75;outline:none;transition:border-color .22s,box-shadow .22s,background .22s}
 .prompt-panel textarea:focus{border-color:#89bba7;background:#fff;box-shadow:0 0 0 4px #64a88e15}
