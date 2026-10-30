@@ -94,8 +94,8 @@ class RoutingConfig(BaseModel):
     analysis: Target
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     rules: list[Rule] = Field(default_factory=list)
-    # Remove thinking text (<think>...</think>) from answers.
-    hide_thinking: bool = True
+    # Show the model's thinking, collapsed, beside its answer.
+    show_thinking: bool = True
 
     @model_validator(mode="after")
     def check_references(self) -> "RoutingConfig":

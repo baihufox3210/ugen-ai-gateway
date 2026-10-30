@@ -753,46 +753,45 @@ personal-data types, selected provider, and the reason for that decision.
 ### Models that think
 
 Reasoning models (Qwen3, DeepSeek-R1, gpt-oss, GPT-5 ...) think before they
-answer. Three things matter:
+answer. There is one setting, in each model's settings on the Models page and in
+the **Thinking** switch under the message box: **Default**, **Off**, **Low**,
+**Medium** or **High**. Default sends nothing and leaves it to the model.
+Qwen-style models only switch thinking on or off, so Low, Medium and High all
+mean on.
 
-**Hiding the thinking.** Thinking shows up in the answer in one of two ways:
-`<think> ... </think>` before the answer (also `<thinking>`, `<reasoning>`,
-Magistral's `[THINK] ... [/THINK]`), or only a closing `</think>` when the
-model's chat template already opened the block in the prompt (Qwen3.5,
-Qwen3 Thinking-2507). The gateway removes both, in the dashboard and in the API
-(Models → *Thinking text*, or `hide_thinking` in the routing file; on by
-default). A server started with a reasoning parser (`trtllm-serve
---reasoning_parser qwen3`, `vllm serve --reasoning-parser qwen3`) puts the
-thinking in a separate field and the gateway never sees it. While an answer
-streams, a model that is not marked *thinking starts in the prompt* shows its
-thinking first; the dashboard takes it back when the closing tag arrives, but
-API clients see it, so mark such models (Models → the model → *Thinking*).
+**How the level reaches the model.** Servers and proxies differ, so the gateway
+tries the ways that suit the model in turn and remembers the one that works,
+per model, until it restarts:
 
-**Controlling how much it thinks.** Each model says how it is told, because
-servers differ; nothing is sent until you choose one:
-
-| Style | What is sent | For |
+| Way | What is sent | For |
 | --- | --- | --- |
-| `chat_template` | `chat_template_kwargs: {"enable_thinking": false}` | Qwen3 on vLLM, SGLang, TensorRT-LLM (check that your build accepts it) |
-| `reasoning_effort` | `reasoning_effort: none / low / medium / high` | OpenAI, GPT-5, LiteLLM-style gateways |
-| `no_think` | ` /no_think` or ` /think` appended to the last user message | Qwen3's text switch |
+| `chat_template` | `chat_template_kwargs: {"enable_thinking": false}` | Qwen3 on vLLM, SGLang, TensorRT-LLM |
+| `extra_body` | the same, wrapped in `extra_body` | LiteLLM in front of the model (bare, it fails with "unexpected keyword argument 'chat_template_kwargs'") |
+| `no_think` | ` /no_think` or ` /think` added to the last user message | Qwen3's text switch, through any proxy |
+| `reasoning_effort` | `none` / `low` / `medium` / `high` | cloud models: OpenAI, GPT-5, LiteLLM backends |
 
-The dashboard shows a **Thinking** switch under the message box (Default, Off,
-Low, Medium, High) once any model has a style chosen; it applies to the model that
-answers, and only if that model has a style set. It is remembered per browser.
+If the server refuses every one, requests go without it and the log says so. A
+routing file can name the way to try first (`reasoning: {level: off, style: no_think}`)
+or turn it off (`style: none`). An API client can also send `reasoning_effort`
+(`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) per request; it is turned
+into a level the same way.
 
-Qwen-style models only switch thinking on or off, so *low*, *medium* and *high*
-all mean on. An API client can also send `reasoning_effort` (`none`, `minimal`,
-`low`, `medium`, `high`, `xhigh`) per request: it is turned into the model's
-own style, or passed through unchanged when none is set.
+**Showing the thinking.** The answer never contains the thinking. The
+dashboard shows it apart, folded, small and grey ("Thought process"; "Thinking…"
+while it streams). It is recognised in `<think> ... </think>` (also `<thinking>`,
+`<reasoning>`, Magistral's `[THINK] ... [/THINK]`), as only a closing `</think>`
+(Qwen3.5, Qwen3 Thinking-2507: what was shown is taken back and moved into the
+thinking), and in the `reasoning_content` field a reasoning parser fills
+(`trtllm-serve --reasoning_parser qwen3`, `vllm serve --reasoning-parser qwen3`).
+The API returns it as `reasoning_content` on the message (and on streamed
+deltas), apart from `content`. `show_thinking: false` in the routing file drops
+it. A model that writes its thinking as plain text with no tag cannot be told
+apart from its answer; turn its thinking off instead.
 
-**The difficulty check never thinks.** It needs a small JSON object back, so
-for a model with a style chosen the check (and the conversation memory) always
-ask for thinking off, and the reply is limited to `ANALYSIS_MAX_TOKENS` (default
-1024). If the analysis model's reply is not usable, the log shows how it began;
-the usual causes are a model that thinks and runs out of tokens before its
-answer (turn thinking off, or raise the limit) or one that wraps the JSON in
-text, which is accepted.
+**The difficulty check never thinks.** It needs a small JSON object back, so the
+check (and the conversation memory) always ask for thinking off, and the reply is
+limited to `ANALYSIS_MAX_TOKENS` (default 1024). If the reply is still not usable
+the log shows how it began.
 
 **Finding out why the difficulty check fails.** Run the check on a short
 conversation with the gateway's own saved settings and see every call to the

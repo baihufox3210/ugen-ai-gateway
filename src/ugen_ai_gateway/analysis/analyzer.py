@@ -12,7 +12,7 @@ from ugen_ai_gateway.analysis.prompts import REQUEST_ANALYSIS_SYSTEM_PROMPT
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis, TokenUsage
 from ugen_ai_gateway.analysis.thinking import strip_thinking
 from ugen_ai_gateway.providers.base import ModelProvider
-from ugen_ai_gateway.providers.reasoning import Reasoning, request_options
+from ugen_ai_gateway.providers.reasoning import Reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -48,20 +48,20 @@ class RequestAnalyzer:
         self._max_tokens = max_tokens
 
     async def analyze(self, user_input: str) -> RequestAnalysis:
-        # The analysis step never needs to think; a model told how to turn
-        # thinking off is asked to, which also makes routing much faster.
-        options, messages = request_options(
-            self._reasoning,
-            [
-                {"role": "system", "content": REQUEST_ANALYSIS_SYSTEM_PROMPT},
-                {"role": "user", "content": redact_personal_data(user_input)},
-            ],
-            analysis=True,
-        )
+        # The analysis step never needs to think; the model is asked not to,
+        # which also makes routing much faster.
+        options: dict[str, Any] = {}
         if self._max_tokens:
             options["max_tokens"] = self._max_tokens
         completion = await self._provider.complete(
-            model=self._model, messages=messages, temperature=0.0, **options
+            model=self._model,
+            messages=[
+                {"role": "system", "content": REQUEST_ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": redact_personal_data(user_input)},
+            ],
+            temperature=0.0,
+            thinking=self._reasoning.thinking(analysis=True),
+            **options,
         )
 
         if not completion.choices:

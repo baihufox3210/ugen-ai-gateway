@@ -4,35 +4,34 @@ import NumberStepper from './NumberStepper';
 
 type Locality = 'local' | 'cloud';
 type ThinkLevel = 'default' | 'off' | 'low' | 'medium' | 'high';
-type ThinkStyle = 'none' | 'reasoning_effort' | 'chat_template' | 'no_think';
 type SavedConnection = {
   base_url: string; model: string; alias: string; has_api_key: boolean; api_key_hint: string;
   analysis_model?: string; embedding_model?: string;
   input_cost_per_million?: number; output_cost_per_million?: number;
-  reasoning?: { level: ThinkLevel; style: ThinkStyle; prefilled: boolean };
+  reasoning?: { level: ThinkLevel };
 };
 type SavedExtra = SavedConnection & { id: string; name: string; locality: Locality };
 type Condition = { complexity: string[]; task_type: string[]; contains_personal_data: boolean | null; min_chars: number | null; max_chars: number | null };
 type Rule = { name: string; when: Condition; target: string };
 type ModelsResponse = {
   source: 'database' | 'env' | 'routing_file';
-  config: { local: SavedConnection; cloud_enabled: boolean; cloud: SavedConnection; analysis_mode: 'hybrid' | 'llm'; cloud_from?: CloudFrom; hide_thinking?: boolean; extra: SavedExtra[]; rules: Rule[] };
+  config: { local: SavedConnection; cloud_enabled: boolean; cloud: SavedConnection; analysis_mode: 'hybrid' | 'llm'; cloud_from?: CloudFrom; extra: SavedExtra[]; rules: Rule[] };
 };
 /** A connection being edited. ``apiKey`` undefined keeps the saved key; '' removes it. */
 type CloudFrom = 'moderate' | 'complex';
-type Draft = { baseUrl: string; model: string; alias: string; apiKey?: string; hasKey: boolean; keyHint: string; inputCost: string; outputCost: string; analysisModel: string; embeddingModel: string; thinkLevel: ThinkLevel; thinkStyle: ThinkStyle; thinkPrefilled: boolean };
+type Draft = { baseUrl: string; model: string; alias: string; apiKey?: string; hasKey: boolean; keyHint: string; inputCost: string; outputCost: string; analysisModel: string; embeddingModel: string; thinkLevel: ThinkLevel };
 type Extra = { id: string; name: string; locality: Locality; draft: Draft };
 type Probe = { state: 'idle' | 'working' | 'ok' | 'error'; message?: string };
 
 const COMPLEXITY = ['simple', 'moderate', 'complex'];
 const TASK_TYPES = ['general', 'coding', 'reasoning', 'summarization', 'translation', 'other'];
-const blankDraft: Draft = { baseUrl: '', model: '', alias: '', hasKey: false, keyHint: '', inputCost: '', outputCost: '', analysisModel: '', embeddingModel: '', thinkLevel: 'default', thinkStyle: 'none', thinkPrefilled: false };
+const blankDraft: Draft = { baseUrl: '', model: '', alias: '', hasKey: false, keyHint: '', inputCost: '', outputCost: '', analysisModel: '', embeddingModel: '', thinkLevel: 'default' };
 const toDraft = (saved: SavedConnection): Draft => ({
   baseUrl: saved.base_url, model: saved.model, alias: saved.alias, hasKey: saved.has_api_key, keyHint: saved.api_key_hint,
   inputCost: saved.input_cost_per_million ? String(saved.input_cost_per_million) : '',
   outputCost: saved.output_cost_per_million ? String(saved.output_cost_per_million) : '',
   analysisModel: saved.analysis_model ?? '', embeddingModel: saved.embedding_model ?? '',
-  thinkLevel: saved.reasoning?.level ?? 'default', thinkStyle: saved.reasoning?.style ?? 'none', thinkPrefilled: saved.reasoning?.prefilled ?? false,
+  thinkLevel: saved.reasoning?.level ?? 'default',
 });
 const costStep = (current: number, direction: 1 | -1) => (direction === 1 ? current < 10 : current <= 10) ? 0.1 : 1;
 const newModelId = () => `m${Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join('')}`;
@@ -68,25 +67,11 @@ function ConnectionFields({ id, locality, isMain, draft, onChange, models, probe
       <label>Embedding model <small>Serves /v1/embeddings, always on this machine (optional)</small>
         <input value={draft.embeddingModel} onChange={event => set({ embeddingModel: event.target.value })} list={listId} placeholder="e.g. nomic-embed-text" spellCheck={false}/></label>
     </>}
-    <details className="thinking-fields" open={draft.thinkStyle !== 'none'}>
-      <summary>Thinking{draft.thinkStyle !== 'none' ? ` · ${draft.thinkLevel === 'default' ? 'server default' : draft.thinkLevel}` : ''}</summary>
-      <p className="settings-hint">For models that think before they answer (Qwen3, DeepSeek-R1, gpt-oss, GPT-5 …). Nothing is sent until you choose how this model is told. The difficulty check and conversation memory always ask it not to think.</p>
-      <label>How to control thinking
-        <select value={draft.thinkStyle} onChange={event => set({ thinkStyle: event.target.value as ThinkStyle, ...(event.target.value !== 'none' && draft.thinkLevel === 'default' ? { thinkLevel: 'off' as ThinkLevel } : {}) })}>
-          <option value="none">Do not send anything</option>
-          <option value="chat_template">enable_thinking in chat_template_kwargs (Qwen3 on vLLM, SGLang, TensorRT-LLM)</option>
-          <option value="reasoning_effort">reasoning_effort (OpenAI, GPT-5, LiteLLM and similar)</option>
-          <option value="no_think">/no_think or /think added to the message (Qwen3 text switch)</option>
-        </select></label>
-      {draft.thinkStyle !== 'none' && <label>Thinking for answers
-        <select value={draft.thinkLevel} onChange={event => set({ thinkLevel: event.target.value as ThinkLevel })}>
-          <option value="default">Server default</option><option value="off">Off</option>
-          <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
-        </select>
-        <small>{draft.thinkStyle === 'chat_template' || draft.thinkStyle === 'no_think' ? 'These models only switch thinking on or off; Low, Medium and High all mean on.' : 'Off sends reasoning_effort "none"; older models only accept low, medium and high.'}</small></label>}
-      <label className="check"><input type="checkbox" checked={draft.thinkPrefilled} onChange={event => set({ thinkPrefilled: event.target.checked })}/>
-        <span>The thinking starts in the prompt, so the answer shows only a closing <code>&lt;/think&gt;</code> <small>(Qwen3.5, Qwen3 Thinking-2507). Needed to hide the thinking while the answer streams.</small></span></label>
-    </details>
+    <label>Thinking <small>For models that think before they answer (Qwen3, DeepSeek-R1, GPT-5 …). Default leaves it to the model.</small>
+      <select value={draft.thinkLevel} onChange={event => set({ thinkLevel: event.target.value as ThinkLevel })}>
+        <option value="default">Default</option><option value="off">Off</option>
+        <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+      </select></label>
     {isCloud && <div className="cost-row">
       <label>Input $ / 1M tokens<NumberStepper value={draft.inputCost} onChange={inputCost => set({ inputCost })} step={costStep} min={0} decimals={2} placeholder="0" label="Input price"/></label>
       <label>Output $ / 1M tokens<NumberStepper value={draft.outputCost} onChange={outputCost => set({ outputCost })} step={costStep} min={0} decimals={2} placeholder="0" label="Output price"/></label>
@@ -140,7 +125,6 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<'hybrid' | 'llm'>('hybrid');
   const [cloudFrom, setCloudFrom] = useState<CloudFrom>('moderate');
-  const [hideThinking, setHideThinking] = useState(true);
   const [models, setModels] = useState<Record<string, string[]>>({});
   const [probes, setProbes] = useState<Record<string, Probe>>({});
   const [saving, setSaving] = useState(false);
@@ -152,7 +136,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     setDrafts({ local: toDraft(config.local), cloud: toDraft(config.cloud) });
     setExtras((config.extra ?? []).map(extra => ({ id: extra.id, name: extra.name, locality: extra.locality, draft: toDraft(extra) })));
     setRules(config.rules ?? []);
-    setCloudEnabled(config.cloud_enabled); setAnalysisMode(config.analysis_mode); setCloudFrom(config.cloud_from ?? 'moderate'); setHideThinking(config.hide_thinking ?? true);
+    setCloudEnabled(config.cloud_enabled); setAnalysisMode(config.analysis_mode); setCloudFrom(config.cloud_from ?? 'moderate');
   }
 
   useEffect(() => {
@@ -190,7 +174,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
     return {
       base_url: draft.baseUrl.trim(), model: draft.model.trim(), alias: draft.alias.trim(),
       ...(draft.apiKey !== undefined ? { api_key: draft.apiKey } : {}),
-      reasoning: { level: draft.thinkLevel, style: draft.thinkStyle, prefilled: draft.thinkPrefilled },
+      reasoning: { level: draft.thinkLevel },
       ...(kind === 'local' ? { analysis_model: draft.analysisModel.trim(), embedding_model: draft.embeddingModel.trim() } : {}),
       ...(kind !== 'local' ? { input_cost_per_million: Number(draft.inputCost || 0), output_cost_per_million: Number(draft.outputCost || 0) } : {}),
     };
@@ -202,7 +186,7 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
       const response = await apiFetch('/v1/ugen/models', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          local: connection(drafts!.local, 'local'), cloud: connection(drafts!.cloud, 'cloud'), cloud_enabled: cloudEnabled, analysis_mode: analysisMode, cloud_from: cloudFrom, hide_thinking: hideThinking,
+          local: connection(drafts!.local, 'local'), cloud: connection(drafts!.cloud, 'cloud'), cloud_enabled: cloudEnabled, analysis_mode: analysisMode, cloud_from: cloudFrom,
           extra: extras.map(extra => ({ id: extra.id, name: extra.name.trim() || 'Model', locality: extra.locality, ...connection(extra.draft, 'extra') })),
           rules: rules.map(rule => ({ ...rule, name: rule.name.trim() || 'Rule' })),
         }),
@@ -273,12 +257,6 @@ function ModelsPage({ onSaved }: { onSaved: () => void }) {
         <label className={analysisMode === 'hybrid' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'hybrid'} onChange={() => setAnalysisMode('hybrid')}/><span><b>Fast</b><small>Rules settle clear cases on their own, such as small talk, definitions, short rewrites or explicit design and debugging work. The local model judges everything else, so a word like “design” alone never decides.</small></span></label>
         <label className={analysisMode === 'llm' ? 'selected' : ''}><input type="radio" name="analysis-mode" checked={analysisMode === 'llm'} onChange={() => setAnalysisMode('llm')}/><span><b>Thorough</b><small>The local model judges every request’s difficulty and task first. Catches short hard questions and makes task-based rules reliable, at the cost of one extra local call each time.</small></span></label>
       </div>
-    </div>
-
-    <div className="settings-section">
-      <h3>Thinking text</h3>
-      <p>Some models write their thinking in the answer, between <code>&lt;think&gt;</code> and <code>&lt;/think&gt;</code> (or <code>[THINK]</code>…<code>[/THINK]</code>). Hiding it leaves only the answer, in the dashboard and in the API. Set how each model is told to think in its own settings above.</p>
-      <label className="switch"><input type="checkbox" checked={hideThinking} onChange={event => setHideThinking(event.target.checked)}/><span aria-hidden="true"/>{hideThinking ? 'Hidden' : 'Shown'}</label>
     </div>
 
     <div className="settings-section">

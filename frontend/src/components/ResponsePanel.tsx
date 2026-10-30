@@ -59,7 +59,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 type Props = {
-  user: User | null; turns: ConversationTurn[]; memory?: ConversationMemory; busy: boolean; memoryBusy: boolean; streamingText: string;
+  user: User | null; turns: ConversationTurn[]; memory?: ConversationMemory; busy: boolean; memoryBusy: boolean; streamingText: string; streamingThinking: string;
   onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void;
   onRegenerate: (turnId: string) => void; onEdit: (turnId: string, text: string) => void;
   onExport: (format: 'markdown' | 'json') => void;
@@ -71,7 +71,15 @@ type Props = {
   onShare?: () => void;
 };
 
-function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, onFeedback, onDeleteTurn, onRegenerate, onEdit, onExport, setup, onOpenModels, shared, onShare }: Props) {
+/** The model's thinking: folded away, small and grey, so the answer stays the focus. */
+function ThinkingBlock({ text, live = false }: { text: string; live?: boolean }) {
+  return <details className={`thinking-block ${live ? 'live' : ''}`}>
+    <summary>{live ? 'Thinking…' : 'Thought process'}</summary>
+    <div className="thinking-text">{text}</div>
+  </details>;
+}
+
+function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, streamingThinking, onFeedback, onDeleteTurn, onRegenerate, onEdit, onExport, setup, onOpenModels, shared, onShare }: Props) {
   const threadRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<{ turnId: string; text: string } | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -82,7 +90,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
   // Before paint, so new text never shows below the fold for a frame first.
   useLayoutEffect(() => {
     if (threadRef.current && followRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
-  }, [turns.length, turns.at(-1)?.result?.content, streamingText]);
+  }, [turns.length, turns.at(-1)?.result?.content, streamingText, streamingThinking]);
   const hasTurns = turns.length > 0;
   // In a shared chat, messages from other members show their name.
   const otherAuthor = (turn: ConversationTurn) => shared && turn.author && turn.author.toLowerCase() !== user?.username.toLowerCase() ? turn.author : null;
@@ -145,6 +153,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
                 <button className={turn.feedback === -1 ? 'selected' : ''} aria-pressed={turn.feedback === -1} onClick={() => onFeedback(turn.id, -1)} title="Not helpful">👎</button>
               </span>}
             </span></div>
+            {result.reasoning && <ThinkingBlock text={result.reasoning}/>}
             <div className="markdown-wrap"><Markdown text={result.content}/></div>
             <div className="result-foot">
               {result.stopped ? <span className="fallback-note">Stopped</span> : <><span>Task: {result.routing.task_type}</span><span>Complexity: {result.routing.complexity}</span></>}
@@ -156,7 +165,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, o
             </div>
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>
-          <img className="message-avatar assistant-avatar" src={kiriAvatar} alt="" aria-hidden="true"/><div className="message-body"><div className="message-author"><b>Kiri</b></div>{busy && index === turns.length - 1 && streamingText
+          <img className="message-avatar assistant-avatar" src={kiriAvatar} alt="" aria-hidden="true"/><div className="message-body"><div className="message-author"><b>Kiri</b></div>{busy && index === turns.length - 1 && streamingThinking && <ThinkingBlock text={streamingThinking} live/>}{busy && index === turns.length - 1 && streamingText
             ? <div className="markdown-wrap streaming"><StreamingMarkdown text={streamingText}/></div>
             : <p>{busy && index === turns.length - 1 ? (memoryBusy ? 'Saving older messages to memory…' : 'Analyzing and generating a response…') : 'No response received for this message'}</p>}</div>
         </article>}

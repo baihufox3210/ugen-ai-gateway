@@ -90,13 +90,6 @@ async def gateway_config(
         ],
         "rules": [rule.name for rule in engine.config.rules],
         "never_cloud": engine.config.privacy.never_cloud,
-        # Whether any model can be told to think more or less, so the dashboard
-        # shows its thinking switch.
-        "thinking_control": any(
-            model.reasoning.style != "none"
-            for provider in engine.config.providers
-            for model in provider.models
-        ),
     }
 
 

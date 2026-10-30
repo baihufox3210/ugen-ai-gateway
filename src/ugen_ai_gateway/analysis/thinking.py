@@ -23,39 +23,20 @@ _OPENERS = {open_: close for open_, close in TAGS}
 _ALL_TAGS = [tag for pair in TAGS for tag in pair]
 
 
+def split_thinking(text: str) -> tuple[str, str]:
+    """(thinking, answer) of a whole reply."""
+    filtered = ThinkingFilter()
+    answer = filtered.feed(text) + filtered.flush()
+    thinking = filtered.take_thinking()
+    if filtered.retracted:
+        thinking = filtered.retracted_text + thinking
+    return thinking.strip(), answer.strip()
+
+
 def strip_thinking(text: str) -> str:
     """``text`` without its thinking: complete blocks, a block cut off by the
     end of the text, and a thinking part that ends with a lone closing tag."""
-    lowered = text.lower()
-    out: list[str] = []
-    position = 0
-    while position < len(text):
-        found = min(
-            ((lowered.find(open_, position), open_) for open_ in _OPENERS),
-            key=lambda item: (item[0] == -1, item[0]),
-        )
-        index, opener = found
-        if index == -1:
-            out.append(text[position:])
-            break
-        out.append(text[position:index])
-        closing = _OPENERS[opener]
-        end = lowered.find(closing, index + len(opener))
-        if end == -1:
-            break  # the thinking was cut off: nothing after it is an answer
-        position = end + len(closing)
-    result = "".join(out)
-    # Only a closing tag: everything before the last one was thinking.
-    lowered = result.lower()
-    cut = max(
-        (
-            lowered.rfind(close) + len(close)
-            for close in _OPENERS.values()
-            if close in lowered
-        ),
-        default=0,
-    )
-    return result[cut:].strip()
+    return split_thinking(text)[1]
 
 
 class ThinkingFilter:
@@ -74,7 +55,16 @@ class ThinkingFilter:
         self._buffer = ""
         self._trim = start_inside
         self._emitted = False
+        self._shown: list[str] = []  # answer text passed on so far
+        self._thinking: list[str] = []
         self.retracted = False
+        # The text passed on that turned out to be thinking (see ``retracted``).
+        self.retracted_text = ""
+
+    def take_thinking(self) -> str:
+        """The thinking removed since the last call."""
+        text, self._thinking = "".join(self._thinking), []
+        return text
 
     def feed(self, chunk: str) -> str:
         self._buffer += chunk
@@ -91,16 +81,16 @@ class ThinkingFilter:
                 end = lowered.find(self._close)
                 if end == -1:
                     # Still thinking: keep only what could be the start of the tag.
-                    keep = _partial_tail(lowered, [self._close])
-                    self._buffer = (
-                        self._buffer[len(self._buffer) - keep :] if keep else ""
-                    )
-                    if final:
-                        self._buffer = ""
+                    keep = 0 if final else _partial_tail(lowered, [self._close])
+                    cut = len(self._buffer) - keep
+                    self._thinking.append(self._buffer[:cut])
+                    self._buffer = self._buffer[cut:]
                     break
+                self._thinking.append(self._buffer[:end])
                 self._buffer = self._buffer[end + len(self._close) :]
                 self._close = None
-                self._trim = True
+                # The blank lines after the thinking go; one inside an answer stays.
+                self._trim = not self._emitted
                 continue
             hit = min(
                 ((lowered.find(tag), tag) for tag in _ALL_TAGS),
@@ -121,6 +111,8 @@ class ThinkingFilter:
                 # A closing tag with no block open: what came before was thinking,
                 # including what this very call has produced so far.
                 out.clear()
+                self.retracted_text = "".join(self._shown)
+                self._shown = []
                 self.retracted, self._emitted, self._trim = True, False, True
         return "".join(out)
 
@@ -131,6 +123,7 @@ class ThinkingFilter:
                 self._trim = False
         if text:
             self._emitted = True
+            self._shown.append(text)
         return text
 
 
