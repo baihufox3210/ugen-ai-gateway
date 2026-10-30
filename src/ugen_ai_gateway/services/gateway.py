@@ -882,7 +882,8 @@ class GatewayService:
         Difficulty and task type come from the latest user message, so an
         earlier complex question does not send every later one to the cloud.
         Personal data is looked for in every user and system message (system
-        messages carry conversation memory). Each message is analyzed once and
+        messages carry conversation memory), except the administrators' own
+        system prompt, which is not what anyone typed and is long. Each message is analyzed once and
         cached, so a long conversation only costs one model call per turn.
         """
         started_at = perf_counter()
@@ -904,7 +905,9 @@ class GatewayService:
                 [
                     *(
                         text
-                        for text in _analysis_texts(request.messages)
+                        for text in _analysis_texts(
+                            request.messages[request.trusted_messages :]
+                        )
                         if text != message or latest == message
                     ),
                     latest,
