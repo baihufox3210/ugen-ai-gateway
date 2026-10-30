@@ -27,7 +27,11 @@ from ugen_ai_gateway.analysis.redaction import (
 )
 from ugen_ai_gateway.analysis.rules import rule_analysis
 from ugen_ai_gateway.analysis.schemas import RequestAnalysis, TokenUsage
-from ugen_ai_gateway.analysis.thinking import ThinkingFilter, strip_thinking
+from ugen_ai_gateway.analysis.thinking import (
+    ThinkingFilter,
+    split_thinking,
+    strip_thinking,
+)
 from ugen_ai_gateway.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -37,7 +41,6 @@ from ugen_ai_gateway.api.schemas import (
 )
 from ugen_ai_gateway.config import Settings
 from ugen_ai_gateway.providers.base import Locality, ModelProvider
-from ugen_ai_gateway.providers.reasoning import request_options
 from ugen_ai_gateway.routing.config import RoutingConfig, config_from_settings
 from ugen_ai_gateway.routing.engine import Route, RuleEngine
 from ugen_ai_gateway.services.errors import (
@@ -109,6 +112,17 @@ class _Generated:
     model: str
     usage: TokenUsage | None
     finish_reason: str | None
+    # The model's thinking, kept apart from the answer ("" when not shown).
+    reasoning: str = ""
+
+
+def _reasoning_text(part: Any) -> str:
+    """Thinking a server sends in a field of its own (a reasoning parser)."""
+    for name in ("reasoning_content", "reasoning"):
+        value = getattr(part, name, None)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 def _fallback_event(
@@ -279,25 +293,20 @@ class GatewayService:
         transcript = "\n\n".join(
             f"{message['role'].upper()}: {message['content']}" for message in messages
         )
-        # Summarizing needs no thinking, and thinking text must not end up in it.
-        memory_options, memory_messages = request_options(
-            route.model.reasoning,
-            [
-                {"role": "system", "content": MEMORY_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"Current memory:\n{previous or '(empty)'}\n\n"
-                    f"Older messages:\n{transcript}",
-                },
-            ],
-            analysis=True,
-        )
         try:
             completion = await self._provider_for(route).complete(
                 model=route.model.id,
-                messages=memory_messages,
+                messages=[
+                    {"role": "system", "content": MEMORY_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": f"Current memory:\n{previous or '(empty)'}\n\n"
+                        f"Older messages:\n{transcript}",
+                    },
+                ],
                 temperature=0.2,
-                **memory_options,
+                # Summarizing needs no thinking, and its text must not end up in it.
+                thinking=route.model.reasoning.thinking(analysis=True),
             )
         except TimeoutError as exc:
             raise ProviderTimeout("Local model timed out") from exc
@@ -560,6 +569,7 @@ class GatewayService:
             id=record.id,
             model=resolved_model,
             content=content,
+            reasoning=result.reasoning or None,
             finish_reason=finish_reason,
             provider=prepared.locality,
             routing=RoutingInfo(
@@ -683,27 +693,35 @@ class GatewayService:
         restore = prepared.vault is not None
         reasoning = prepared.route.model.reasoning
         effort = request.reasoning_effort
-        if effort is None and request.thinking and reasoning.style != "none":
+        if effort is None and request.thinking:
             effort = "none" if request.thinking == "off" else request.thinking
-        extra, messages = request_options(reasoning, prepared.messages, effort=effort)
-        options = {**options, **extra}
-        hide = self._engine.config.hide_thinking
+        thinking = reasoning.thinking(effort)
+        show = self._engine.config.show_thinking
+        messages = prepared.messages
         try:
             if stream:
                 restorer = StreamRestorer(prepared.vault) if restore else None  # type: ignore[arg-type]
-                filtered = (
-                    ThinkingFilter(start_inside=reasoning.thinks(effort))
-                    if hide
-                    else None
-                )
+                filtered = ThinkingFilter(start_inside=reasoning.thinks(effort))
                 parts: list[str] = []
+                thoughts: list[str] = []
                 model = prepared.model
                 usage: TokenUsage | None = None
                 finish_reason: str | None = None
+
+                def thought(text: str) -> GatewayEvent | None:
+                    """Thinking is shown on its own, never mixed into the answer."""
+                    if not text or not show:
+                        return None
+                    if restore:
+                        text = prepared.vault.restore(text)  # type: ignore[union-attr]
+                    thoughts.append(text)
+                    return GatewayEvent("thinking_delta", {"content": text})
+
                 async for chunk in prepared.provider.stream(
                     model=prepared.model,
                     messages=messages,
                     temperature=request.temperature,
+                    thinking=thinking,
                     **options,
                 ):
                     model = getattr(chunk, "model", None) or model
@@ -712,14 +730,21 @@ class GatewayService:
                         finish_reason = (
                             getattr(choice, "finish_reason", None) or finish_reason
                         )
+                        # A server with a reasoning parser sends thinking apart.
+                        if event := thought(_reasoning_text(choice.delta)):
+                            yield event
                         text = getattr(choice.delta, "content", None)
-                        if text and filtered is not None:
+                        if text:
                             text = filtered.feed(text)
                             if filtered.retracted:
-                                # The text sent so far was thinking: take it back.
+                                # What was sent as the answer was thinking: take it back.
                                 filtered.retracted = False
                                 parts.clear()
                                 yield GatewayEvent("reset", {})
+                                if event := thought(filtered.retracted_text):
+                                    yield event
+                            if event := thought(filtered.take_thinking()):
+                                yield event
                         if text and restorer is not None:
                             text = restorer.feed(text)
                         if text and guard is not None:
@@ -727,8 +752,11 @@ class GatewayService:
                         if text:
                             parts.append(text)
                             yield GatewayEvent("delta", {"content": text})
+                tail = filtered.flush()
+                if event := thought(filtered.take_thinking()):
+                    yield event
                 rest = restorer.flush() if restorer is not None else ""
-                if filtered is not None and (tail := filtered.flush()):
+                if tail:
                     rest = (
                         restorer.feed(tail) if restorer is not None else tail
                     ) + rest
@@ -737,13 +765,16 @@ class GatewayService:
                 if rest:
                     parts.append(rest)
                     yield GatewayEvent("delta", {"content": rest})
-                yield _Generated("".join(parts), model, usage, finish_reason)
+                yield _Generated(
+                    "".join(parts), model, usage, finish_reason, "".join(thoughts)
+                )
                 return
 
             completion = await prepared.provider.complete(
                 model=prepared.model,
                 messages=messages,
                 temperature=request.temperature,
+                thinking=thinking,
                 **options,
             )
         except TimeoutError as exc:
@@ -756,13 +787,15 @@ class GatewayService:
 
         if not completion.choices:
             raise RuntimeError("Model provider returned no choices")
-        content = completion.choices[0].message.content
+        message = completion.choices[0].message
+        content = message.content
         if not isinstance(content, str):
             raise TypeError("Model provider returned no text content")
-        if hide:
-            content = strip_thinking(content)
+        thoughts_text, content = split_thinking(content)
+        thoughts_text = (_reasoning_text(message) + "\n" + thoughts_text).strip()
         if restore:
             content = prepared.vault.restore(content)  # type: ignore[union-attr]
+            thoughts_text = prepared.vault.restore(thoughts_text)  # type: ignore[union-attr]
         if guard is not None:
             content = guard.check(content)
         yield _Generated(
@@ -770,6 +803,7 @@ class GatewayService:
             completion.model,
             _token_usage(getattr(completion, "usage", None)),
             getattr(completion.choices[0], "finish_reason", None),
+            thoughts_text if show else "",
         )
 
     @staticmethod

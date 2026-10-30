@@ -96,8 +96,8 @@ class StoredModels(BaseModel):
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
     # The lowest difficulty the cloud model answers in Auto mode.
     cloud_from: Literal["moderate", "complex"] = "moderate"
-    # Remove thinking text (<think>...</think>) from answers.
-    hide_thinking: bool = True
+    # Show the model's thinking, collapsed, beside its answer.
+    show_thinking: bool = True
     extra: list[ExtraModel] = Field(default_factory=list, max_length=20)
     rules: list[RouteRule] = Field(default_factory=list, max_length=50)
 
@@ -269,7 +269,7 @@ def to_routing(stored: StoredModels) -> RoutingConfig:
         defaults=Defaults(local=Target(provider="local"), cloud=cloud_target),
         analysis=Target(provider="local", model=local.analysis_model or None),
         rules=rules,
-        hide_thinking=stored.hide_thinking,
+        show_thinking=stored.show_thinking,
     )
 
 
@@ -291,7 +291,7 @@ def public_view(stored: StoredModels) -> dict[str, Any]:
         "cloud": masked(stored.cloud),
         "analysis_mode": stored.analysis_mode,
         "cloud_from": stored.cloud_from,
-        "hide_thinking": stored.hide_thinking,
+        "show_thinking": stored.show_thinking,
         "extra": [masked(model) for model in stored.extra],
         "rules": [rule.model_dump() for rule in stored.rules],
     }

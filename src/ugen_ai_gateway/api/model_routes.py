@@ -74,7 +74,7 @@ class ModelsUpdate(BaseModel):
     cloud: CloudUpdate = Field(default_factory=CloudUpdate)
     analysis_mode: Literal["hybrid", "llm"] = "hybrid"
     cloud_from: Literal["moderate", "complex"] = "moderate"
-    hide_thinking: bool = True
+    show_thinking: bool = True
     extra: list[ExtraUpdate] = Field(default_factory=list, max_length=20)
     rules: list[RouteRule] = Field(default_factory=list, max_length=50)
 
@@ -160,7 +160,7 @@ async def save_models(
             cloud=cloud,
             analysis_mode=body.analysis_mode,
             cloud_from=body.cloud_from,
-            hide_thinking=body.hide_thinking,
+            show_thinking=body.show_thinking,
             extra=extra,
             rules=body.rules,
         )
@@ -194,7 +194,7 @@ async def save_models(
         cloud_model=models.cloud.model,
         analysis_mode=models.analysis_mode,
         cloud_from=models.cloud_from,
-        hide_thinking=models.hide_thinking,
+        show_thinking=models.show_thinking,
         thinking={
             "local": models.local.reasoning.model_dump(),
             "cloud": models.cloud.reasoning.model_dump(),

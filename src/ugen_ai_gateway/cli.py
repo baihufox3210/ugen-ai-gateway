@@ -116,7 +116,7 @@ async def _diagnose_analysis(
     print(
         f"   max reply tokens     {analyzer._max_tokens} (ANALYSIS_MAX_TOKENS={settings.analysis_max_tokens})"
     )
-    print(f"   hide thinking        {service.routing.hide_thinking}")
+    print(f"   show thinking        {service.routing.show_thinking}")
 
     calls: list[int] = []
     original = provider.complete

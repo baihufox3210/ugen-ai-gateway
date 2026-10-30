@@ -236,7 +236,17 @@ async def create_chat_completion(
                 "choices": [
                     {
                         "index": 0,
-                        "message": {"role": "assistant", "content": response.content},
+                        "message": {
+                            "role": "assistant",
+                            "content": response.content,
+                            # The model's thinking, apart from the answer (as
+                            # DeepSeek's API does), when it showed any.
+                            **(
+                                {"reasoning_content": response.reasoning}
+                                if response.reasoning
+                                else {}
+                            ),
+                        },
                         "finish_reason": response.finish_reason or "stop",
                     }
                 ],
@@ -267,7 +277,9 @@ async def create_chat_completion(
                 routing["fallback_from"] = event.data["from"]
             elif event.type == "generation_started":
                 model = str(event.data.get("model", ""))
-            elif event.type == "delta" or event.response is not None:
+            elif (
+                event.type in ("delta", "thinking_delta") or event.response is not None
+            ):
                 first = event
                 break
     except Exception as exc:  # noqa: BLE001 - every failure maps to an API error
@@ -325,6 +337,8 @@ async def _sse(
         async for event in events:
             if event.type == "delta":
                 yield chunk({"content": event.data["content"]})
+            elif event.type == "thinking_delta":
+                yield chunk({"reasoning_content": event.data["content"]})
             elif event.response is not None:
                 response = event.response
                 yield chunk(

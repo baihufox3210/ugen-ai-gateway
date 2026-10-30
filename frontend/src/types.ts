@@ -5,6 +5,8 @@ export type Thinking = 'default' | 'off' | 'low' | 'medium' | 'high';
 export type ChatResult = {
   id?: string;
   content: string;
+  /** The model's thinking, kept apart from the answer. */
+  reasoning?: string | null;
   model: string;
   provider: string;
   routing: {

@@ -54,6 +54,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const [provider, setProvider] = useState<Provider | null>(null);
   const [model, setModel] = useState('');
   const [streamingText, setStreamingText] = useState('');
+  const [streamingThinking, setStreamingThinking] = useState('');
   const [statsVersion, setStatsVersion] = useState(0);
   const [pii, setPii] = useState<PiiState | null>(null);
   const [analysisSource, setAnalysisSource] = useState<AnalysisSource | null>(null);
@@ -68,9 +69,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const [view, setView] = useState<View>('chat');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [providerSelection, setProviderSelection] = useState<ProviderSelection>(loadProviderSelection);
-  // The thinking switch under the message box; shown when a model can be told how much to think.
+  // The thinking switch under the message box.
   const [thinking, setThinking] = useState<Thinking>(loadThinking);
-  const [thinkingControl, setThinkingControl] = useState(false);
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const { conversations, setConversations, status: syncStatus, syncError, flush, refreshNow } = useConversations(user, busy);
   const [shareOpen, setShareOpen] = useState(false);
@@ -117,10 +117,10 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       try {
         const response = await apiFetch('/v1/ugen/config');
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
-          const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown; configured?: unknown; thinking_control?: unknown };
+          const candidate = await response.json() as { local_model?: unknown; cloud_model?: unknown; configured?: unknown };
           if (typeof candidate.local_model === 'string' && typeof candidate.cloud_model === 'string') {
             data = { local_model: candidate.local_model, cloud_model: candidate.cloud_model };
-            if (active) { setModelsReady(candidate.configured !== false); setThinkingControl(candidate.thinking_control === true); }
+            if (active) setModelsReady(candidate.configured !== false);
           }
         }
       } catch {
@@ -235,13 +235,14 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
     const save = (next: Conversation) => setConversations(current => [{ ...next, updatedAt: Date.now() }, ...current.filter(item => item.id !== conversationId)]);
 
     save({ ...conversation, turns: [...keptTurns, turn] });
-    setActiveId(conversationId); setPrompt(''); setStreamingText(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setFallbackFrom(null); setInjectionSignals([]); setError('');
+    setActiveId(conversationId); setPrompt(''); setStreamingText(''); setStreamingThinking(''); setPhase('sending'); setProvider(null); setModel(''); setPii(null); setAnalysisSource(null); setFallbackFrom(null); setInjectionSignals([]); setError('');
     const controller = new AbortController();
     abortRef.current = controller;
     const logId = newId();
     const logUpdate = (change: (entry: LogEntry) => LogEntry) => setRequestLog(current => current.map(entry => entry.id === logId ? change(entry) : entry));
     setRequestLog(current => [newEntry(logId, userText, providerSelection), ...current].slice(0, MAX_LOG_ENTRIES));
     let streamed = '';
+    let thought = '';
     // Show streamed text at most every STREAM_FRAME_MS: re-rendering the page
     // for every token made long answers stutter.
     let streamTimer = 0;
@@ -273,7 +274,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       const messages = requestMessages(conversation, [...keptTurns, turn]);
       const response = await apiFetch('/v1/ugen/chat/stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2, conversation_prompt: conversation.prompt ?? '', ...(thinkingControl && thinking !== 'default' ? { thinking } : {}) }),
+        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2, conversation_prompt: conversation.prompt ?? '', ...(thinking !== 'default' ? { thinking } : {}) }),
       });
       if (!response.ok) throw new Error(response.status === 401 ? 'Your session has ended. Sign in again.' : await errorMessage(response));
       if (!response.body) throw new Error('The server did not return a progress stream.');
@@ -287,7 +288,8 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
         if (event.type === 'guard' && event.kind === 'injection') setInjectionSignals(Array.isArray(event.signals) ? event.signals.map(String) : []);
         if (event.type === 'fallback') { setFallbackFrom(event.from === 'cloud' ? 'cloud' : 'local'); streamProvider = event.to === 'cloud' ? 'cloud' : 'local'; setProvider(streamProvider); }
         if (event.type === 'generation_started') { streamProvider = event.provider === 'cloud' ? 'cloud' : 'local'; streamModel = String(event.model ?? ''); setProvider(streamProvider); setModel(streamModel); setPhase('generating'); }
-        if (event.type === 'reset') { streamed = ''; setStreamingText(''); }
+        if (event.type === 'reset') { streamed = ''; setStreamingText(''); thought = ''; setStreamingThinking(''); }
+        if (event.type === 'thinking_delta') { thought += String(event.content ?? ''); setStreamingThinking(thought); }
         if (event.type === 'delta') { streamed += String(event.content ?? ''); if (!streamTimer) streamTimer = window.setTimeout(showStreamed, STREAM_FRAME_MS); }
         if (event.type === 'result') received.result = event.data as ChatResult;
         if (event.type === 'error') streamError = String(event.detail ?? 'The model request failed.');
@@ -305,11 +307,11 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       logUpdate(entry => finishEntry(entry, finalResult));
       // The masked values stay in the log only; the saved conversation keeps just the counts.
       const { redactions: _masked, ...savedRouting } = finalResult.routing;
-      updateTurn(conversationId, turnId, { ...finalResult, routing: savedRouting }); setStreamingText(''); setStatsVersion(version => version + 1);
+      updateTurn(conversationId, turnId, { ...finalResult, routing: savedRouting }); setStreamingText(''); setStreamingThinking(''); setStatsVersion(version => version + 1);
       setProvider(finalResult.provider === 'cloud' ? 'cloud' : 'local'); setModel(finalResult.model);
       setPii(piiFromResult(finalResult)); setAnalysisSource(finalResult.routing.analysis_source ?? null); setFallbackFrom(finalResult.routing.fallback_from ?? null); setPhase('complete');
     } catch (cause) {
-      setMemoryBusy(false); setStreamingText(''); setStatsVersion(version => version + 1);
+      setMemoryBusy(false); setStreamingText(''); setStreamingThinking(''); setStatsVersion(version => version + 1);
       const message = cause instanceof Error ? cause.message : 'Could not reach the gateway.';
       logUpdate(entry => failEntry(entry, controller.signal.aborted ? 'stopped by the user' : message, controller.signal.aborted));
       if (streamed) {
@@ -361,9 +363,9 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       <button role="tab" aria-selected={view === 'monitor'} className={view === 'monitor' ? 'selected' : ''} onClick={() => setView('monitor')}><i aria-hidden="true">⇄</i>Routing monitor<span className={`tab-status ${flowStatus}`}/></button>
     </nav>
     <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion} log={requestLog} onClearLog={() => setRequestLog([])}/></section><Footer/></main>
-    <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}
+    <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} streamingThinking={streamingThinking} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}
       promptSet={Boolean(conversationPrompt)} onOpenPrompt={user ? () => setPromptOpen(true) : undefined}
-      thinking={thinkingControl ? thinking : undefined} onThinkingChange={setThinking}/></section>
+      thinking={thinking} onThinkingChange={setThinking}/></section>
     {promptOpen && <ConversationPromptDialog prompt={conversationPrompt} onClose={() => setPromptOpen(false)} onSave={next => {
       if (activeConversation) setConversations(current => current.map(item => item.id === activeConversation.id ? { ...item, prompt: next || undefined } : item));
       else setDraftPrompt(next);

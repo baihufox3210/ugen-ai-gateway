@@ -136,6 +136,8 @@ class ChatResponse(BaseModel):
     id: str = ""
     model: str
     content: str
+    # The model's thinking, apart from the answer, when it showed any.
+    reasoning: str | None = None
     finish_reason: str | None = None
     provider: str
     routing: RoutingInfo
