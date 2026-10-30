@@ -21,11 +21,6 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
   return <article className="panel prompt-panel">
     <div className="composer-topline">
       <span className="eyebrow">YOUR MESSAGE</span>
-      <span className="char-count">{prompt.length.toLocaleString()} <i>/ 32,000</i></span>
-    </div>
-    <label className="sr-only" htmlFor="request-prompt">Your message</label>
-    <textarea id="request-prompt" rows={3} value={prompt} onChange={event => onPromptChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(); } }} maxLength={32000} disabled={busy} placeholder="Type a message… (Enter to send, Shift + Enter for a new line)"/>
-    <div className="prompt-footer">
       <div className="provider-switch" role="radiogroup" aria-label="Model selection">
         {PROVIDER_OPTIONS.map(option => {
           const unavailable = option.value === 'cloud' && !cloudAvailable;
@@ -37,12 +32,17 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
           </button>;
         })}
       </div>
-      {thinking && onThinkingChange && <label className="thinking-switch" title="How much the model thinks before it answers. Default leaves it to the model's own setting.">
+      <span className="char-count">{prompt.length.toLocaleString()} <i>/ 32,000</i></span>
+    </div>
+    <label className="sr-only" htmlFor="request-prompt">Your message</label>
+    <textarea id="request-prompt" rows={3} value={prompt} onChange={event => onPromptChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(); } }} maxLength={32000} disabled={busy} placeholder="Type a message… (Enter to send, Shift + Enter for a new line)"/>
+    <div className="prompt-footer">
+      {thinking && onThinkingChange ? <label className="thinking-switch" title="How much the model thinks before it answers. Default leaves it to the model's own setting.">
         <span>Thinking</span>
         <select value={thinking} onChange={event => onThinkingChange(event.target.value as Thinking)} disabled={busy} aria-label="Thinking">
           {THINKING_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
-      </label>}
+      </label> : <span/>}
       <div className="prompt-actions">{onOpenPrompt && <button type="button" className={`conversation-prompt-button ${promptSet ? 'set' : ''}`} onClick={onOpenPrompt} disabled={busy} title="Prompt for this conversation">✎ {promptSet ? 'Prompt set' : 'Prompt'}</button>}{prompt && <button className="clear-draft" onClick={onClear} disabled={busy}>Clear draft</button>}{busy
         ? <button className="send-button stop-button" onClick={onStop} title="Stop generating"><i className="spinner"/> Stop</button>
         : <button className="send-button" onClick={onSubmit} disabled={!prompt.trim()}>Send <span>↗</span></button>}</div></div>
