@@ -794,6 +794,23 @@ the usual causes are a model that thinks and runs out of tokens before its
 answer (turn thinking off, or raise the limit) or one that wraps the JSON in
 text, which is accepted.
 
+**Finding out why the difficulty check fails.** Run the check on a short
+conversation with the gateway's own saved settings and see every call to the
+analysis model with exactly what it answered:
+
+```
+docker compose exec gateway python -m ugen_ai_gateway.cli diagnose-analysis \
+  "hello" "what can you do" --always-ask
+```
+
+Each message is analyzed as it would be in a real conversation, with the
+administrators' system prompt first. For each call it prints the options sent,
+the text sent, how long it took, the `finish_reason`, the token count and the
+reply as received, then the result or the error. A reply cut off with
+`finish_reason=length` or one that starts with thinking text is the usual
+cause; `--no-system-prompt` leaves the system prompt out, and `--always-ask`
+calls the model even when the rules could decide on their own.
+
 ### Routing rules and multiple models
 
 For more than one local and one cloud model, point `ROUTING_CONFIG` at a YAML

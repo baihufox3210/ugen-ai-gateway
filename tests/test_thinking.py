@@ -307,3 +307,54 @@ def test_the_dashboard_is_told_when_a_model_can_be_asked_to_think(monkeypatch) -
     assert (
         env.client.get(url, headers=bearer(token)).json()["thinking_control"] is False
     )
+
+
+def test_the_administrators_system_prompt_is_not_sent_to_the_analysis_model() -> None:
+    from tests.test_gateway import FakeAnalyzer, make_service
+    from ugen_ai_gateway.api.schemas import ChatRequest
+
+    analyzer = FakeAnalyzer()
+    service, _, _, _ = make_service(analyzer=analyzer, analysis_mode="llm")
+    request = ChatRequest(
+        messages=[
+            {"role": "system", "content": "You are Kiri, the assistant. " * 40},
+            {"role": "system", "content": "Earlier: we talked about rotas."},
+            {"role": "user", "content": "what can you do"},
+        ],
+        trusted_messages=1,
+    )
+
+    asyncio.run(service._analyze(request, "what can you do"))
+
+    sent = " ".join(analyzer.inputs)
+    assert "You are Kiri" not in sent
+    assert (
+        "rotas" in sent and "what can you do" in sent
+    )  # memory and the message still are
+
+
+def test_the_diagnosis_command_shows_each_call_and_the_raw_answer(
+    monkeypatch, capsys
+) -> None:
+    from tests.test_gateway import FakeAnalyzer, make_service
+    from ugen_ai_gateway import cli, dependencies
+
+    service, local, _, _ = make_service(analysis_mode="llm")
+    provider = FakeProvider()
+    provider.completion.choices[0].message = SimpleNamespace(
+        content="Thinking Process: ...", reasoning_content=None
+    )
+    provider.completion.choices[0].finish_reason = "length"
+    service._analyzer = RequestAnalyzer(provider=provider, model="qwen", max_tokens=64)  # type: ignore[arg-type]
+    monkeypatch.setattr(dependencies, "get_gateway_service", lambda: service)
+    monkeypatch.setattr(dependencies, "get_usage_store", lambda: None)
+    del local, FakeAnalyzer
+
+    asyncio.run(
+        cli._diagnose_analysis(["hello"], with_system_prompt=True, always_ask=True)
+    )
+
+    shown = capsys.readouterr().out
+    assert "finish_reason=length" in shown and "cut off by the token limit" in shown
+    assert "Thinking Process: ..." in shown and "FAILED" in shown
+    assert "'max_tokens': 64" in shown
