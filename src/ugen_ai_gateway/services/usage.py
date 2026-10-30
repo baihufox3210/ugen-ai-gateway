@@ -137,6 +137,17 @@ CREATE TABLE IF NOT EXISTS shared_chat_members (
 );
 CREATE INDEX IF NOT EXISTS shared_chat_members_user
     ON shared_chat_members (user_id);
+CREATE TABLE IF NOT EXISTS tool_items (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT REFERENCES users (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    config TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS tool_items_name
+    ON tool_items (COALESCE(owner_id, ''), kind, name);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -729,6 +740,101 @@ class UsageStore:
                 "updated_at = excluded.updated_at",
                 (key, json.dumps(value), time.time()),
             )
+
+    # Tools, MCP servers and agents people define. ``owner_id`` None means
+    # shared by the administrators, visible to everyone. ``config`` is JSON;
+    # whoever calls these seals secrets in it first.
+
+    async def list_tool_items(
+        self, user_id: str | None, kind: str | None = None
+    ) -> list[dict[str, Any]]:
+        """What ``user_id`` may use: their own and the shared ones."""
+        return await asyncio.to_thread(self._list_tool_items, user_id, kind)
+
+    def _list_tool_items(
+        self, user_id: str | None, kind: str | None
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM tool_items WHERE (owner_id IS NULL OR owner_id = ?) "
+                "AND (? IS NULL OR kind = ?) ORDER BY owner_id IS NULL, name",
+                (user_id, kind, kind),
+            ).fetchall()
+        return [_tool_item(row) for row in rows]
+
+    async def get_tool_item(self, item_id: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._get_tool_item, item_id)
+
+    def _get_tool_item(self, item_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM tool_items WHERE id = ?", (item_id,)
+            ).fetchone()
+        return _tool_item(row) if row else None
+
+    async def save_tool_item(
+        self,
+        *,
+        item_id: str | None,
+        owner_id: str | None,
+        kind: str,
+        name: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create an item, or replace the one called ``item_id``. Raises
+        ``ValueError`` when the owner already has one of that kind and name."""
+        return await asyncio.to_thread(
+            self._save_tool_item, item_id, owner_id, kind, name, config
+        )
+
+    def _save_tool_item(
+        self,
+        item_id: str | None,
+        owner_id: str | None,
+        kind: str,
+        name: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = time.time()
+        item_id = item_id or secrets.token_hex(16)
+        try:
+            with self._lock, self._connection:
+                self._connection.execute(
+                    "INSERT INTO tool_items "
+                    "(id, owner_id, kind, name, config, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET "
+                    "name = excluded.name, config = excluded.config, "
+                    "updated_at = excluded.updated_at",
+                    (item_id, owner_id, kind, name, json.dumps(config), now, now),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"There is already a {kind} named {name}") from exc
+        saved = self._get_tool_item(item_id)
+        assert saved is not None
+        return saved
+
+    async def delete_tool_item(self, item_id: str) -> bool:
+        return await asyncio.to_thread(self._delete_tool_item, item_id)
+
+    def _delete_tool_item(self, item_id: str) -> bool:
+        with self._lock, self._connection:
+            return (
+                self._connection.execute(
+                    "DELETE FROM tool_items WHERE id = ?", (item_id,)
+                ).rowcount
+                > 0
+            )
+
+    async def count_tool_items(self, owner_id: str | None) -> int:
+        return await asyncio.to_thread(self._count_tool_items, owner_id)
+
+    def _count_tool_items(self, owner_id: str | None) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(*) AS n FROM tool_items WHERE owner_id IS ?",
+                (owner_id,),
+            ).fetchone()
+        return int(row["n"])
 
     # User accounts. Passwords are stored as salted scrypt hashes and session
     # tokens as SHA-256 hashes; neither secret is ever written in plain text.
@@ -1498,6 +1604,12 @@ class UsageStore:
                     "AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1 AND disabled = 0)"
                 )
             return deleted > 0
+
+
+def _tool_item(row: sqlite3.Row) -> dict[str, Any]:
+    item = dict(row)
+    item["config"] = json.loads(item["config"])
+    return item
 
 
 def _key_hash(secret: str) -> str:

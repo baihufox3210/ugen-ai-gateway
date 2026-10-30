@@ -77,6 +77,17 @@ class Settings(BaseSettings):
     # Retries with exponential backoff on connection errors, 429 and 5xx.
     max_retries: int = Field(default=2, ge=0, le=10)
 
+    # Tools a model can call (built-in, HTTP tools, MCP servers).
+    tools_enabled: bool = True
+    # Hosts tools may reach even when they are on a private network: comma
+    # separated names, or "*.suffix". Everything else must be a public address.
+    tool_allowed_hosts: str = ""
+    tool_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    # Longest tool result handed back to the model, in characters.
+    tool_max_result_chars: int = Field(default=12_000, gt=0)
+    # Tools, MCP servers and agents one account may have.
+    tool_items_per_user: int = Field(default=30, gt=0)
+
     # Automatic fallback when the routed provider is down (auto routing only).
     # Cloud -> local is privacy-safe. Local -> cloud only happens for requests
     # the local model analyzed and found free of personal data.

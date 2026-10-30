@@ -63,6 +63,10 @@ export function applyEvent(entry: LogEntry, event: GatewayEvent): LogEntry {
       ];
       return { ...add(...lines), provider, model: String(event.model ?? ''), masked };
     }
+    case 'tool_call':
+      return add(line('info', 'tool', `${event.name} ← ${String(event.arguments ?? '').slice(0, 200)}`));
+    case 'tool_result':
+      return add(line(event.ok ? 'ok' : 'warn', 'tool', `${event.name} ${event.ok ? 'returned' : 'failed'} in ${event.ms} ms · ${String(event.content ?? '').replace(/\s+/g, ' ').slice(0, 160)}`));
     case 'fallback':
       return add(line('warn', 'fallback', `${upper(event.from)} → ${upper(event.to)} (${event.to_provider}) · ${event.reason}`));
     case 'generation_started':

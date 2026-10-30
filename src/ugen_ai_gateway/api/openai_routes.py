@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -17,6 +17,7 @@ from ugen_ai_gateway.api.access import authenticate
 from ugen_ai_gateway.api.errors import http_error_for
 from ugen_ai_gateway.api.prompt_routes import with_prompts
 from ugen_ai_gateway.api.schemas import MAX_CHAT_MESSAGES, ChatRequest, ChatResponse
+from ugen_ai_gateway.api.tool_routes import with_tools
 from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.routing.engine import RuleEngine
 from ugen_ai_gateway.services.gateway import GatewayEvent, GatewayService
@@ -29,6 +30,8 @@ router = APIRouter()
 GatewayDependency = Annotated[GatewayService, Depends(get_gateway_service)]
 
 AUTO_MODEL = "ugen-auto"
+# "agent:<name>" runs a saved agent (see tool_routes).
+AGENT_PREFIX = "agent:"
 LOCAL_MODEL = "ugen-local"
 CLOUD_MODEL = "ugen-cloud"
 _ALIASES: dict[str, Literal["auto", "local", "cloud"]] = {
@@ -122,12 +125,13 @@ def to_gateway_request(
         raise _RequestRejected(
             400, "Tool calling is not supported yet", "unsupported_parameter"
         )
-    selection, model = resolve_model(body.model, engine)
-    payload: dict[str, Any] = {
-        "provider_selection": selection,
-        "model": model,
-        "messages": body.messages,
-    }
+    payload: dict[str, Any] = {"messages": body.messages}
+    if body.model.startswith(AGENT_PREFIX):
+        # A saved agent: its instructions, tools and model are added later.
+        payload.update(provider_selection="auto", agent=body.model[len(AGENT_PREFIX) :])
+    else:
+        selection, model = resolve_model(body.model, engine)
+        payload.update(provider_selection=selection, model=model)
     if body.temperature is not None:
         payload["temperature"] = body.temperature
     if body.reasoning_effort is not None:
@@ -190,13 +194,16 @@ async def list_models(
     store: Annotated[UsageStore | None, Depends(get_usage_store)],
     http_request: Request,
 ) -> dict[str, Any]:
-    await authenticate(http_request, store)
+    principal = await authenticate(http_request, store)
     ids = [AUTO_MODEL, LOCAL_MODEL]
     if gateway.engine.default("cloud") is not None:
         ids.append(CLOUD_MODEL)
     ids.extend(model for model in gateway.engine.models() if model not in ids)
     if gateway.embedding_model:
         ids.append(EMBEDDING_MODEL)
+    if store is not None:
+        agents = await store.list_tool_items(principal.user_id, "agent")
+        ids.extend(f"{AGENT_PREFIX}{agent['name']}" for agent in agents)
     return {
         "object": "list",
         "data": [
@@ -218,7 +225,12 @@ async def create_chat_completion(
         request, options = to_gateway_request(body, gateway.engine)
     except _RequestRejected as exc:
         return error_response(exc.status_code, str(exc), code=exc.code)
-    request = await with_prompts(request, store, principal)
+    try:
+        request = await with_tools(
+            await with_prompts(request, store, principal), store, principal
+        )
+    except HTTPException as exc:
+        return error_response(exc.status_code, str(exc.detail))
 
     created = int(time.time())
 

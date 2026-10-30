@@ -7,6 +7,8 @@ type Props = {
   promptSet?: boolean; onOpenPrompt?: () => void;
   /** The thinking switch is shown only when a model can be told how much to think. */
   thinking?: Thinking; onThinkingChange?: (value: Thinking) => void;
+  /** Agents (saved roles with tools) to answer with; the switch appears once there is one. */
+  agents?: { id: string; name: string }[]; agent?: string; onAgentChange?: (value: string) => void;
 };
 const THINKING_OPTIONS: { value: Thinking; label: string }[] = [
   { value: 'default', label: 'Default' }, { value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
@@ -17,7 +19,7 @@ const PROVIDER_OPTIONS: { value: ProviderSelection; label: string; glyph: string
   { value: 'cloud', label: 'Cloud', glyph: '✳', hint: 'Always use the cloud model (personal data is still redacted first)' },
 ];
 
-function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onStop, onClear, promptSet, onOpenPrompt, thinking, onThinkingChange }: Props) {
+function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onStop, onClear, promptSet, onOpenPrompt, thinking, onThinkingChange, agents = [], agent = '', onAgentChange }: Props) {
   return <article className="panel prompt-panel">
     <div className="composer-topline">
       <span className="eyebrow">YOUR MESSAGE</span>
@@ -37,12 +39,21 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
     <label className="sr-only" htmlFor="request-prompt">Your message</label>
     <textarea id="request-prompt" rows={3} value={prompt} onChange={event => onPromptChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(); } }} maxLength={32000} disabled={busy} placeholder="Type a message… (Enter to send, Shift + Enter for a new line)"/>
     <div className="prompt-footer">
-      {thinking && onThinkingChange ? <label className="thinking-switch" title="How much the model thinks before it answers. Default leaves it to the model's own setting.">
+      <div className="footer-switches">
+      {thinking && onThinkingChange && <label className="thinking-switch" title="How much the model thinks before it answers. Default leaves it to the model's own setting.">
         <span>Thinking</span>
         <select value={thinking} onChange={event => onThinkingChange(event.target.value as Thinking)} disabled={busy} aria-label="Thinking">
           {THINKING_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
-      </label> : <span/>}
+      </label>}
+      {agents.length > 0 && onAgentChange && <label className="thinking-switch agent-switch" title="Answer as one of your agents, which can use tools.">
+        <span>Agent</span>
+        <select value={agents.some(item => item.id === agent) ? agent : ''} onChange={event => onAgentChange(event.target.value)} disabled={busy} aria-label="Agent">
+          <option value="">None</option>
+          {agents.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>}
+      </div>
       <div className="prompt-actions">{onOpenPrompt && <button type="button" className={`conversation-prompt-button ${promptSet ? 'set' : ''}`} onClick={onOpenPrompt} disabled={busy} title="Prompt for this conversation">✎ {promptSet ? 'Prompt set' : 'Prompt'}</button>}{prompt && <button className="clear-draft" onClick={onClear} disabled={busy}>Clear draft</button>}{busy
         ? <button className="send-button stop-button" onClick={onStop} title="Stop generating"><i className="spinner"/> Stop</button>
         : <button className="send-button" onClick={onSubmit} disabled={!prompt.trim()}>Send <span>↗</span></button>}</div></div>

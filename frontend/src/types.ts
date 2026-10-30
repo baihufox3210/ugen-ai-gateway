@@ -2,6 +2,8 @@ export type Phase = 'idle' | 'sending' | 'analyzing' | 'analyzed' | 'routing' | 
 export type Provider = 'local' | 'cloud';
 export type ProviderSelection = 'auto' | Provider;
 export type Thinking = 'default' | 'off' | 'low' | 'medium' | 'high';
+/** A tool the model called while answering (collected from the stream, not stored by the gateway). */
+export type ToolCall = { id: string; name: string; arguments: string; ok?: boolean; content?: string };
 export type ChatResult = {
   id?: string;
   content: string;
@@ -27,6 +29,8 @@ export type ChatResult = {
   };
   usage?: { generation?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
   performance?: { analysis_ms: number; generation_ms: number; total_ms: number };
+  /** Tools called on the way to this answer. */
+  tools?: ToolCall[];
   /** The user stopped generation; ``content`` is the partial answer. */
   stopped?: boolean;
 };

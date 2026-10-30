@@ -20,6 +20,7 @@ from ugen_ai_gateway.api.privacy_routes import (
 )
 from ugen_ai_gateway.api.prompt_routes import with_prompts
 from ugen_ai_gateway.api.schemas import ChatRequest, ChatResponse
+from ugen_ai_gateway.api.tool_routes import with_tools
 from ugen_ai_gateway.dependencies import get_gateway_service, get_usage_store
 from ugen_ai_gateway.services.gateway import GatewayService
 from ugen_ai_gateway.services.usage import UsageStore
@@ -344,7 +345,9 @@ async def create_chat(
     http_request: Request,
 ) -> ChatResponse:
     principal = await authenticate(http_request, store)
-    request = await with_prompts(request, store, principal)
+    request = await with_tools(
+        await with_prompts(request, store, principal), store, principal
+    )
     try:
         return await gateway.chat(request, principal=principal)
     except Exception as exc:
@@ -360,7 +363,9 @@ async def create_chat_stream(
     http_request: Request,
 ) -> StreamingResponse:
     principal = await authenticate(http_request, store)
-    request = await with_prompts(request, store, principal)
+    request = await with_tools(
+        await with_prompts(request, store, principal), store, principal
+    )
 
     async def events():
         try:

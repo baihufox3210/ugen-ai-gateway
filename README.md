@@ -21,6 +21,9 @@ never saw the data.
   automatic fallback when a provider is down.
 - **OpenAI-compatible API**: point any OpenAI SDK or tool at `/v1`, including
   local `/v1/embeddings`.
+- **Agents, tools and MCP**: models can call built-in tools, HTTP tools and
+  MCP servers that every account designs for itself, with personal data
+  masked in both directions and calls limited to public addresses.
 - **Dashboard**: streaming chat with long-term conversation memory, stop,
   edit and regenerate, search and export; usage and cost savings; dark mode.
 - **Teams**: accounts with roles and monthly budgets, single sign-on (OpenID
@@ -213,6 +216,8 @@ advanced settings; it documents every one. The main ones:
 | `FALLBACK_TO_LOCAL`, `FALLBACK_TO_CLOUD` | Fallback when a provider is down ([Resilience](#resilience)) | `true`, `false` |
 | `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS` | Requests per client IP per window | `60`, `60` |
 | `REQUEST_TIMEOUT`, `MAX_RETRIES` | Provider timeout (seconds) and retries | `300`, `2` |
+| `TOOLS_ENABLED`, `TOOL_ALLOWED_HOSTS` | Tools for models ([Agents, tools and MCP](#agents-tools-and-mcp)); hosts allowed on a private network, comma separated or `*.suffix` | `true`, blank |
+| `TOOL_TIMEOUT_SECONDS`, `TOOL_MAX_RESULT_CHARS`, `TOOL_ITEMS_PER_USER` | Per tool call, longest result handed to the model, items per account | `20`, `12000`, `30` |
 
 After changing `.env`, apply it with `docker compose up -d`.
 
@@ -245,8 +250,9 @@ response. `stream: true` returns Server-Sent Events chunks ending with
 `data: [DONE]`; `stream_options: {"include_usage": true}` adds a final usage
 chunk. `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`,
 `presence_penalty`, `frequency_penalty`, and `seed` are forwarded to the
-selected model. Tool calling (`tools`) and `n > 1` are reserved for a later
-version and return HTTP `400`. Image parts in messages are passed through
+selected model. Your own `tools` (client-side function calling) and `n > 1`
+are not supported and return HTTP `400`; tools the gateway runs for you are
+used through an agent: model `agent:name` ([Agents, tools and MCP](#agents-tools-and-mcp)). Image parts in messages are passed through
 without being inspected for personal data, so keep them on the local model
 when that matters.
 
@@ -601,6 +607,76 @@ takes ordinary words in a long prompt ("Personality", "Gateway") for people. For
 the same reason, a name made only of words that appear in the system prompt is
 never masked in the rest of the conversation, such as "Gateway" in an earlier
 answer that repeats it.
+
+### Agents, tools and MCP
+
+A model can do more than answer: it can call **tools**, look at what they
+return, and carry on, for as many steps as it needs. Everyone with an account
+makes their own (Settings → Tools); administrators can also share with
+everybody. Everything is also available through the API.
+
+* **Built-in tools**: `current_time`, `calculator` and `fetch_url` (reads a
+  web page).
+* **HTTP tools**: you give a name, a description the model reads to decide
+  when to call it, the parameters as a JSON schema, and a web address. `{name}`
+  in the address is filled with that argument; the other arguments go in the
+  query (GET, DELETE) or as a JSON body. Header values (tokens) are stored
+  encrypted and never shown again.
+* **MCP servers**: register the address of a server that speaks MCP over HTTP
+  (streamable). Its tools are read once and offered as `server__tool`; use
+  *Refresh tools* after the server changes. Servers that start as a local
+  program (stdio) are not supported, since that would let an account run
+  commands on the gateway machine.
+* **Agents**: a saved role: instructions, the tools it may use (a whole MCP
+  server, or single tools), optionally a model, and a limit of steps. Pick one
+  under the message box, or call it by name from any OpenAI-compatible client
+  as model `agent:name` (listed by `/v1/models`).
+
+```bash
+# An HTTP tool, then an agent that uses it, then a chat with the agent
+curl -X POST localhost:7632/v1/ugen/tools -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "order_status", "description": "Status of an order",
+    "url": "https://api.example.com/orders/{order_id}", "method": "GET",
+    "parameters": {"type": "object", "properties": {"order_id": {"type": "string"}}, "required": ["order_id"]},
+    "headers": {"Authorization": "Bearer abc123"}}'
+curl -X POST localhost:7632/v1/ugen/agents -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "support", "system_prompt": "You help with orders.", "tools": ["order_status", "calculator"]}'
+curl localhost:7632/v1/chat/completions -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "model": "agent:support", "messages": [{"role": "user", "content": "Where is order 1042?"}]}'
+```
+
+| Endpoint | |
+| --- | --- |
+| `GET /v1/ugen/tools` | Everything you can use or edit: built-in tools, HTTP tools, MCP servers, agents |
+| `POST /v1/ugen/tools`, `PUT`/`DELETE /v1/ugen/tools/{id}` | HTTP tools |
+| `POST /v1/ugen/mcp-servers`, `PUT`/`DELETE …/{id}`, `POST …/{id}/refresh` | MCP servers (their tools are read when saved) |
+| `POST /v1/ugen/agents`, `PUT`/`DELETE …/{id}` | Agents |
+| `POST /v1/ugen/tools/run` | Try one tool: `{"name": "...", "arguments": {...}}` |
+
+`POST /v1/ugen/chat` and `/chat/stream` also take `agent` (an id or name) and
+`tools` (names to add for this request). The stream reports `tool_call` and
+`tool_result` events; the answer after tool calls arrives in one piece. Making
+tools needs an account (or an admin key): an API key can use shared ones and
+agents shared by administrators.
+
+**Privacy and safety**
+
+* The model only sees placeholders for personal data, so tools receive
+  placeholders too, and **what a tool returns is redacted before the model
+  reads it**. The dashboard shows you the real values.
+* A tool can only reach public web addresses. Private, loopback and link-local
+  ranges (where cloud metadata services live) are refused, checked again at
+  the moment of connecting and on every redirect. Administrators allow an
+  internal host with `TOOL_ALLOWED_HOSTS`.
+* Every call is written to the audit log (`tool.call`: which tool, whether it
+  worked, how long; never the arguments or the result).
+* Each account has a limit of items (`TOOL_ITEMS_PER_USER`); `TOOLS_ENABLED=false`
+  turns the feature off.
+* A model that cannot use tools returns an error from its server; choose
+  another model for the agent.
 
 ### Guards
 
