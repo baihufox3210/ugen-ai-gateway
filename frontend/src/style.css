@@ -818,3 +818,30 @@ button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #7
 .thinking-block summary:hover{color:#70847b}
 .thinking-block.live summary{animation:pulse 1.6s infinite}
 .thinking-text{margin-top:5px;max-height:240px;overflow:auto;border-left:2px solid #e3ebe7;padding:2px 0 2px 10px;color:#9aa8a2;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* ── Agents & tools ─────────────────────────────────────────────── */
+.footer-switches{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.agent-switch select{max-width:140px}
+.tool-card .rule-head{flex-wrap:wrap}
+.tool-card .rule-head b{color:#203c34;font-size:12px}
+.tool-summary{flex:1;min-width:0;color:#788c83;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tool-badge{border-radius:999px;padding:1px 7px;background:#eaf2ef;color:#4f7a6a;font-size:9px}
+.tool-description{display:block;margin-top:4px;color:#788c83;font-size:10px;line-height:1.6;overflow-wrap:anywhere}
+.tool-editor{display:grid;gap:8px;margin-top:10px}
+.tool-editor input:not([type=checkbox]),.tool-editor select,.tool-editor textarea{width:100%}
+.tool-editor .field-row select{width:auto;flex:none}
+.tool-choices{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:#3f5b51}
+.tool-choices label,.tool-share{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#3f5b51}
+.tool-steps{display:inline-flex;align-items:center;gap:6px;flex:none;color:#62776e;font-size:10.5px}
+.tool-steps input{width:56px!important;flex:none}
+.tool-headers{display:grid;gap:6px}
+.tool-try{display:grid;gap:6px;margin-top:8px}
+.tool-result{margin:0;max-height:180px;overflow:auto;border-radius:8px;padding:8px 10px;background:#f4f8f6;color:#2c4a3f;font:10.5px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.tool-result.failed{background:#fdf1ef;color:#a14b3f}
+.models-save.inline{position:static;margin:4px 0 0;border-top:0;padding:0;background:none}
+.tool-calls{margin:0 0 8px;color:#8a9a93;font-size:10.5px}
+.tool-calls summary{cursor:pointer;user-select:none}
+.tool-call{margin-top:6px;border-left:2px solid #dbe5e0;padding-left:9px;overflow-wrap:anywhere}
+.tool-call.failed{border-left-color:#e3a79d}
+.tool-call code{font:10px var(--mono);color:#7d8f87}
+.tool-call pre{margin:3px 0 0;max-height:140px;overflow:auto;font:10px/1.55 var(--mono);color:#7d8f87;white-space:pre-wrap}

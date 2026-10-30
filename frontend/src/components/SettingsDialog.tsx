@@ -6,12 +6,13 @@ import ModelsPage from './ModelsPage';
 import NumberStepper from './NumberStepper';
 import PrivacyPage from './PrivacyPage';
 import PricingPage from './PricingPage';
+import ToolsPage from './ToolsPage';
 import PromptEditor from './PromptEditor';
 import RedactionSettings from './RedactionSettings';
 import UsersPage from './UsersPage';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 
-export type SettingsPage = 'account' | 'users' | 'models' | 'privacy' | 'keys';
+export type SettingsPage = 'account' | 'tools' | 'users' | 'models' | 'privacy' | 'keys';
 type Props = {
   user: User | null;
   page: SettingsPage;
@@ -313,6 +314,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
   const canManage = user ? user.is_admin : true;
   const pages: { id: SettingsPage; label: string }[] = [
     ...(user ? [{ id: 'account' as const, label: 'Account' }] : []),
+    { id: 'tools' as const, label: 'Tools' },
     ...(canManage ? [...(user ? [{ id: 'users' as const, label: 'Users' }] : []), { id: 'models' as const, label: 'Models' }, { id: 'privacy' as const, label: 'Privacy' }, { id: 'keys' as const, label: 'API keys' }] : []),
   ];
   const current = pages.some(item => item.id === page) ? page : pages[0]?.id;
@@ -327,6 +329,7 @@ function SettingsDialog({ user, page, onPageChange, onUserChange, onSignOut, onA
         {pages.map(item => <button key={item.id} type="button" role="tab" aria-selected={current === item.id} className={current === item.id ? 'selected' : ''} onClick={() => onPageChange(item.id)}>{item.label}</button>)}
       </div>}
       {current === 'account' && user && <AccountPage user={user} onUserChange={onUserChange} onSignOut={onSignOut} onAccountDeleted={onAccountDeleted}/>}
+      {current === 'tools' && <ToolsPage canShare={canManage}/>}
       {current === 'users' && <UsersPage currentUserId={user?.id ?? null}/>}
       {current === 'models' && <>
         <PromptEditor first title="System prompt" path="/v1/ugen/system-prompt" maxLength={8000}

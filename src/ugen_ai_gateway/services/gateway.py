@@ -7,7 +7,8 @@ from dataclasses import dataclass, field, replace
 from time import perf_counter
 from typing import Any, Literal, cast
 
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types import CompletionUsage
+from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 
 from ugen_ai_gateway.analysis.analyzer import RequestAnalyzer
 from ugen_ai_gateway.analysis.cache import AnalysisCache
@@ -61,6 +62,8 @@ from ugen_ai_gateway.services.usage import UsageRecord, UsageStore, token_cost
 
 logger = logging.getLogger(__name__)
 READINESS_CACHE_SECONDS = 10.0
+MAX_TOOL_CALLS = 8  # in one step
+TOOL_PREVIEW_CHARS = 2000
 
 MAX_ANALYSIS_INPUT_CHARACTERS = 32_000
 ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -535,6 +538,8 @@ class GatewayService:
                         result = event
                     else:
                         emitted_text = True
+                        if event.type == "tool_result":
+                            await self._audit_tool(record, event.data)
                         yield event
             except (ProviderOutage, ProviderTimeout) as exc:
                 breaker.record_failure()
@@ -698,8 +703,9 @@ class GatewayService:
         thinking = reasoning.thinking(effort)
         show = self._engine.config.show_thinking
         messages = prepared.messages
+        toolset = request.toolset
         try:
-            if stream:
+            if stream and not toolset:
                 restorer = StreamRestorer(prepared.vault) if restore else None  # type: ignore[arg-type]
                 filtered = ThinkingFilter(start_inside=reasoning.thinks(effort))
                 parts: list[str] = []
@@ -770,13 +776,22 @@ class GatewayService:
                 )
                 return
 
-            completion = await prepared.provider.complete(
-                model=prepared.model,
-                messages=messages,
-                temperature=request.temperature,
-                thinking=thinking,
-                **options,
-            )
+            if toolset:
+                completion = None
+                async for item in self._tool_loop(prepared, request, thinking, options):
+                    if isinstance(item, GatewayEvent):
+                        yield item
+                    else:
+                        completion = item
+                assert completion is not None
+            else:
+                completion = await prepared.provider.complete(
+                    model=prepared.model,
+                    messages=messages,
+                    temperature=request.temperature,
+                    thinking=thinking,
+                    **options,
+                )
         except TimeoutError as exc:
             raise ProviderTimeout("Model provider timed out") from exc
         except Exception as exc:
@@ -798,6 +813,11 @@ class GatewayService:
             thoughts_text = prepared.vault.restore(thoughts_text)  # type: ignore[union-attr]
         if guard is not None:
             content = guard.check(content)
+        if stream:  # the answer after tool calls arrives in one piece
+            if thoughts_text and show:
+                yield GatewayEvent("thinking_delta", {"content": thoughts_text})
+            if content:
+                yield GatewayEvent("delta", {"content": content})
         yield _Generated(
             content,
             completion.model,
@@ -805,6 +825,123 @@ class GatewayService:
             getattr(completion.choices[0], "finish_reason", None),
             thoughts_text if show else "",
         )
+
+    async def _tool_loop(
+        self,
+        prepared: "_PreparedChat",
+        request: ChatRequest,
+        thinking: Any,
+        options: dict[str, Any],
+    ) -> AsyncIterator["GatewayEvent | ChatCompletion"]:
+        """Let the model call tools until it answers; yield a ``tool_call`` and
+        a ``tool_result`` event for each call, then the final completion.
+
+        The model only ever saw placeholders for personal data, so the tools
+        get placeholders too, and what they return is redacted before the model
+        reads it. What the person sees has the real values put back."""
+        toolset = request.toolset
+        vault = prepared.vault
+        messages = list(prepared.messages)
+        schemas = toolset.schemas()
+        prompt_tokens = completion_tokens = 0
+        for step in range(toolset.max_steps + 1):
+            # On the last step no tools are offered, so the model must answer.
+            extra = {} if step == toolset.max_steps else {"tools": schemas}
+            completion = await prepared.provider.complete(
+                model=prepared.model,
+                messages=messages,
+                temperature=request.temperature,
+                thinking=thinking,
+                **options,
+                **extra,
+            )
+            usage = getattr(completion, "usage", None)
+            prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
+            completion_tokens += getattr(usage, "completion_tokens", 0) or 0
+            if not completion.choices:
+                raise RuntimeError("Model provider returned no choices")
+            message = completion.choices[0].message
+            calls = list(getattr(message, "tool_calls", None) or [])[:MAX_TOOL_CALLS]
+            if not calls or step == toolset.max_steps:
+                yield completion.model_copy(
+                    update={
+                        "usage": CompletionUsage(
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            total_tokens=prompt_tokens + completion_tokens,
+                        )
+                    }
+                )
+                return
+            text = message.content if isinstance(message.content, str) else ""
+            messages.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {
+                        "role": "assistant",
+                        "content": split_thinking(text)[1],
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.function.name,
+                                    "arguments": call.function.arguments or "{}",
+                                },
+                            }
+                            for call in calls
+                        ],
+                    },
+                )
+            )
+            for call in calls:
+                name = call.function.name
+                arguments = call.function.arguments or "{}"
+                shown = vault.restore(arguments) if vault is not None else arguments
+                yield GatewayEvent(
+                    "tool_call", {"id": call.id, "name": name, "arguments": shown}
+                )
+                outcome = await toolset.call(name, arguments)
+                result = (
+                    vault.redact(outcome.text) if vault is not None else outcome.text
+                )
+                shown_result = vault.restore(result) if vault is not None else result
+                yield GatewayEvent(
+                    "tool_result",
+                    {
+                        "id": call.id,
+                        "name": name,
+                        "ok": outcome.ok,
+                        "ms": round(outcome.ms, 1),
+                        "content": shown_result[:TOOL_PREVIEW_CHARS],
+                    },
+                )
+                messages.append(
+                    cast(
+                        ChatCompletionMessageParam,
+                        {"role": "tool", "tool_call_id": call.id, "content": result},
+                    )
+                )
+
+    async def _audit_tool(self, record: UsageRecord, data: dict[str, Any]) -> None:
+        """Note a tool call in the audit log: which tool and whether it worked,
+        never its arguments or what it returned."""
+        if self._usage_store is None:
+            return
+        try:
+            await self._usage_store.append_audit(
+                "tool.call",
+                request_id=record.id,
+                detail={
+                    "tool": data.get("name"),
+                    "ok": data.get("ok"),
+                    "ms": data.get("ms"),
+                    "user_id": record.user_id,
+                    "api_key_id": record.api_key_id,
+                },
+            )
+        except Exception:
+            logger.exception("Could not audit a tool call")
 
     @staticmethod
     def _allowed_output_values(

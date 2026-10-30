@@ -72,6 +72,12 @@ class ChatRequest(BaseModel):
     # The dashboard's thinking switch under the message box. Unlike
     # reasoning_effort it only counts for a model that has a thinking style set.
     thinking: Literal["off", "low", "medium", "high"] | None = None
+    # An agent (a saved role with tools) and extra tools for this request, by
+    # name; see tool_routes. ``toolset`` is what they resolve to, set by the
+    # gateway and never by a client.
+    agent: str | None = Field(default=None, max_length=128)
+    tools: list[str] = Field(default_factory=list, max_length=32)
+    toolset: Any = Field(default=None, exclude=True)
 
     @field_validator("messages")
     @classmethod

@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "uvicorn[standard]>=0.54.0",
     "cryptography>=50.0.2",
+    "mcp>=2.3.0",
 ]
 
 [project.optional-dependencies]

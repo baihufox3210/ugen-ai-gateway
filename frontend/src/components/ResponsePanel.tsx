@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { User } from '../api';
 import { copyText } from '../clipboard';
-import type { ConversationMemory, ConversationTurn, SharedInfo } from '../types';
+import type { ConversationMemory, ConversationTurn, SharedInfo, ToolCall } from '../types';
 import kiriAvatar from '../assets/kiri-avatar.webp';
 import Avatar from './Avatar';
 
@@ -59,7 +59,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 type Props = {
-  user: User | null; turns: ConversationTurn[]; memory?: ConversationMemory; busy: boolean; memoryBusy: boolean; streamingText: string; streamingThinking: string;
+  user: User | null; turns: ConversationTurn[]; memory?: ConversationMemory; busy: boolean; memoryBusy: boolean; streamingText: string; streamingThinking: string; streamingTools?: ToolCall[];
   onFeedback: (turnId: string, rating: 1 | -1) => void; onDeleteTurn: (turnId: string) => void;
   onRegenerate: (turnId: string) => void; onEdit: (turnId: string, text: string) => void;
   onExport: (format: 'markdown' | 'json') => void;
@@ -79,7 +79,19 @@ function ThinkingBlock({ text, live = false }: { text: string; live?: boolean })
   </details>;
 }
 
-function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, streamingThinking, onFeedback, onDeleteTurn, onRegenerate, onEdit, onExport, setup, onOpenModels, shared, onShare }: Props) {
+/** Tools the model called on the way to its answer: folded, with what it asked and got back. */
+function ToolCalls({ calls, live = false }: { calls: ToolCall[]; live?: boolean }) {
+  const pretty = (text: string) => { try { return JSON.stringify(JSON.parse(text)); } catch { return text; } };
+  return <details className={`tool-calls ${live ? 'live' : ''}`} open={live}>
+    <summary>{live ? 'Using tools…' : `Used ${calls.length} tool${calls.length === 1 ? '' : 's'}`}: {[...new Set(calls.map(call => call.name))].join(', ')}</summary>
+    {calls.map(call => <div className={`tool-call ${call.ok === false ? 'failed' : ''}`} key={call.id}>
+      <b>{call.name}</b> <code>{pretty(call.arguments)}</code>
+      {call.content !== undefined ? <pre>{call.content || '(empty)'}</pre> : <small>running…</small>}
+    </div>)}
+  </details>;
+}
+
+function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, streamingThinking, streamingTools = [], onFeedback, onDeleteTurn, onRegenerate, onEdit, onExport, setup, onOpenModels, shared, onShare }: Props) {
   const threadRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<{ turnId: string; text: string } | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -153,6 +165,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, s
                 <button className={turn.feedback === -1 ? 'selected' : ''} aria-pressed={turn.feedback === -1} onClick={() => onFeedback(turn.id, -1)} title="Not helpful">👎</button>
               </span>}
             </span></div>
+            {result.tools && result.tools.length > 0 && <ToolCalls calls={result.tools}/>}
             {result.reasoning && <ThinkingBlock text={result.reasoning}/>}
             <div className="markdown-wrap"><Markdown text={result.content}/></div>
             <div className="result-foot">
@@ -165,7 +178,7 @@ function ResponsePanel({ user, turns, memory, busy, memoryBusy, streamingText, s
             </div>
           </div>
         </article> : <article className={`chat-message assistant-message ${busy && index === turns.length - 1 && streamingText ? '' : 'pending-message'}`}>
-          <img className="message-avatar assistant-avatar" src={kiriAvatar} alt="" aria-hidden="true"/><div className="message-body"><div className="message-author"><b>Kiri</b></div>{busy && index === turns.length - 1 && streamingThinking && <ThinkingBlock text={streamingThinking} live/>}{busy && index === turns.length - 1 && streamingText
+          <img className="message-avatar assistant-avatar" src={kiriAvatar} alt="" aria-hidden="true"/><div className="message-body"><div className="message-author"><b>Kiri</b></div>{busy && index === turns.length - 1 && streamingTools.length > 0 && <ToolCalls calls={streamingTools} live/>}{busy && index === turns.length - 1 && streamingThinking && <ThinkingBlock text={streamingThinking} live/>}{busy && index === turns.length - 1 && streamingText
             ? <div className="markdown-wrap streaming"><StreamingMarkdown text={streamingText}/></div>
             : <p>{busy && index === turns.length - 1 ? (memoryBusy ? 'Saving older messages to memory…' : 'Analyzing and generating a response…') : 'No response received for this message'}</p>}</div>
         </article>}

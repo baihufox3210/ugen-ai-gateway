@@ -17,6 +17,7 @@ from ugen_ai_gateway.api.privacy_routes import router as privacy_router
 from ugen_ai_gateway.api.prompt_routes import router as prompt_router
 from ugen_ai_gateway.api.routes import router
 from ugen_ai_gateway.api.sharing_routes import router as sharing_router
+from ugen_ai_gateway.api.tool_routes import router as tool_router
 from ugen_ai_gateway.api.user_routes import router as user_router
 from ugen_ai_gateway.config import get_settings
 from ugen_ai_gateway.dependencies import get_gateway_service
@@ -138,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(prompt_router)
     app.include_router(conversation_router)
     app.include_router(sharing_router)
+    app.include_router(tool_router)
     app.include_router(openai_router)
     if static := _static_dir():
         app.mount("/", StaticFiles(directory=static, html=True), name="dashboard")
