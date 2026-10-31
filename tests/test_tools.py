@@ -1,15 +1,16 @@
 import asyncio
 import json
 import socket
+import sys
 import threading
 import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
 import uvicorn
-from mcp.server import MCPServer
 from openai.types.chat import ChatCompletion
 
 from tests.test_accounts import AccountEnv, bearer
@@ -58,23 +59,17 @@ def web() -> Iterator[str]:
 
 @pytest.fixture
 def mcp_url() -> Iterator[str]:
-    server = MCPServer("demo")
-
-    @server.tool()
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b
-
+    """The example server of examples/mcp_demo_server.py."""
+    sys.path.insert(0, str(Path(__file__).parent.parent / "examples"))
+    try:
+        from mcp_demo_server import app
+    finally:
+        sys.path.pop(0)
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     runner = uvicorn.Server(
-        uvicorn.Config(
-            server.streamable_http_app(stateless_http=True, json_response=True),
-            host="127.0.0.1",
-            port=port,
-            log_level="error",
-        )
+        uvicorn.Config(app(), host="127.0.0.1", port=port, log_level="error")
     )
     threading.Thread(target=runner.run, daemon=True).start()
     while not runner.started:
@@ -517,24 +512,43 @@ def test_an_mcp_server_offers_its_tools(monkeypatch, local_hosts, mcp_url) -> No
     )
     assert created.status_code == 200, created.text
     server = created.json()
-    assert [tool["name"] for tool in server["tools"]] == ["demo__add"]
+    assert [tool["name"] for tool in server["tools"]] == [
+        "demo__word_count",
+        "demo__reverse_text",
+        "demo__convert_temperature",
+    ]
     assert server["headers"] == ["X-Key"] and '"k"' not in created.text
 
-    ran = make(env, alice, "tools/run", name="demo__add", arguments={"a": 2, "b": 3})
-    assert ran.json() == {"ok": True, "result": "5", "ms": ran.json()["ms"]}
+    ran = make(
+        env,
+        alice,
+        "tools/run",
+        name="demo__word_count",
+        arguments={"text": "one two three"},
+    )
+    assert ran.json() == {"ok": True, "result": "3", "ms": ran.json()["ms"]}
+    warm = make(
+        env,
+        alice,
+        "tools/run",
+        name="demo__convert_temperature",
+        arguments={"value": 100, "to": "fahrenheit"},
+    )
+    assert warm.json()["result"] == "212.0 °F"
 
     # An agent can take a whole server; a model calls its tools by full name.
     make(env, alice, "agents", name="adder", tools=["demo"])
     script = Script(
         env,
-        completion(calls=[("demo__add", '{"a": 20, "b": 22}')]),
-        completion("It is 42."),
+        completion(calls=[("demo__word_count", '{"text": "a b c d"}')]),
+        completion("It is 4."),
     )
     response = env.chat(alice, agent="adder")
-    assert response.json()["content"] == "It is 42."
-    assert script.calls[0]["tools"][0]["function"]["name"] == "demo__add"
+    assert response.json()["content"] == "It is 4."
+    names = [tool["function"]["name"] for tool in script.calls[0]["tools"]]
+    assert "demo__word_count" in names
     tool_message = next(m for m in script.calls[1]["messages"] if m["role"] == "tool")
-    assert tool_message["content"] == "42"
+    assert tool_message["content"] == "4"
 
     refreshed = env.client.post(
         f"/v1/ugen/mcp-servers/{server['id']}/refresh", headers=bearer(alice)
