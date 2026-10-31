@@ -633,8 +633,12 @@ everybody. Everything is also available through the API.
   commands on the gateway machine.
 * **Trying tools**: every tool in Settings → Tools has a *Try* button with a
   field for each parameter, so built-in tools and each tool of an MCP server
-  can be run right on the page. The **＋ Tools** button under the message box
-  opens that page.
+  can be run right on the page.
+* **Switching tools on in a chat**: the **＋ Tools** menu under the message box
+  lists the built-in tools, your tools and your MCP servers; tick the ones the
+  model may use in your messages (no agent needed, remembered in the browser).
+  Its last line, *Settings*, opens the page where tools, MCP servers and
+  agents are made.
 * **Agents**: a saved role: instructions, the tools it may use (a whole MCP
   server, or single tools), optionally a model, and a limit of steps. Pick one
   under the message box, or call it by name from any OpenAI-compatible client

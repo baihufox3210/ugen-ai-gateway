@@ -14,7 +14,7 @@ import { apiFetch, errorMessage, type User } from './api';
 import { forgetLocalHistory, useConversations } from './conversationStore';
 import { downloadConversation } from './exportConversation';
 import { FOLD_CHUNK, requestMessages, size, turnMessages, turnsToRemember } from './memory';
-import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection, Thinking, ToolCall } from './types';
+import type { ChatResult, Conversation, ConversationTurn, GatewayEvent, AnalysisSource, Phase, PiiState, Provider, ProviderSelection, Thinking, ToolCall, ToolOption } from './types';
 
 // crypto.randomUUID only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere.
 const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
@@ -22,6 +22,7 @@ const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(n
 const PROVIDER_SELECTION_KEY = 'ugen-gateway-provider-selection';
 const THINKING_KEY = 'ugen-gateway-thinking';
 const AGENT_KEY = 'ugen-gateway-agent';
+const TOOLS_KEY = 'ugen-gateway-tools';
 const STREAM_FRAME_MS = 50;
 type View = 'chat' | 'monitor';
 type DeleteAction = { type: 'conversation'; conversationId: string } | { type: 'turn'; conversationId: string; turnId: string } | { type: 'all' };
@@ -76,6 +77,11 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const [agent, setAgent] = useState(() => { try { return localStorage.getItem(AGENT_KEY) ?? ''; } catch { return ''; } });
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
   const [streamingTools, setStreamingTools] = useState<ToolCall[]>([]);
+  // Tools switched on for every message (the ＋ Tools menu), and the ones that can be switched on.
+  const [toolOptions, setToolOptions] = useState<ToolOption[] | null>(null);
+  const [enabledTools, setEnabledTools] = useState<string[]>(() => {
+    try { const stored: unknown = JSON.parse(localStorage.getItem(TOOLS_KEY) ?? '[]'); return Array.isArray(stored) ? stored.map(String) : []; } catch { return []; }
+  });
   const busy = !['idle', 'complete', 'failed'].includes(phase);
   const { conversations, setConversations, status: syncStatus, syncError, flush, refreshNow } = useConversations(user, busy);
   const [shareOpen, setShareOpen] = useState(false);
@@ -92,6 +98,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
   const [memoryBusy, setMemoryBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => { try { localStorage.setItem(TOOLS_KEY, JSON.stringify(enabledTools)); } catch { /* resets next visit */ } }, [enabledTools]);
   useEffect(() => { try { localStorage.setItem(AGENT_KEY, agent); } catch { /* resets next visit */ } }, [agent]);
   // Agents are read again whenever settings close, since that is where they are made.
   const settingsOpen = settingsPage !== null;
@@ -99,8 +106,16 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
     if (settingsOpen) return;
     apiFetch('/v1/ugen/tools').then(async response => {
       if (!response.ok) return;
-      const body = await response.json() as { agents?: { id: string; name: string }[] };
+      const body = await response.json() as { enabled?: boolean; builtin?: { name: string; description: string }[]; tools?: { name: string; description: string }[]; mcp?: { name: string; description: string; tools: unknown[] }[]; agents?: { id: string; name: string }[] };
       setAgents((body.agents ?? []).map(({ id, name }) => ({ id, name })));
+      const options: ToolOption[] = body.enabled === false ? [] : [
+        ...(body.builtin ?? []).map(tool => ({ name: tool.name, description: tool.description, group: 'builtin' as const })),
+        ...(body.tools ?? []).map(tool => ({ name: tool.name, description: tool.description, group: 'tool' as const })),
+        ...(body.mcp ?? []).map(server => ({ name: server.name, description: `${server.tools.length} tool${server.tools.length === 1 ? '' : 's'}${server.description ? ` · ${server.description}` : ''}`, group: 'mcp' as const })),
+      ];
+      setToolOptions(options);
+      // A tool that was deleted is switched off.
+      setEnabledTools(current => current.some(name => !options.some(option => option.name === name)) ? current.filter(name => options.some(option => option.name === name)) : current);
     }).catch(() => undefined);
   }, [settingsOpen, user?.id]);
   useEffect(() => { try { localStorage.setItem(THINKING_KEY, thinking); } catch { /* resets next visit */ } }, [thinking]);
@@ -292,7 +307,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
       const messages = requestMessages(conversation, [...keptTurns, turn]);
       const response = await apiFetch('/v1/ugen/chat/stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2, conversation_prompt: conversation.prompt ?? '', ...(thinking !== 'default' ? { thinking } : {}), ...(agent && agents.some(item => item.id === agent) ? { agent } : {}) }),
+        body: JSON.stringify({ messages, provider_selection: providerSelection, temperature: 0.2, conversation_prompt: conversation.prompt ?? '', ...(thinking !== 'default' ? { thinking } : {}), ...(agent && agents.some(item => item.id === agent) ? { agent } : {}), ...(enabledTools.length ? { tools: enabledTools } : {}) }),
       });
       if (!response.ok) throw new Error(response.status === 401 ? 'Your session has ended. Sign in again.' : await errorMessage(response));
       if (!response.body) throw new Error('The server did not return a progress stream.');
@@ -385,7 +400,7 @@ function App({ user, onSignOut, onAccountDeleted, onUserChange, notice, onDismis
     <main className="workspace-area"><section className="workspace-title" aria-label="Workspace title"><span className="eyebrow">SECURE MODEL ROUTING</span><h1>Every request, <span>on the right route.</span></h1><p>Analyzed on this machine first, then handled by the right model.</p></section><section className="workspace-content"><RequestFlow phase={phase} provider={provider} providerSelection={providerSelection} model={model} localModel={configuredModels.local} cloudModel={configuredModels.cloud} modelsStatus={modelsStatus} pii={pii} analysisSource={analysisSource} fallbackFrom={fallbackFrom} injectionSignals={injectionSignals}/><MonitorPanel conversations={conversations} phase={phase} refreshKey={statsVersion} log={requestLog} onClearLog={() => setRequestLog([])}/></section><Footer/></main>
     <section className="chat-column"><ResponsePanel shared={activeConversation?.shared} onShare={user ? () => setShareOpen(true) : undefined} setup={modelsReady ? null : user && !user.is_admin ? 'member' : 'admin'} onOpenModels={() => setSettingsPage('models')} onExport={format => activeConversation && downloadConversation(activeConversation, format)} user={user} turns={turns} memory={activeConversation?.memory} busy={busy} memoryBusy={memoryBusy} streamingText={streamingText} streamingThinking={streamingThinking} streamingTools={streamingTools} onRegenerate={regenerate} onEdit={editTurn} onFeedback={sendFeedback} onDeleteTurn={turnId => activeId && setDeleteAction({ type: 'turn', conversationId: activeId, turnId })}/><PromptPanel prompt={prompt} busy={busy} error={error} providerSelection={providerSelection} cloudAvailable={modelsStatus !== 'loaded' || Boolean(configuredModels.cloud)} onProviderSelectionChange={setProviderSelection} onPromptChange={setPrompt} onSubmit={sendPrompt} onStop={stopGeneration} onClear={() => setPrompt('')}
       promptSet={Boolean(conversationPrompt)} onOpenPrompt={user ? () => setPromptOpen(true) : undefined}
-      thinking={thinking} onThinkingChange={setThinking} agents={agents} agent={agent} onAgentChange={setAgent} onOpenTools={() => setSettingsPage('tools')}/></section>
+      thinking={thinking} onThinkingChange={setThinking} agents={agents} agent={agent} onAgentChange={setAgent} toolOptions={toolOptions ?? undefined} enabledTools={enabledTools} onEnabledToolsChange={setEnabledTools} onOpenTools={() => setSettingsPage('tools')}/></section>
     {promptOpen && <ConversationPromptDialog prompt={conversationPrompt} onClose={() => setPromptOpen(false)} onSave={next => {
       if (activeConversation) setConversations(current => current.map(item => item.id === activeConversation.id ? { ...item, prompt: next || undefined } : item));
       else setDraftPrompt(next);

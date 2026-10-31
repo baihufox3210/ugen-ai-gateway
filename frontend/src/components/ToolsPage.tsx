@@ -261,7 +261,7 @@ function ToolsPage({ canShare }: { canShare: boolean }) {
   const adding = (kind: Draft['kind'], label: string) => catalog.writable && !draft && <button type="button" className="cancel-button add-rule" onClick={() => { setDraft(blank(kind)); setSaveError(''); }}>+ {label}</button>;
 
   return <>
-    <p className="models-note">Give a model things to do. An <b>agent</b> is a saved role with instructions and tools; pick it under the message box, or call it from the API as model <code>agent:name</code>. <b>Tools</b> are web addresses the model may call, and <b>MCP servers</b> bring tools of their own. Personal data is masked before a model sees it, so tools get placeholders, and what they return is masked before the model reads it.</p>
+    <p className="models-note tools-note">Give a model things to do. An <b>agent</b> is a saved role with instructions and tools; pick it under the message box, or call it from the API as model <code>agent:name</code>. <b>Tools</b> are web addresses the model may call, and <b>MCP servers</b> bring tools of their own. Personal data is masked before a model sees it, so tools get placeholders, and what they return is masked before the model reads it.</p>
     {!catalog.writable && <p className="models-note">Sign in to create your own; an API key can only use shared ones.</p>}
     <div className="settings-section first">
       <h3>Agents</h3>
