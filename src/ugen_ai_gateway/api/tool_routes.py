@@ -33,6 +33,7 @@ from ugen_ai_gateway.services.tools.toolset import (
     MAX_STEPS,
     Toolset,
     build_toolset,
+    http_spec,
     open_headers,
 )
 from ugen_ai_gateway.services.usage import UsageStore
@@ -80,6 +81,15 @@ class AgentBody(BaseModel):
     model: str | None = Field(default=None, max_length=128)
     max_steps: int = Field(default=DEFAULT_MAX_STEPS, ge=1, le=MAX_STEPS)
     shared: bool = False
+
+
+class ToolTestBody(HttpToolBody):
+    """A tool as typed in the editor, with the arguments to try it with."""
+
+    # The saved tool being edited: its stored header values are used for
+    # headers left empty.
+    id: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunBody(BaseModel):
@@ -207,6 +217,7 @@ def _view(item: dict[str, Any], principal: Principal) -> dict[str, Any]:
                 {
                     "name": tool_name(item["name"], tool["name"]),
                     "description": tool.get("description", ""),
+                    "parameters": tool.get("parameters") or {},
                 }
                 for tool in config.get("tools", [])
             ],
@@ -535,6 +546,29 @@ async def run_tool(
     principal = await authenticate(request, store)
     toolset = await _toolset(store, principal, [body.name])
     outcome = await toolset.call(body.name, json.dumps(body.arguments))
+    return {"ok": outcome.ok, "result": outcome.text, "ms": round(outcome.ms, 1)}
+
+
+@router.post("/tools/test")
+async def test_tool(
+    body: ToolTestBody, store: UsageStoreDependency, request: Request
+) -> dict[str, Any]:
+    """Try an HTTP tool as typed in the editor, before it is saved."""
+    principal = await authenticate(request, store)
+    if not get_settings().tools_enabled:
+        raise _bad("Tools are turned off on this gateway", 403)
+    if principal.user_id is None and not principal.is_admin:
+        raise _bad("Sign in to make tools; an API key cannot own any", 403)
+    stored = None
+    if body.id and store is not None:
+        stored = (await _item(store, body.id, "http", principal))["config"]
+    config = await _http_config(body, stored)
+    spec = http_spec(
+        {"name": body.name.strip() or "test", "config": config}, get_secret_box()
+    )
+    outcome = await Toolset({spec.name: spec}).call(
+        spec.name, json.dumps(body.arguments)
+    )
     return {"ok": outcome.ok, "result": outcome.text, "ms": round(outcome.ms, 1)}
 
 

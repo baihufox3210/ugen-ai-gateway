@@ -9,6 +9,8 @@ type Props = {
   thinking?: Thinking; onThinkingChange?: (value: Thinking) => void;
   /** Agents (saved roles with tools) to answer with; the switch appears once there is one. */
   agents?: { id: string; name: string }[]; agent?: string; onAgentChange?: (value: string) => void;
+  /** Opens the page where tools, MCP servers and agents are added. */
+  onOpenTools?: () => void;
 };
 const THINKING_OPTIONS: { value: Thinking; label: string }[] = [
   { value: 'default', label: 'Default' }, { value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
@@ -19,7 +21,7 @@ const PROVIDER_OPTIONS: { value: ProviderSelection; label: string; glyph: string
   { value: 'cloud', label: 'Cloud', glyph: '✳', hint: 'Always use the cloud model (personal data is still redacted first)' },
 ];
 
-function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onStop, onClear, promptSet, onOpenPrompt, thinking, onThinkingChange, agents = [], agent = '', onAgentChange }: Props) {
+function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, onPromptChange, onProviderSelectionChange, onSubmit, onStop, onClear, promptSet, onOpenPrompt, thinking, onThinkingChange, agents = [], agent = '', onAgentChange, onOpenTools }: Props) {
   return <article className="panel prompt-panel">
     <div className="composer-topline">
       <span className="eyebrow">YOUR MESSAGE</span>
@@ -40,6 +42,7 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
     <textarea id="request-prompt" rows={3} value={prompt} onChange={event => onPromptChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(); } }} maxLength={32000} disabled={busy} placeholder="Type a message… (Enter to send, Shift + Enter for a new line)"/>
     <div className="prompt-footer">
       <div className="footer-switches">
+      {onOpenTools && <button type="button" className="tools-button" onClick={onOpenTools} disabled={busy} title="Add your own tools, MCP servers and agents">＋ Tools</button>}
       {thinking && onThinkingChange && <label className="thinking-switch" title="How much the model thinks before it answers. Default leaves it to the model's own setting.">
         <span>Thinking</span>
         <select value={thinking} onChange={event => onThinkingChange(event.target.value as Thinking)} disabled={busy} aria-label="Thinking">
