@@ -618,7 +618,11 @@ everybody. Everything is also available through the API.
 * **Built-in tools**: `current_time`, `calculator` and `fetch_url` (reads a
   web page).
 * **HTTP tools**: you give a name, a description the model reads to decide
-  when to call it, the parameters as a JSON schema, and a web address. `{name}`
+  when to call it, the parameters, and a web address. On the page, parameters
+  are a simple list (name, type, description, required); a JSON schema can be
+  edited by hand instead. *Start from an example* fills in public services
+  that need no key (weather, Wikipedia, country facts), and **Test this tool
+  before saving** calls the real service with arguments you type. `{name}`
   in the address is filled with that argument; the other arguments go in the
   query (GET, DELETE) or as a JSON body. Header values (tokens) are stored
   encrypted and never shown again.
@@ -627,6 +631,10 @@ everybody. Everything is also available through the API.
   *Refresh tools* after the server changes. Servers that start as a local
   program (stdio) are not supported, since that would let an account run
   commands on the gateway machine.
+* **Trying tools**: every tool in Settings → Tools has a *Try* button with a
+  field for each parameter, so built-in tools and each tool of an MCP server
+  can be run right on the page. The **＋ Tools** button under the message box
+  opens that page.
 * **Agents**: a saved role: instructions, the tools it may use (a whole MCP
   server, or single tools), optionally a model, and a limit of steps. Pick one
   under the message box, or call it by name from any OpenAI-compatible client

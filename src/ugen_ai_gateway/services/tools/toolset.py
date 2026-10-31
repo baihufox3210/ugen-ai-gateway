@@ -110,7 +110,7 @@ def open_headers(config: dict[str, Any], box: SecretBox) -> dict[str, str]:
     }
 
 
-def _http_spec(item: dict[str, Any], box: SecretBox) -> ToolSpec:
+def http_spec(item: dict[str, Any], box: SecretBox) -> ToolSpec:
     config = item["config"]
     headers = open_headers(config, box)
 
@@ -198,7 +198,7 @@ def build_toolset(
         if name in BUILTIN_TOOLS:
             specs[name] = _builtin_spec(name)
         elif name in http:
-            specs[name] = _http_spec(http[name], box)
+            specs[name] = http_spec(http[name], box)
         elif name in servers:
             for spec in _mcp_specs(servers[name], box):
                 specs[spec.name] = spec

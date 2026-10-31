@@ -263,6 +263,66 @@ def test_an_http_tool_is_made_run_and_kept_private(
     assert make(env, alice, "tools/run", name="orders").status_code == 404
 
 
+def test_a_tool_can_be_tried_before_it_is_saved(monkeypatch, local_hosts, web) -> None:
+    env = AccountEnv(monkeypatch)
+    alice = env.token("alice")
+    bob = env.token("bob")
+    draft = {
+        "name": "orders",
+        "url": f"{web}/orders/{{order_id}}",
+        "headers": {"X-Token": "typed"},
+        "arguments": {"order_id": "9"},
+    }
+
+    tried = make(env, alice, "tools/test", **draft)
+
+    assert tried.status_code == 200, tried.text
+    assert tried.json()["ok"] is True and "order 42" in tried.json()["result"]
+    assert _Handler.seen[-1] == {"path": "/orders/9", "token": "typed"}
+    assert (
+        make(
+            env, alice, "tools/test", **{**draft, "url": "http://10.0.0.1/x"}
+        ).status_code
+        == 400
+    )
+    # Nothing was saved.
+    assert env.client.get("/v1/ugen/tools", headers=bearer(alice)).json()["tools"] == []
+
+    # Editing a saved tool: a header left empty uses the stored secret.
+    saved = make(
+        env, alice, "tools", name="orders", url=f"{web}/o", headers={"X-Token": "kept"}
+    )
+    again = make(
+        env,
+        alice,
+        "tools/test",
+        **{**draft, "id": saved.json()["id"], "headers": {"X-Token": ""}},
+    )
+    assert again.json()["ok"] is True
+    assert _Handler.seen[-1]["token"] == "kept"
+    # Somebody else's tool is not theirs to borrow secrets from.
+    stolen = make(
+        env,
+        bob,
+        "tools/test",
+        **{**draft, "id": saved.json()["id"], "headers": {"X-Token": ""}},
+    )
+    assert stolen.status_code == 404
+
+
+def test_mcp_tool_schemas_are_listed_for_the_trying_forms(
+    monkeypatch, local_hosts, mcp_url
+) -> None:
+    env = AccountEnv(monkeypatch)
+    alice = env.token("alice")
+    make(env, alice, "mcp-servers", name="demo", url=mcp_url)
+
+    server = env.client.get("/v1/ugen/tools", headers=bearer(alice)).json()["mcp"][0]
+
+    word_count = next(t for t in server["tools"] if t["name"] == "demo__word_count")
+    assert word_count["parameters"]["properties"]["text"]["type"] == "string"
+
+
 def test_names_are_checked_and_unique(monkeypatch, local_hosts, web) -> None:
     env = AccountEnv(monkeypatch)
     alice = env.token("alice")
