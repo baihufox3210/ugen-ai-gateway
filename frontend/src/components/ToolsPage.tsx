@@ -157,7 +157,7 @@ function ToolsPage({ canShare }: { canShare: boolean }) {
     </>}
     {draft.kind !== 'agent' && <div className="field-row">
       {draft.kind === 'http' && <select value={draft.method} onChange={event => set({ method: event.target.value })} aria-label="HTTP method">{['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(method => <option key={method}>{method}</option>)}</select>}
-      <input value={draft.url} onChange={event => set({ url: event.target.value })} placeholder={draft.kind === 'http' ? 'https://api.example.com/orders/{order_id}' : 'https://example.com/mcp'} aria-label="Address" className="mono" spellCheck={false}/>
+      <input value={draft.url} onChange={event => set({ url: event.target.value })} placeholder={draft.kind === 'http' ? 'https://api.example.com/orders/{order_id}' : 'https://example.com/mcp  (try: python examples/mcp_demo_server.py → http://127.0.0.1:8765/mcp)'} aria-label="Address" className="mono" spellCheck={false}/>
     </div>}
     {draft.kind === 'http' && <>
       <textarea className="mono" value={draft.parameters} onChange={event => set({ parameters: event.target.value })} rows={7} aria-label="Parameters as JSON schema" spellCheck={false}/>

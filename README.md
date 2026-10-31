@@ -662,6 +662,44 @@ curl localhost:7632/v1/chat/completions -H "Authorization: Bearer $TOKEN" \
 tools needs an account (or an admin key): an API key can use shared ones and
 agents shared by administrators.
 
+**Try MCP in five minutes**
+
+`examples/mcp_demo_server.py` is a small MCP server (`word_count`,
+`reverse_text`, `convert_temperature`) to try this with:
+
+1. Start it: `uv run python examples/mcp_demo_server.py` (listens on
+   `http://127.0.0.1:8765/mcp`; `--port` changes it).
+2. It runs on a private address, so allow it: add `TOOL_ALLOWED_HOSTS=127.0.0.1`
+   to `.env` and restart the gateway. (With Docker the gateway cannot see the
+   host's `127.0.0.1`: start the server with `--host 0.0.0.0` and use
+   `host.docker.internal` in the address and in `TOOL_ALLOWED_HOSTS`.)
+3. Settings → Tools → *Add an MCP server*: name `demo`, address
+   `http://127.0.0.1:8765/mcp`. The three tools appear, named
+   `demo__word_count` and so on. *Run* them from the list to check the link.
+4. *New agent*: name `helper`, tick `demo`, save.
+5. Under the message box choose Agent `helper` and ask *"How many words are in
+   'the quick brown fox', and what is 100 °C in Fahrenheit?"*. The answer
+   shows a folded **Used 2 tools** with each call and what it returned.
+
+The same from the command line:
+
+```bash
+curl -X POST localhost:7632/v1/ugen/mcp-servers -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "demo", "url": "http://127.0.0.1:8765/mcp"}'
+# add "headers": {"Authorization": "Bearer ..."} for a server that needs a token
+curl -X POST localhost:7632/v1/ugen/agents -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"name": "helper", "tools": ["demo"]}'
+curl localhost:7632/v1/chat/completions -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "model": "agent:helper",
+    "messages": [{"role": "user", "content": "Convert 100 degrees Celsius to Fahrenheit"}]}'
+```
+
+To write your own, `mcp.server.MCPServer` turns a Python function with type
+hints and a docstring into a tool (see the example); any MCP server that
+supports streamable HTTP works, such as the ones published by tool vendors.
+
 **Privacy and safety**
 
 * The model only sees placeholders for personal data, so tools receive

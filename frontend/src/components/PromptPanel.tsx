@@ -23,6 +23,7 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
   return <article className="panel prompt-panel">
     <div className="composer-topline">
       <span className="eyebrow">YOUR MESSAGE</span>
+      <span className="char-count">{prompt.length.toLocaleString()} <i>/ 32,000</i></span>
       <div className="provider-switch" role="radiogroup" aria-label="Model selection">
         {PROVIDER_OPTIONS.map(option => {
           const unavailable = option.value === 'cloud' && !cloudAvailable;
@@ -34,7 +35,6 @@ function PromptPanel({ prompt, busy, error, providerSelection, cloudAvailable, o
           </button>;
         })}
       </div>
-      <span className="char-count">{prompt.length.toLocaleString()} <i>/ 32,000</i></span>
     </div>
     <label className="sr-only" htmlFor="request-prompt">Your message</label>
     <textarea id="request-prompt" rows={3} value={prompt} onChange={event => onPromptChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(); } }} maxLength={32000} disabled={busy} placeholder="Type a message… (Enter to send, Shift + Enter for a new line)"/>
