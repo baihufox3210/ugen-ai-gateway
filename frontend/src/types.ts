@@ -57,3 +57,5 @@ export type UsageStats = {
   daily: { day: string; requests: number; cloud: number }[];
   feedback: { up: number; down: number };
 };
+/** A tool the person can switch on for their messages (see the ＋ Tools menu). */
+export type ToolOption = { name: string; description: string; group: 'builtin' | 'tool' | 'mcp' };
